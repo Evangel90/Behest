@@ -79,7 +79,7 @@ describe("check", () => {
 });
 
 describe("holdsRole", () => {
-  const intent = (sender: string, role: "heir" | "guardian" | "owner" | "participant" | "delay_signer") => ({ sender, role, method: "claim" as const, args: {}, owner: "kemi.testnet" });
+  const intent = (sender: string, role: "heir" | "guardian" | "owner" | "participant" | "delay_signer" | "guardian_or_heir") => ({ sender, role, method: "claim" as const, args: {}, owner: "kemi.testnet" });
   it("only sponsors people who hold the role in that plan", () => {
     expect(holdsRole(plan, intent("amara.testnet", "heir"))).toBe(true);
     expect(holdsRole(plan, intent("dayo.testnet", "heir"))).toBe(false);
@@ -88,6 +88,12 @@ describe("holdsRole", () => {
     expect(holdsRole(plan, intent("kemi.testnet", "owner"))).toBe(true);
     expect(holdsRole(plan, intent("amara.testnet", "owner"))).toBe(false);
     expect(holdsRole(null, intent("amara.testnet", "heir"))).toBe(false);
+  });
+  it("sponsors proposals from guardians and (for follow-up rounds) heirs, not the owner", () => {
+    expect(holdsRole(plan, intent("dayo.testnet", "guardian_or_heir"))).toBe(true);
+    expect(holdsRole(plan, intent("amara.testnet", "guardian_or_heir"))).toBe(true);
+    expect(holdsRole(plan, intent("kemi.testnet", "guardian_or_heir"))).toBe(false);
+    expect(holdsRole(plan, intent("stranger.testnet", "guardian_or_heir"))).toBe(false);
   });
   it("treats a reassigned alternate as a heir and sponsors reassignment for participants only", () => {
     const withAlt = { plan: { ...plan.plan, proposal: { transfers: [{ heir: "ngozi.testnet" }] } } };

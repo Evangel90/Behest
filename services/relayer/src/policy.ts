@@ -100,6 +100,8 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
       return plan.plan.policy.heirs.some((h) => h.account_id === intent.sender) || (plan.plan.proposal?.transfers ?? []).some((t) => t.heir === intent.sender);
     case "delay_signer":
       return (plan.delay_signers ?? []).includes(intent.sender);
+    case "guardian_or_heir":
+      return plan.plan.policy.guardians.includes(intent.sender) || plan.plan.policy.heirs.some((h) => h.account_id === intent.sender);
     case "participant":
       return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender) || holdsRole(plan, { ...intent, role: "heir" });
   }

@@ -2,7 +2,8 @@
 export const SPONSORED_METHODS = {
   claim: "heir",
   retry_transfer: "heir",
-  propose_release: "guardian",
+  // guardians; heirs too for a follow-up round (D21, the contract decides when)
+  propose_release: "guardian_or_heir",
   approve_release: "guardian",
   reject_release: "guardian",
   check_in: "owner",
