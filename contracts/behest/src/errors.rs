@@ -34,6 +34,9 @@ pub enum Error {
     BadIndex,
     BadDestination,
     UnknownToken,
+    VaultBusy,
+    NoWithdrawal,
+    BadAsset,
 }
 
 impl Error {
@@ -70,6 +73,9 @@ impl Error {
             Error::BadIndex => "E_BAD_INDEX",
             Error::BadDestination => "E_BAD_DESTINATION",
             Error::UnknownToken => "E_UNKNOWN_TOKEN",
+            Error::VaultBusy => "E_VAULT_BUSY",
+            Error::NoWithdrawal => "E_NO_WITHDRAWAL",
+            Error::BadAsset => "E_BAD_ASSET",
         }
     }
 }

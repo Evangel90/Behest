@@ -39,6 +39,13 @@ const MAX_SIGNED_VERSIONS: usize = 32;
 /// contract struct, so adding it needed no state migration.
 const ERC20_TOKENS_KEY: &[u8] = b"erc20_tokens";
 const MAX_ERC20_TOKENS: usize = 4;
+/// Transfer index that addresses the owner's vault withdrawal (D7) instead of
+/// a proposal transfer, so executors and views use the same methods for both.
+pub const VAULT_WITHDRAWAL: u32 = u32::MAX;
+/// One withdrawal record per owner (`vw:<owner>`), plus the owners whose
+/// withdrawal is unresolved (for executors). Raw keys: no state migration.
+const WITHDRAWAL_PREFIX: &[u8] = b"vw:";
+const PENDING_WITHDRAWALS_KEY: &[u8] = b"vw_pending";
 
 /// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
 #[near(serializers = [json])]
@@ -288,6 +295,69 @@ impl Contract {
         Promise::new(owner).transfer(NearToken::from_yoctonear(amount.0))
     }
 
+    /// D7. The owner withdraws ETH or a token from the plan's Sepolia vault to
+    /// `to`. Only while no release is open (or after it settled), so heirs'
+    /// snapshots never change. Takes the next vault nonce like any transfer and
+    /// goes through the same executor path; addressed as VAULT_WITHDRAWAL.
+    /// Fees come from the vault's ETH, so withdraw ETH net of one transfer fee.
+    pub fn withdraw_vault(&mut self, asset: Asset, amount: U128, to: String) -> Promise {
+        let owner = caller();
+        if self.paused {
+            fail(Error::Paused);
+        }
+        let plan = self.plan_ref(&owner);
+        if plan.proposal.as_ref().is_some_and(|p| !p.transfers.iter().all(|t| t.state == TransferState::Confirmed)) {
+            fail(Error::ProposalOpen);
+        }
+        let asset = match asset {
+            Asset::Near => fail(Error::BadAsset),
+            Asset::Eth => Asset::Eth,
+            Asset::Erc20(token) => {
+                let token = token.to_ascii_lowercase();
+                if eth::parse_address(&token).is_none() {
+                    fail(Error::InvalidEthAddress);
+                }
+                Asset::Erc20(token)
+            }
+        };
+        let to = to.to_ascii_lowercase();
+        if eth::parse_address(&to).is_none() {
+            fail(Error::InvalidEthAddress);
+        }
+        if amount.0 == 0 {
+            fail(Error::NothingToDistribute);
+        }
+        if withdrawal_busy(&read_withdrawal(&owner)) {
+            fail(Error::VaultBusy);
+        }
+        write_withdrawal(&owner, &new_transfer(&owner, asset.clone(), to.clone(), amount.0));
+        emit("vault_withdrawal", near_sdk::serde_json::json!({"owner": owner, "asset": asset, "amount": amount, "to": to}));
+        self.sign_eth(&owner, VAULT_WITHDRAWAL as usize)
+    }
+
+    /// Resolves a withdrawal that failed without being mined: re-signs its
+    /// nonce as a 0-ETH transfer to the same destination, so later vault nonces
+    /// (heir transfers) are never blocked. Same nonce, so at most one of the
+    /// versions can land. The owner or an executor may call it.
+    pub fn cancel_vault_withdrawal(&mut self, owner: AccountId) -> Promise {
+        let who = caller();
+        if who != owner && !self.executors.contains(&who) {
+            fail(Error::Unauthorized);
+        }
+        let mut w = read_withdrawal(&owner).unwrap_or_else(|| fail(Error::NoWithdrawal));
+        // Only before any broadcast was reported: versions are rebuilt from the
+        // record's current asset and amount, so it must not hold a sent original.
+        if w.state != TransferState::Failed || w.failure.as_deref() == Some("Reverted") || w.tx_hash.is_some() {
+            fail(Error::InvalidTransferState);
+        }
+        w.asset = Asset::Eth;
+        w.amount = U128(0);
+        w.signed_versions.clear();
+        write_withdrawal(&owner, &w);
+        emit("vault_withdrawal_cancelled", near_sdk::serde_json::json!({"owner": owner, "nonce": w.eth_tx.as_ref().map(|t| t.nonce)}));
+        self.sign_eth(&owner, VAULT_WITHDRAWAL as usize)
+    }
+
     // ------------------------------------------------------------- guardian
 
     /// P4. A guardian opens a release once the owner is overdue.
@@ -318,6 +388,12 @@ impl Contract {
         }
         if t < overdue_at(plan) {
             fail(Error::NotOverdue);
+        }
+        // The snapshot must see a quiet vault: an unresolved owner withdrawal
+        // would change the balance and hold an earlier nonce. Executors resolve
+        // it (confirm, retry or cancel_vault_withdrawal) without the owner.
+        if withdrawal_busy(&read_withdrawal(&owner)) {
+            fail(Error::VaultBusy);
         }
 
         let near_total = plan.escrow.0;
@@ -456,7 +532,7 @@ impl Contract {
         }
         let who = caller();
         let is_executor = self.executors.contains(&who);
-        let tr = self.transfer_mut(&owner, index);
+        let tr = self.tr_get(&owner, index);
         if tr.heir != who && !is_executor {
             fail(Error::Unauthorized);
         }
@@ -492,7 +568,8 @@ impl Contract {
         let response = env::promise_result_checked(0, MAX_MPC_RESPONSE_BYTES)
             .ok()
             .and_then(|b| near_sdk::serde_json::from_slice::<SignatureResponse>(&b).ok());
-        let tr = self.transfer_mut(&owner, index);
+        let mut owned = self.tr_get(&owner, index);
+        let tr = &mut owned;
         if tr.attempts != attempt || tr.state != TransferState::Signing {
             return;
         }
@@ -521,6 +598,7 @@ impl Contract {
             }
         }
         let state = tr.state;
+        self.tr_put(&owner, index, owned);
         emit_transfer(&owner, index, state);
     }
 
@@ -529,19 +607,20 @@ impl Contract {
     /// T3. Executor reports the hash of the broadcast signed transaction.
     pub fn report_broadcast(&mut self, owner: AccountId, index: u32, tx_hash: String) {
         self.assert_executor();
-        let tr = self.transfer_mut(&owner, index);
+        let mut tr = self.tr_get(&owner, index);
         if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.tx_hash = Some(tx_hash);
         tr.state = TransferState::Broadcast;
+        self.tr_put(&owner, index, tr);
         emit_transfer(&owner, index, TransferState::Broadcast);
     }
 
     /// T4. Executor reports inclusion with the required confirmations.
     pub fn report_confirmed(&mut self, owner: AccountId, index: u32, tx_hash: String) {
         self.assert_executor();
-        let tr = self.transfer_mut(&owner, index);
+        let mut tr = self.tr_get(&owner, index);
         if tr.state == TransferState::Confirmed && tr.tx_hash.as_deref() == Some(tx_hash.as_str()) {
             return;
         }
@@ -549,19 +628,23 @@ impl Contract {
             fail(Error::InvalidTransferState);
         }
         tr.state = TransferState::Confirmed;
+        self.tr_put(&owner, index, tr);
         emit_transfer(&owner, index, TransferState::Confirmed);
-        self.close_if_settled(&owner);
+        if index != VAULT_WITHDRAWAL {
+            self.close_if_settled(&owner);
+        }
     }
 
     /// T5. Executor reports a failure (reason code, e.g. FeeAboveCap, NonceGap, Dropped).
     pub fn report_failed(&mut self, owner: AccountId, index: u32, reason: String) {
         self.assert_executor();
-        let tr = self.transfer_mut(&owner, index);
+        let mut tr = self.tr_get(&owner, index);
         if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.state = TransferState::Failed;
         tr.failure = Some(reason.chars().take(64).collect());
+        self.tr_put(&owner, index, tr);
         emit_transfer(&owner, index, TransferState::Failed);
     }
 
@@ -659,19 +742,27 @@ impl Contract {
     /// Raw signed transaction (`0x…`) for a `Signed`/`Broadcast` ETH transfer.
     /// Anyone can broadcast it; the executor is a convenience, not an authority.
     pub fn get_signed_tx(&self, owner: AccountId, index: u32) -> Option<String> {
-        let plan = self.read_plan(&owner)?;
-        let tr = plan.proposal.as_ref()?.transfers.get(index as usize)?;
-        raw_signed_tx(tr, tr.eth_tx.as_ref()?, tr.signature.as_ref()?)
+        let tr = self.tr_read(&owner, index)?;
+        raw_signed_tx(&tr, tr.eth_tx.as_ref()?, tr.signature.as_ref()?)
     }
 
     /// Every signed version of an ETH transfer (oldest first), as raw `0x…`
     /// transactions. They share one nonce, so at most one can be mined.
     pub fn get_signed_tx_versions(&self, owner: AccountId, index: u32) -> Vec<String> {
-        let plan = self.read_plan(&owner);
-        let Some(tr) = plan.as_ref().and_then(|p| p.proposal.as_ref()).and_then(|p| p.transfers.get(index as usize)) else {
+        let Some(tr) = self.tr_read(&owner, index) else {
             return vec![];
         };
-        tr.signed_versions.iter().filter_map(|v| raw_signed_tx(tr, &v.eth_tx, &v.signature)).collect()
+        tr.signed_versions.iter().filter_map(|v| raw_signed_tx(&tr, &v.eth_tx, &v.signature)).collect()
+    }
+
+    /// The owner's latest vault withdrawal (also readable as transfer VAULT_WITHDRAWAL).
+    pub fn get_vault_withdrawal(&self, owner: AccountId) -> Option<Transfer> {
+        read_withdrawal(&owner)
+    }
+
+    /// Owners whose vault withdrawal is unresolved (for executors).
+    pub fn list_vault_withdrawals(&self) -> Vec<AccountId> {
+        pending_withdrawals()
     }
 
     /// Owners with an open (unsettled) release, paginated.
@@ -730,6 +821,39 @@ pub fn status_of(plan: &Plan, t: u64) -> PlanStatus {
                 }
             }
         },
+    }
+}
+
+fn withdrawal_key(owner: &AccountId) -> Vec<u8> {
+    [WITHDRAWAL_PREFIX, owner.as_bytes()].concat()
+}
+
+fn read_withdrawal(owner: &AccountId) -> Option<Transfer> {
+    env::storage_read(&withdrawal_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+}
+
+/// Unresolved: not yet confirmed, and not a mined revert (whose nonce is used).
+fn withdrawal_busy(w: &Option<Transfer>) -> bool {
+    w.as_ref().is_some_and(|t| t.state != TransferState::Confirmed && !(t.state == TransferState::Failed && t.failure.as_deref() == Some("Reverted")))
+}
+
+fn pending_withdrawals() -> Vec<AccountId> {
+    env::storage_read(PENDING_WITHDRAWALS_KEY).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Stores the record and keeps the pending list in step with it.
+fn write_withdrawal(owner: &AccountId, tr: &Transfer) {
+    env::storage_write(&withdrawal_key(owner), &near_sdk::borsh::to_vec(tr).expect("borsh"));
+    let mut pending = pending_withdrawals();
+    let busy = withdrawal_busy(&Some(tr.clone()));
+    let listed = pending.contains(owner);
+    if busy != listed {
+        if busy {
+            pending.push(owner.clone());
+        } else {
+            pending.retain(|o| o != owner);
+        }
+        env::storage_write(PENDING_WITHDRAWALS_KEY, &near_sdk::borsh::to_vec(&pending).expect("borsh"));
     }
 }
 
@@ -835,6 +959,31 @@ impl Contract {
         }
     }
 
+    /// A proposal transfer, or the owner's vault withdrawal for VAULT_WITHDRAWAL.
+    fn tr_read(&self, owner: &AccountId, index: u32) -> Option<Transfer> {
+        if index == VAULT_WITHDRAWAL {
+            return read_withdrawal(owner);
+        }
+        self.read_plan(owner)?.proposal?.transfers.get(index as usize).cloned()
+    }
+
+    fn tr_get(&self, owner: &AccountId, index: u32) -> Transfer {
+        if index != VAULT_WITHDRAWAL {
+            let plan = self.plan_ref(owner);
+            let p = plan.proposal.as_ref().unwrap_or_else(|| fail(Error::NoProposal));
+            return p.transfers.get(index as usize).cloned().unwrap_or_else(|| fail(Error::BadIndex));
+        }
+        read_withdrawal(owner).unwrap_or_else(|| fail(Error::NoWithdrawal))
+    }
+
+    fn tr_put(&mut self, owner: &AccountId, index: u32, tr: Transfer) {
+        if index == VAULT_WITHDRAWAL {
+            write_withdrawal(owner, &tr);
+        } else {
+            *self.transfer_mut(owner, index) = tr;
+        }
+    }
+
     fn transfer_mut(&mut self, owner: &AccountId, index: u32) -> &mut Transfer {
         let plan = self.plan_mut(owner);
         let p = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
@@ -872,11 +1021,17 @@ impl Contract {
         let priority = self.eth_priority_fee.0;
         let mpc_contract = self.mpc_contract.clone();
 
+        let idx = index as u32;
+        let mut owned = self.tr_get(owner, idx);
         let plan = self.plan_mut(owner);
         let next_nonce = plan.eth_next_nonce;
-        let proposal = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
-        let snapshot_gas = proposal.eth_gas_limit;
-        let tr = &mut proposal.transfers[index];
+        // A withdrawal has no proposal snapshot: it uses the current limit.
+        let snapshot_gas = if idx == VAULT_WITHDRAWAL {
+            configured_gas
+        } else {
+            plan.proposal.as_ref().unwrap_or_else(|| fail(Error::NoProposal)).eth_gas_limit
+        };
+        let tr = &mut owned;
         // A re-sign keeps the nonce, so at most one version can be mined; it may
         // raise the gas limit to the configured one (fixes "GasLimitTooLow").
         let (nonce, max_fee, prio_fee, gas_limit, fresh) = match &tr.eth_tx {
@@ -918,6 +1073,7 @@ impl Contract {
         if fresh {
             plan.eth_next_nonce += 1;
         }
+        self.tr_put(owner, idx, owned);
 
         mpc::ext(mpc_contract)
             .with_attached_deposit(NearToken::from_yoctonear(1))

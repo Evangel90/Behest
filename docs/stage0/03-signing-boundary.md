@@ -50,6 +50,17 @@ Tokens move from the same vault address, so they share its nonce sequence with E
 - **Executor check.** Before broadcasting, the executor recomputes the expected call (`to`, `value`, `data`) from the snapshot and refuses any signed transaction that differs. That includes a different recipient or amount inside the calldata, or ETH attached to a token call.
 - **Over-reported balance.** If a guardian over-reports a token balance, the executor's pre-broadcast simulation reverts, and it reports `Failed(WouldRevert)` without broadcasting. No fee is spent and the nonce stays unused. Later vault nonces wait behind it. Once the vault holds enough, the heir (or an executor) calls `retry_transfer`, which re-signs at the **same nonce**, so no trust is needed. Other assets' transfers are unaffected and never re-signed (live: `e2e-partial`). Under-reported tokens stay in the vault (D12/D5 residual).
 
+### Owner vault withdrawal (D7)
+
+The owner can move ETH or a token out of the vault with `withdraw_vault(asset, amount, to)`.
+- **When.** Only while no release is open, or after it settled, so heirs' snapshots never change. One withdrawal is allowed at a time.
+- **How.** It is a transfer like any other: next nonce, fees from the vault, the same MPC signing, the same executor checks. The executor and views address it as transfer index `4294967295` (`u32::MAX`). ETH withdrawals must leave one transaction's maximum fee (`eth_gas_limit × max_fee`) in the vault.
+- **No gaps.**
+  - While a withdrawal is unresolved, a release can't be proposed (`E_VAULT_BUSY`). The snapshot then always sees a quiet vault, and no heir nonce can queue behind it.
+  - Executors resolve it without the owner. They broadcast and confirm it, or retry fee failures at the same nonce. If it fails without being broadcast (e.g. `WouldRevert` because the owner asked for more than the vault holds), `cancel_vault_withdrawal` re-signs the same nonce as a 0-ETH transfer. The owner or an executor may call it.
+  - A cancel is refused once a broadcast was reported, because signed versions are rebuilt from the record's current fields.
+- **Testnet tools.** Every live scenario withdraws the unspent fee reserve back to the funder. `recover-vaults` did the same for vaults stranded by earlier runs: about 0.021 ETH across 6 live withdrawals.
+
 ### Gas limit
 
 A fixed 21 000 was the original design. Since Sepolia's Glamsterdam upgrade (observed November 2026), a value transfer to an address that has never been used costs about 207 000 gas. The first live two-heir run, with freshly generated heir wallets, reverted both transfers with 21 000 used, and the vault still paid the fees. The limit is therefore admin config (bounded to 15 000–2 000 000), snapshotted into each proposal so the fee reserve and the signed transactions agree. Unused gas isn't charged.

@@ -1040,3 +1040,170 @@ fn removing_a_token_from_the_allowlist_keeps_open_snapshots() {
     assert!(e.plan().proposal.unwrap().transfers.iter().any(|t| t.asset == Asset::Erc20(weth())));
     assert!(e.as_("anyone.testnet", 0).get_config().erc20_tokens.is_empty());
 }
+
+// ------------------------------------------------------- vault withdrawal (D7)
+
+const OWNER_ETH: &str = "0x00000000000000000000000000000000000000aa";
+const W: u32 = VAULT_WITHDRAWAL;
+
+fn planned() -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e
+}
+
+fn withdrawal(e: &mut Env) -> Transfer {
+    e.as_("anyone.testnet", 0).get_vault_withdrawal(acc("owner.testnet")).unwrap()
+}
+
+fn withdraw_eth(e: &mut Env, wei: u128) {
+    let _ = e.as_("owner.testnet", 0).withdraw_vault(Asset::Eth, U128(wei), OWNER_ETH.into());
+}
+
+/// Withdrawal signed by the MPC, then broadcast and confirmed by the executor.
+fn confirm_withdrawal(e: &mut Env) {
+    let attempt = withdrawal(e).attempts;
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, attempt);
+    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), W, "0xw".into());
+    e.as_("exec.testnet", 0).report_confirmed(acc("owner.testnet"), W, "0xw".into());
+}
+
+impl Env {
+    fn with_executor(mut self) -> Self {
+        self.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        self
+    }
+}
+
+#[test]
+fn owner_withdraws_eth_on_the_next_vault_nonce() {
+    let mut e = planned();
+    withdraw_eth(&mut e, 5 * GWEI);
+    let w = withdrawal(&mut e);
+    assert_eq!((w.state, w.heir.as_str(), w.destination.as_str()), (TransferState::Signing, "owner.testnet", OWNER_ETH));
+    let tx = w.eth_tx.unwrap();
+    assert_eq!(tx.nonce, 0);
+    let to = eth::parse_address(OWNER_ETH).unwrap();
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &to, value: 5 * GWEI, data: &[] };
+    assert_eq!(tx.payload_hash, eth::hex_encode(&expected.signing_hash()));
+    assert_eq!(e.plan().eth_next_nonce, 1);
+    assert_eq!(e.as_("x.testnet", 0).list_vault_withdrawals(), vec![acc("owner.testnet")]);
+}
+
+#[test]
+fn token_withdrawal_signs_a_transfer_call() {
+    let mut e = planned();
+    let _ = e.as_("owner.testnet", 0).withdraw_vault(Asset::Erc20(WETH.into()), U128(7), OWNER_ETH.into());
+    let w = withdrawal(&mut e);
+    assert_eq!(w.asset, Asset::Erc20(weth()));
+    let token = eth::parse_address(&weth()).unwrap();
+    let data = eth::erc20_transfer_data(&eth::parse_address(OWNER_ETH).unwrap(), 7);
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &token, value: 0, data: &data };
+    assert_eq!(w.eth_tx.unwrap().payload_hash, eth::hex_encode(&expected.signing_hash()));
+}
+
+#[test]
+#[should_panic(expected = "E_PROPOSAL_OPEN")]
+fn no_withdrawal_while_a_release_is_open() {
+    let mut e = approved();
+    withdraw_eth(&mut e, 1);
+}
+
+#[test]
+#[should_panic(expected = "E_VAULT_BUSY")]
+fn one_withdrawal_at_a_time() {
+    let mut e = planned();
+    withdraw_eth(&mut e, 1);
+    withdraw_eth(&mut e, 1);
+}
+
+#[test]
+#[should_panic(expected = "E_BAD_ASSET")]
+fn near_is_not_a_vault_asset() {
+    let mut e = planned();
+    let _ = e.as_("owner.testnet", 0).withdraw_vault(Asset::Near, U128(1), OWNER_ETH.into());
+}
+
+#[test]
+#[should_panic(expected = "E_VAULT_BUSY")]
+fn release_cannot_snapshot_a_vault_with_an_unresolved_withdrawal() {
+    let mut e = planned();
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    withdraw_eth(&mut e, 1);
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+}
+
+#[test]
+fn confirmed_withdrawal_frees_the_vault_and_heirs_take_later_nonces() {
+    let mut e = planned().with_executor();
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    withdraw_eth(&mut e, 1);
+    confirm_withdrawal(&mut e);
+    assert_eq!(withdrawal(&mut e).state, TransferState::Confirmed);
+    assert!(e.as_("x.testnet", 0).list_vault_withdrawals().is_empty());
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    assert_eq!(e.eth_transfer().eth_tx.unwrap().nonce, 1);
+}
+
+#[test]
+fn failed_withdrawal_is_cancelled_at_the_same_nonce_with_zero_value() {
+    let mut e = planned().with_executor();
+    withdraw_eth(&mut e, 5 * GWEI);
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, 1);
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), W, "WouldRevert".into());
+    let _ = e.as_("exec.testnet", 0).cancel_vault_withdrawal(acc("owner.testnet"));
+    let w = withdrawal(&mut e);
+    assert_eq!((w.asset.clone(), w.amount.0, w.attempts, w.state), (Asset::Eth, 0, 2, TransferState::Signing));
+    assert_eq!(w.eth_tx.as_ref().unwrap().nonce, 0);
+    assert!(w.signed_versions.is_empty());
+    assert_eq!(e.plan().eth_next_nonce, 1, "no new nonce taken");
+    confirm_withdrawal(&mut e);
+    assert!(e.as_("x.testnet", 0).list_vault_withdrawals().is_empty());
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_TRANSFER_STATE")]
+fn cannot_cancel_a_withdrawal_that_was_broadcast() {
+    let mut e = planned().with_executor();
+    withdraw_eth(&mut e, 5 * GWEI);
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, 1);
+    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), W, "0xw".into());
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), W, "Stuck".into());
+    let _ = e.as_("owner.testnet", 0).cancel_vault_withdrawal(acc("owner.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_UNAUTHORIZED")]
+fn strangers_cannot_cancel_a_withdrawal() {
+    let mut e = planned().with_executor();
+    withdraw_eth(&mut e, 5 * GWEI);
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, 1);
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), W, "WouldRevert".into());
+    let _ = e.as_("g1.testnet", 0).cancel_vault_withdrawal(acc("owner.testnet"));
+}
+
+#[test]
+fn owner_or_executor_retries_a_withdrawal_at_the_same_nonce() {
+    let mut e = planned().with_executor();
+    withdraw_eth(&mut e, 5 * GWEI);
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, 1);
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), W, "FeeAboveCap".into());
+    let _ = e.as_("exec.testnet", 0).retry_transfer(acc("owner.testnet"), W);
+    let w = withdrawal(&mut e);
+    assert_eq!((w.eth_tx.unwrap().nonce, w.attempts, w.amount.0), (0, 2, 5 * GWEI));
+}
+
+#[test]
+fn signed_withdrawal_is_readable_as_a_raw_transaction() {
+    let mut e = planned();
+    withdraw_eth(&mut e, 5 * GWEI);
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), W, 1);
+    let raw = e.as_("x.testnet", 0).get_signed_tx(acc("owner.testnet"), W).unwrap();
+    assert!(raw.starts_with("0x02") && raw.contains(&OWNER_ETH[2..]));
+    assert_eq!(e.as_("x.testnet", 0).get_signed_tx_versions(acc("owner.testnet"), W).len(), 1);
+}
