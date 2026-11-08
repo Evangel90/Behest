@@ -15,7 +15,7 @@
 | D11 | **Notifications:** console/email from the executor; never affect contract state | Roadmap Stage 1 scope | Stage 2 workflows |
 | D12 | **Rounding remainder stays in the vault/escrow** | No implicit recipient | Stage 2 explicit remainder rule |
 | D13 | **Proposal rejection:** a proposal dies once enough guardians reject that quorum is impossible | Prevents a deadlocked proposal from blocking new ones | — |
-| D14 | **Heir NEAR gas** paid by the heir in MVP | Keeps relayer out of Stage 1 | Stage 2: NEP-366 relayer |
+| D14 | **NEAR gas for heirs and guardians** is sponsored by a NEP-366 relayer in the MVP (revised; originally heirs paid) | People inheriting or vouching shouldn't need to buy NEAR first. The relayer only pays gas: it sponsors one allowlisted, non-payable Behest call per meta-transaction, only for the sender's actual role in that plan, with per-sender and global rate limits. The contract still authorizes every call. | Direct calls still work if the relayer is down |
 
 ## Deferred (explicitly)
 

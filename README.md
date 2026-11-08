@@ -11,6 +11,7 @@ Non-custodial inheritance for digital assets, enforced by a NEAR contract and NE
 | `docs/stage0/` | Spec: state machine, permissions, signing boundary, schema, threat model, decisions |
 | `contracts/behest/` | Rust NEAR contract (near-sdk 5.x) |
 | `services/executor/` | TypeScript executor: broadcasts contract-signed Sepolia transfers, tracks confirmations, retries |
+| `services/relayer/` | Gas relayer: pays NEAR gas (NEP-366 meta-transactions) so heirs, guardians and owner check-ins need no NEAR |
 | `tools/testnet/` | Testnet deploy script and live end-to-end scenarios |
 | `deployments/testnet.json` | Current testnet deployment (public account IDs, wasm hash) |
 
@@ -38,6 +39,15 @@ pnpm --filter @behest/executor start
 
 The executor holds no authority. It verifies that each signed transaction was signed by the plan's vault and matches the snapshot transfer, then broadcasts it and reports status. Anyone can run one; the admin registers executors with `add_executor`.
 
+## Gas relayer
+
+```sh
+pnpm --filter @behest/relayer test
+pnpm --filter @behest/relayer start     # needs RELAYER_ACCOUNT_ID / RELAYER_PRIVATE_KEY in .env
+```
+
+Clients sign a delegate action and `POST /relay {"signed_delegate": "<base64 borsh>"}`; `@behest/relayer/client` exports `sponsoredCall()` for this. The relayer only pays gas. It sponsors a single, zero-deposit call to the Behest contract, limited to `claim`, `retry_transfer`, `propose_release`, `approve_release`, `reject_release`, `check_in` and `cancel_release`, and only when the sender actually holds that role in the plan. Rate limits apply per sender and globally. Plan edits, deposits and withdrawals are never sponsored. The contract still authorizes everything, so a compromised relayer can waste its own NEAR but cannot move funds.
+
 ## Testnet deployment and live e2e
 
 Current deployment: see `deployments/testnet.json` (contract `behest-ekkr6.testnet`, demo timers).
@@ -58,6 +68,7 @@ pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → 
 | `owner-cancel` | One owner check-in during the waiting period cancels the release and restores escrow |
 | `missing-guardian` | 3-of-3 quorum with a guardian absent: release stays paused; threshold never lowered |
 | `insufficient-fee-reserve` | Proposal refused when the ETH vault can't cover the network-fee reserve |
+| `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | MPC-signed Sepolia transfer, 60 s executor outage with nothing lost, then broadcast and confirmation |
 
@@ -73,5 +84,6 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 4. [x] Exact Sepolia transaction construction and Chain Signatures authorization
 5. [x] Executor: broadcast, idempotency, confirmation tracking, retry
 6. [x] Fee cap and reserve enforcement on retry
-7. [ ] Role-based web app with policy and transaction previews
-8. [x] Deploy scripts and live testnet e2e (all scenarios passing; first Sepolia release: [0x38e3…b323](https://sepolia.etherscan.io/tx/0x38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323))
+7. [x] Gas relayer for heirs and guardians (pulled forward from Stage 2; D14)
+8. [ ] Role-based web app with policy and transaction previews
+9. [x] Deploy scripts and live testnet e2e (all scenarios passing; first Sepolia release: [0x38e3…b323](https://sepolia.etherscan.io/tx/0x38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323))

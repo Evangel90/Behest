@@ -30,11 +30,42 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
+  services/relayer:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.2.0
+        version: 2.2.0
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
+      borsh:
+        specifier: 2.0.0
+        version: 2.0.0
+      near-api-js:
+        specifier: 7.4.0
+        version: 7.4.0
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.6
+        version: 26.6.6
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+
   tools/testnet:
     dependencies:
       '@behest/executor':
         specifier: workspace:*
         version: link:../../services/executor
+      '@behest/relayer':
+        specifier: workspace:*
+        version: link:../../services/relayer
       near-api-js:
         specifier: 7.4.0
         version: 7.4.0

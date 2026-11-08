@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
+import { sponsoredCall } from "@behest/relayer/client";
 import { account, call, loadDeployment, log, provider, view } from "./near.js";
 
 const d = loadDeployment();
@@ -178,6 +179,38 @@ const scenarios: Record<string, () => Promise<void>> = {
     await expectError("E_INSUFFICIENT_FEE_RESERVE", () => call(G1, C, "propose_release", { owner, eth_balance: "1000000000000000" }));
     log("proposal refused: vault balance does not cover the network-fee reserve");
     await call(owner, C, "check_in", {});
+  },
+
+  /** Guardians and heirs act through the gas relayer and spend no NEAR at all. */
+  async "sponsored"() {
+    const relayer = process.env.RELAYER_URL || "http://localhost:8787";
+    const owner = await overduePlan("sponsored");
+    const [g1Before, g2Before, a0, t0] = await Promise.all([balance(G1), balance(G2), balance(AMARA), balance(TOBI)]);
+
+    await sponsoredCall(account(G1), relayer, C, "propose_release", { owner, eth_balance: null });
+    const id = (await plan(owner)).plan.proposal!.id;
+    await sponsoredCall(account(G2), relayer, C, "approve_release", { owner, proposal_id: id });
+    const p = await plan(owner);
+    assert(p.status === "Waiting", "sponsored votes reach quorum");
+    await waitForChainTime(owner, p.plan.proposal!.waiting_ends_at_ms!);
+
+    await sponsoredCall(account(AMARA), relayer, C, "claim", { owner }, 100);
+    await sponsoredCall(account(TOBI), relayer, C, "claim", { owner }, 100);
+    const done = await waitForStatus(owner, "Settled");
+    const amt = (h: string) => BigInt(done.plan.proposal!.transfers.find((t) => t.heir === h)!.amount);
+
+    let ok = false;
+    for (let i = 0; i < 10 && !ok; i++) {
+      const [a1, t1] = await Promise.all([balance(AMARA), balance(TOBI)]);
+      ok = a1 - a0 === amt(AMARA) && t1 - t0 === amt(TOBI);
+      if (!ok) await sleep(3_000);
+    }
+    assert(ok, "heirs received exactly their shares: no gas deducted");
+    assert((await balance(G1)) === g1Before && (await balance(G2)) === g2Before, "guardians spent no gas");
+    log("heirs and guardians paid zero gas");
+
+    await expectError("NO_ROLE", () => sponsoredCall(account(G3), relayer, C, "claim", { owner }, 100));
+    await expectError("METHOD_NOT_SPONSORED", () => sponsoredCall(account(owner), relayer, C, "withdraw", { amount: "1" }));
   },
 
   /** Authorization negatives on live testnet. */

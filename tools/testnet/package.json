@@ -13,7 +13,8 @@
   "dependencies": {
     "near-api-js": "7.4.0",
     "viem": "2.57.16",
-    "@behest/executor": "workspace:*"
+    "@behest/executor": "workspace:*",
+    "@behest/relayer": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
