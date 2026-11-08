@@ -5,7 +5,7 @@ import { publicKeyToAddress } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { CONTRACT_ID, MPC_CONTRACT, NEAR_RPC, SEPOLIA_RPC } from "./config";
 import { registerTokens } from "./plan";
-import type { ContractConfig, Erc20Token, PlanView } from "./types";
+import type { ContractConfig, Erc20Token, PlanView, Transfer } from "./types";
 
 export const provider = new JsonRpcProvider({ url: NEAR_RPC });
 export const sepoliaClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
@@ -15,6 +15,8 @@ export async function view<T>(method: string, args: Record<string, unknown> = {}
 }
 
 export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { owner });
+/** The owner's latest vault withdrawal (contract D7). */
+export const getVaultWithdrawal = (owner: string) => view<Transfer | null>("get_vault_withdrawal", { owner });
 export async function getConfig() {
   const cfg = await view<ContractConfig>("get_config");
   registerTokens(cfg.erc20_tokens ?? []);

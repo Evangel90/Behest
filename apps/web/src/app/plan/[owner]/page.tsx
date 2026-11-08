@@ -2,18 +2,18 @@
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import type { Hex } from "viem";
+import { parseUnits, type Hex } from "viem";
 import { AppHeader, TestnetBar } from "@/components/chrome";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
 import { Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
-import { ethBalance, getConfig, tokenBalances, vaultAddress } from "@/lib/contract";
+import { ethBalance, getConfig, getVaultWithdrawal, tokenBalances, vaultAddress } from "@/lib/contract";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
 import { actionsFor, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, vaultSplit, type Role } from "@/lib/plan";
 import { useSession } from "@/lib/session";
-import type { ContractConfig, Erc20Token, PlanView } from "@/lib/types";
+import type { Asset, ContractConfig, Erc20Token, PlanView, Transfer } from "@/lib/types";
 
 type Tab = Role | "public";
 
@@ -97,6 +97,8 @@ interface Vault {
   balance: bigint | null;
   /** Allowlisted tokens with their vault balance (null while unread or on error). */
   tokens: { token: Erc20Token; balance: bigint | null }[];
+  /** Most a single vault transaction can cost (gas limit × fee cap). */
+  feePerTx: bigint | null;
 }
 
 function useVault(owner: string) {
@@ -107,9 +109,10 @@ function useVault(owner: string) {
       const [address, cfg] = await Promise.all([vaultAddress(owner).catch(() => null), getConfig().catch(() => null)]);
       if (!address || off) return;
       const list = cfg?.erc20_tokens ?? [];
-      setVault({ address, balance: null, tokens: list.map((token) => ({ token, balance: null })) });
+      const feePerTx = cfg ? BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap) : null;
+      setVault({ address, balance: null, tokens: list.map((token) => ({ token, balance: null })), feePerTx });
       const [balance, toks] = await Promise.all([ethBalance(address).catch(() => null), tokenBalances(address, list)]);
-      if (!off) setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })) });
+      if (!off) setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })), feePerTx });
     })();
     return () => {
       off = true;
@@ -242,7 +245,13 @@ function OwnerView({ view, now, refresh }: Props) {
               vault <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink>
             </span>
           )}
-          <span className="text-sm text-muted">Send Sepolia ETH to this address to include it. It's controlled only by this plan through Chain Signatures. Owner ETH withdrawals arrive in Stage 2.</span>
+          {vault?.tokens.map(({ token, balance }) => (
+            <span key={token.address} className="font-mono text-sm">
+              {balance != null ? formatToken(balance, token) : "…"} {token.symbol}
+            </span>
+          ))}
+          <span className="text-sm text-muted">Send Sepolia ETH or an allowed token to this address to include it. It's controlled only by this plan through Chain Signatures.</span>
+          {vault && <VaultWithdraw owner={view.plan.owner} vault={vault} locked={!!view.plan.proposal && s !== "Settled"} act={act} busy={!!busy} />}
         </Card>
       </section>
 
@@ -257,6 +266,93 @@ function OwnerView({ view, now, refresh }: Props) {
         </Card>
       )}
     </>
+  );
+}
+
+/**
+ * D7: the owner takes ETH or a token back out of the vault. One withdrawal at a
+ * time, only with no open release; network fees come from the vault's ETH.
+ */
+function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vault: Vault; locked: boolean; act: (label: string, method: string, args: Record<string, unknown>) => Promise<unknown>; busy: boolean }) {
+  const { session } = useSession();
+  const [w, setW] = useState<Transfer | null | undefined>(undefined);
+  const [asset, setAsset] = useState("Eth");
+  const [amount, setAmount] = useState("");
+  const [to, setTo] = useState(session?.accountId.startsWith("0x") ? session.accountId : "");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let off = false;
+    const load = () => getVaultWithdrawal(owner).then((x) => !off && setW(x)).catch(() => {});
+    void load();
+    const t = setInterval(load, 5000);
+    return () => {
+      off = true;
+      clearInterval(t);
+    };
+  }, [owner]);
+
+  const token = vault.tokens.find((t) => t.token.address === asset)?.token;
+  const pending = w && w.state !== "Confirmed" && !(w.state === "Failed" && w.failure === "Reverted");
+  const maxEth = vault.balance != null && vault.feePerTx != null && vault.balance > vault.feePerTx ? vault.balance - vault.feePerTx : 0n;
+
+  function submit() {
+    setError(null);
+    try {
+      if (!/^0x[0-9a-fA-F]{40}$/.test(to.trim())) throw new Error("Enter a Sepolia address (0x + 40 hex characters).");
+      const units = parseUnits(amount.trim() || "0", token ? token.decimals : 18);
+      if (units <= 0n) throw new Error("Enter an amount above zero.");
+      if (!token && units > maxEth) throw new Error(`At most ${formatEth(maxEth)} ETH: one transfer's network fee stays in the vault.`);
+      const a: Asset = token ? { Erc20: token.address } : "Eth";
+      void act("Withdraw from vault", "withdraw_vault", { asset: a, amount: units.toString(), to: to.trim().toLowerCase() });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-line pt-3">
+      <span className="font-semibold">Withdraw from the vault</span>
+      {w && (
+        <span className="text-sm">
+          Last withdrawal: {w.amount === "0" ? "cancelled (nonce freed)" : formatAmount(w)} to <span className="font-mono">{shortAddr(w.destination)}</span> · {w.state}
+          {w.failure ? ` (${w.failure})` : ""}
+          {w.tx_hash && (
+            <>
+              {" · "}
+              <ExtLink href={`${ETH_EXPLORER}/tx/${w.tx_hash}`}>receipt</ExtLink>
+            </>
+          )}
+        </span>
+      )}
+      {locked ? (
+        <span className="text-sm text-muted">Locked while a release is open, so heirs' amounts can't change.</span>
+      ) : pending ? (
+        <span className="text-sm text-muted">Finishing your last withdrawal first. Guardians can't propose a release until it's done.</span>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Asset">
+            <select className={`${inputClass} w-28`} value={asset} onChange={(e) => setAsset(e.target.value)}>
+              <option value="Eth">ETH</option>
+              {vault.tokens.map(({ token: t }) => (
+                <option key={t.address} value={t.address}>
+                  {t.symbol}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Amount">
+            <input className={`${inputClass} w-32`} inputMode="decimal" value={amount} placeholder={token ? "0.0" : formatEth(maxEth)} onChange={(e) => setAmount(e.target.value)} />
+          </Field>
+          <Field label="To (Sepolia address)">
+            <input className={`${inputClass} w-[22rem] max-w-full font-mono text-xs`} value={to} placeholder="0x…" onChange={(e) => setTo(e.target.value)} />
+          </Field>
+          <Button variant="outline" disabled={busy} onClick={submit}>
+            Withdraw
+          </Button>
+        </div>
+      )}
+      {error && <Notice tone="error">{error}</Notice>}
+    </div>
   );
 }
 
