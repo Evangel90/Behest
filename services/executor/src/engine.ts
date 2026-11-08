@@ -75,11 +75,14 @@ export class Engine {
    * contract re-checks everything. Started transfers are picked up next tick.
    */
   private async autoRelease(owner: string, view: PlanView) {
-    const pending = [...new Set((view.plan.proposal?.transfers ?? []).filter((t) => t.state === "Pending").map((t) => t.heir))];
+    const pending = (view.plan.proposal?.transfers ?? []).filter((t) => t.state === "Pending");
     if (pending.length === 0 || view.now_ms == null) return;
-    const from = releasableFrom(view, await this.near.getReleaseOptions(owner));
-    if (from == null || view.now_ms < from) return;
-    for (const heir of pending) {
+    const opts = await this.near.getReleaseOptions(owner);
+    const due = [...new Set(pending.filter((t) => {
+      const from = releasableFrom(view, opts, t);
+      return from != null && view.now_ms! >= from;
+    }).map((t) => t.heir))];
+    for (const heir of due) {
       try {
         await this.near.release(owner, heir);
         this.opts.log("released", { owner, heir });

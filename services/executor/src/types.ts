@@ -56,17 +56,24 @@ export interface PlanView {
   now_ms?: number;
 }
 
+type Mode = "Claim" | "Automatic" | "Hybrid";
+
 /** Release mode part of the contract's release options (D19). */
 export interface ReleaseOptions {
-  mode: "Claim" | "Automatic" | "Hybrid";
+  mode: Mode;
   hybrid_grace_ms: number;
+  /** First match wins (contract `mode_for`); absent on older contracts. */
+  overrides?: { heir: string | null; assets: "All" | "Near" | "Ethereum"; mode: Mode; hybrid_grace_ms: number }[];
 }
 
-/** When third parties may start a heir's pending transfers, or null if never. Mirrors `release`. */
-export function releasableFrom(view: PlanView, opts: ReleaseOptions | null): number | null {
+/** When third parties may start this transfer, or null if never. Mirrors `release`. */
+export function releasableFrom(view: PlanView, opts: ReleaseOptions | null, t: Pick<Transfer, "heir" | "asset">): number | null {
   const end = view.plan.proposal?.waiting_ends_at_ms;
-  if (!opts || opts.mode === "Claim" || end == null) return null;
-  return opts.mode === "Automatic" ? end : end + opts.hybrid_grace_ms;
+  if (!opts || end == null) return null;
+  const evm = isEvm(t.asset);
+  const o = (opts.overrides ?? []).find((x) => (x.heir == null || x.heir === t.heir) && (x.assets === "All" || (x.assets === "Ethereum") === evm)) ?? opts;
+  if (o.mode === "Claim") return null;
+  return o.mode === "Automatic" ? end : end + o.hybrid_grace_ms;
 }
 
 export interface ContractConfig {

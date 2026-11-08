@@ -63,7 +63,7 @@ class FakeNear implements NearPort {
   listVaultWithdrawals = async () => (this.withdrawal ? [OWNER] : []);
   getVaultWithdrawal = async () => this.withdrawal;
   cancelVaultWithdrawal = async () => void this.calls.push("cancel-withdrawal");
-  options: { mode: "Claim" | "Automatic" | "Hybrid"; hybrid_grace_ms: number } | null = null;
+  options: import("../src/types.js").ReleaseOptions | null = null;
   chainNow = 0;
   waitingEnds: number | null = null;
   getReleaseOptions = async () => this.options;
@@ -397,6 +397,18 @@ describe("Automatic and hybrid release (D19)", () => {
     near.chainNow = 6_000;
     await engine.tick();
     expect(near.calls.filter((c) => c.startsWith("release"))).toHaveLength(2);
+  });
+
+  it("follows per-heir and per-asset-group overrides", async () => {
+    // plan Claim; Ethereum side Automatic: only Amara has an ETH transfer
+    near.options = { mode: "Claim", hybrid_grace_ms: 0, overrides: [{ heir: null, assets: "Ethereum", mode: "Automatic", hybrid_grace_ms: 0 }] };
+    near.chainNow = 5_000;
+    await engine.tick();
+    expect(near.calls.filter((c) => c.startsWith("release"))).toEqual(["release:amara.testnet"]);
+    near.calls = [];
+    near.options = { mode: "Automatic", hybrid_grace_ms: 0, overrides: [{ heir: "amara.testnet", assets: "All", mode: "Claim", hybrid_grace_ms: 0 }] };
+    await engine.tick();
+    expect(near.calls.filter((c) => c.startsWith("release"))).toEqual(["release:tobi.testnet"]);
   });
 
   it("never releases claim-only plans", async () => {
