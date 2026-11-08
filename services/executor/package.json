@@ -1,0 +1,23 @@
+{
+  "name": "@behest/executor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Replaceable Behest executor: broadcasts contract-signed Sepolia transfers and reports status.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "vault": "tsx src/vault.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0",
+    "viem": "2.57.16"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
