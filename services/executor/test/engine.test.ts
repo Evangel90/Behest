@@ -51,7 +51,7 @@ class FakeNear implements NearPort {
   calls: string[] = [];
   config = async () => ({ eth_max_fee_cap: CAP.toString(), eth_chain_id: 11155111, mpc_contract: "v1.signer-prod.testnet" });
   listOpenReleases = async () => [OWNER];
-  getPlan = async (): Promise<PlanView> => ({ plan: { owner: OWNER, version: 1, proposal: { id: 1, transfers: this.transfers } }, status: "Executing" });
+  getPlan = async (): Promise<PlanView> => ({ plan: { owner: OWNER, version: 1, proposal: { id: 1, waiting_ends_at_ms: this.waitingEnds, transfers: this.transfers } }, status: "Executing", now_ms: this.chainNow });
   getSignedTx = async () => this.raw;
   getSignedTxVersions = async () => this.versions;
   vaultAddress = async () => vaultKey.address;
@@ -63,6 +63,11 @@ class FakeNear implements NearPort {
   listVaultWithdrawals = async () => (this.withdrawal ? [OWNER] : []);
   getVaultWithdrawal = async () => this.withdrawal;
   cancelVaultWithdrawal = async () => void this.calls.push("cancel-withdrawal");
+  options: { mode: "Claim" | "Automatic" | "Hybrid"; hybrid_grace_ms: number } | null = null;
+  chainNow = 0;
+  waitingEnds: number | null = null;
+  getReleaseOptions = async () => this.options;
+  release = async (_o: string, heir: string) => void this.calls.push(`release:${heir}`);
 }
 
 class FakeEth implements EthPort {
@@ -367,5 +372,39 @@ describe("Owner vault withdrawals (D7)", () => {
     near.withdrawal = withdrawal("Failed", { failure: "Reverted", tx_hash: "0x01" });
     expect(await runW()).toBe("needs-human");
     expect(near.calls).toEqual([]);
+  });
+});
+
+describe("Automatic and hybrid release (D19)", () => {
+  const pending = () => [transfer("Pending", { asset: "Near", heir: "amara.testnet" }), transfer("Pending", { heir: "amara.testnet" }), transfer("Pending", { asset: "Near", heir: "tobi.testnet" }), transfer("Sending", { asset: "Near", heir: "kemi.testnet" })];
+  beforeEach(() => {
+    near.transfers = pending();
+    near.waitingEnds = 5_000;
+  });
+
+  it("starts each heir's pending transfers once automatic release is allowed", async () => {
+    near.options = { mode: "Automatic", hybrid_grace_ms: 0 };
+    near.chainNow = 5_000;
+    await engine.tick();
+    expect(near.calls.filter((c) => c.startsWith("release"))).toEqual(["release:amara.testnet", "release:tobi.testnet"]);
+  });
+
+  it("waits for the owner's window and the hybrid grace period", async () => {
+    near.options = { mode: "Hybrid", hybrid_grace_ms: 1_000 };
+    near.chainNow = 5_999;
+    await engine.tick();
+    expect(near.calls.some((c) => c.startsWith("release"))).toBe(false);
+    near.chainNow = 6_000;
+    await engine.tick();
+    expect(near.calls.filter((c) => c.startsWith("release"))).toHaveLength(2);
+  });
+
+  it("never releases claim-only plans", async () => {
+    near.options = null;
+    near.chainNow = 10 ** 12;
+    await engine.tick();
+    near.options = { mode: "Claim", hybrid_grace_ms: 0 };
+    await engine.tick();
+    expect(near.calls.some((c) => c.startsWith("release"))).toBe(false);
   });
 });

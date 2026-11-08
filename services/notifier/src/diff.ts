@@ -28,7 +28,7 @@ export interface Notice {
   /** Stable id: the same event never produces two different keys. */
   key: string;
   owner: string;
-  kind: "reminder" | "overdue" | "proposed" | "approved" | "cancelled" | "eligible" | "transfer_failed" | "settled";
+  kind: "reminder" | "overdue" | "proposed" | "approved" | "extended" | "cancelled" | "eligible" | "transfer_failed" | "settled";
   to: Audience[];
   text: string;
 }
@@ -60,6 +60,11 @@ export function notices(prev: PlanView | null, cur: PlanView): Notice[] {
     out.push({ key: `${o}:proposed:${p.id}`, owner: o, kind: "proposed", to: ["owner", "guardians"], text: `A release of ${who}'s plan was proposed (#${p.id}). ${cur.plan.policy.quorum} guardian approvals are needed. ${who} can cancel.` });
     if (p.waiting_ends_at_ms) {
       out.push({ key: `${o}:approved:${p.id}`, owner: o, kind: "approved", to: ["owner", "guardians", "heirs"], text: `Release #${p.id} of ${who}'s plan was approved. ${who} can cancel until ${new Date(p.waiting_ends_at_ms).toUTCString()}.` });
+    }
+    // Delay signers extended the waiting period (D18): the owner's cancel window moved too.
+    const before = prev?.plan.proposal;
+    if (p.waiting_ends_at_ms && before?.id === p.id && before.waiting_ends_at_ms && p.waiting_ends_at_ms > before.waiting_ends_at_ms) {
+      out.push({ key: `${o}:extended:${p.id}:${p.waiting_ends_at_ms}`, owner: o, kind: "extended", to: ["owner", "guardians", "heirs"], text: `Delay signers extended the waiting period of release #${p.id}. ${who} can now cancel until ${new Date(p.waiting_ends_at_ms).toUTCString()}; heirs can receive after that.` });
     }
     if (cur.status === "Eligible" || cur.status === "Executing" || cur.status === "Settled") {
       out.push({ key: `${o}:eligible:${p.id}`, owner: o, kind: "eligible", to: ["heirs"], text: `What ${who} set aside for you is ready. Open Behest to receive it; network fees are covered.` });

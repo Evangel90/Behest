@@ -8,6 +8,9 @@ export const SPONSORED_METHODS = {
   check_in: "owner",
   cancel_release: "owner",
   reassign_unclaimed: "participant",
+  request_extension: "delay_signer",
+  approve_extension: "delay_signer",
+  release: "participant",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 export type Role = (typeof SPONSORED_METHODS)[SponsoredMethod];

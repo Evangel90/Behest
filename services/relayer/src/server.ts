@@ -47,7 +47,11 @@ async function relay(req: IncomingMessage, res: ServerResponse) {
   const sd = decode(bytes);
   const intent = check(sd, contractId);
 
-  const plan = await provider.callFunction({ contractId, method: "get_plan", args: { owner: intent.owner } }).catch(() => null);
+  const plan = (await provider.callFunction({ contractId, method: "get_plan", args: { owner: intent.owner } }).catch(() => null)) as Record<string, unknown> | null;
+  if (plan && intent.role === "delay_signer") {
+    const o = (await provider.callFunction({ contractId, method: "get_release_options", args: { owner: intent.owner } }).catch(() => null)) as { delay_signers?: string[] } | null;
+    plan.delay_signers = o?.delay_signers ?? [];
+  }
   if (!holdsRole(plan as never, intent)) throw new PolicyError("NO_ROLE", `${intent.sender} is not the ${intent.role} of ${intent.owner}`);
   if (!limiter.take(intent.sender)) return send(res, 429, { code: "RATE_LIMITED", error: "too many sponsored calls; try later" });
 

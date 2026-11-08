@@ -39,6 +39,9 @@ describe("notices", () => {
     expect(kinds(null, v("Overdue"))).toEqual(["overdue"]);
     expect(kinds(null, v("Proposed", { proposal: proposal() }))).toEqual(["proposed"]);
     expect(kinds(null, v("Waiting", { proposal: proposal({ waiting_ends_at_ms: 20 * MIN }) }))).toEqual(["proposed", "approved"]);
+    const prevW = v("Waiting", { proposal: proposal({ waiting_ends_at_ms: 20 * MIN }) });
+    expect(kinds(prevW, v("Waiting", { proposal: proposal({ waiting_ends_at_ms: 30 * MIN }) }))).toEqual(["proposed", "approved", "extended"]);
+    expect(kinds(prevW, prevW)).toEqual(["proposed", "approved"]);
     expect(kinds(null, v("Eligible", { proposal: proposal({ waiting_ends_at_ms: 20 * MIN }) }))).toContain("eligible");
     const a = notices(null, v("Proposed", { proposal: proposal(), now: 1 }));
     const b = notices(null, v("Proposed", { proposal: proposal(), now: 999 }));

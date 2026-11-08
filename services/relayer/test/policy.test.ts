@@ -79,7 +79,7 @@ describe("check", () => {
 });
 
 describe("holdsRole", () => {
-  const intent = (sender: string, role: "heir" | "guardian" | "owner" | "participant") => ({ sender, role, method: "claim" as const, args: {}, owner: "kemi.testnet" });
+  const intent = (sender: string, role: "heir" | "guardian" | "owner" | "participant" | "delay_signer") => ({ sender, role, method: "claim" as const, args: {}, owner: "kemi.testnet" });
   it("only sponsors people who hold the role in that plan", () => {
     expect(holdsRole(plan, intent("amara.testnet", "heir"))).toBe(true);
     expect(holdsRole(plan, intent("dayo.testnet", "heir"))).toBe(false);
@@ -95,6 +95,11 @@ describe("holdsRole", () => {
     expect(holdsRole(plan, intent("ngozi.testnet", "heir"))).toBe(false);
     expect(holdsRole(plan, intent("dayo.testnet", "participant"))).toBe(true);
     expect(holdsRole(plan, intent("stranger.testnet", "participant"))).toBe(false);
+  });
+  it("sponsors extension votes only for the plan's delay signers", () => {
+    expect(holdsRole({ ...plan, delay_signers: ["ife.testnet"] }, intent("ife.testnet", "delay_signer"))).toBe(true);
+    expect(holdsRole(plan, intent("ife.testnet", "delay_signer"))).toBe(false);
+    expect(holdsRole({ ...plan, delay_signers: ["ife.testnet"] }, intent("dayo.testnet", "delay_signer"))).toBe(false);
   });
 });
 

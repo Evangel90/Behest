@@ -4,7 +4,7 @@
 // Spec: docs/stage0/01-state-machine.md (T3–T6), 03-signing-boundary.md.
 
 import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
-import { VAULT_WITHDRAWAL, expectedCall, isEvm, type EthPort, type NearPort, type Store, type Transfer } from "./types.js";
+import { VAULT_WITHDRAWAL, expectedCall, isEvm, releasableFrom, type EthPort, type NearPort, type PlanView, type Store, type Transfer } from "./types.js";
 
 export interface EngineOptions {
   confirmations: number;
@@ -40,6 +40,7 @@ export class Engine {
     const [owners, config] = await Promise.all([this.near.listOpenReleases(), this.near.config()]);
     for (const owner of owners) {
       const view = await this.near.getPlan(owner);
+      if (view) await this.autoRelease(owner, view);
       const transfers = view?.plan.proposal?.transfers ?? [];
       const vault = transfers.some((t) => isEvm(t.asset)) ? await this.near.vaultAddress(owner) : null;
       for (const [index, t] of transfers.entries()) {
@@ -66,6 +67,26 @@ export class Engine {
       }
     }
     return out;
+  }
+
+  /**
+   * Automatic / hybrid release (D19): once the contract allows it, start each
+   * heir's pending transfers so nobody has to claim. Uses the chain clock; the
+   * contract re-checks everything. Started transfers are picked up next tick.
+   */
+  private async autoRelease(owner: string, view: PlanView) {
+    const pending = [...new Set((view.plan.proposal?.transfers ?? []).filter((t) => t.state === "Pending").map((t) => t.heir))];
+    if (pending.length === 0 || view.now_ms == null) return;
+    const from = releasableFrom(view, await this.near.getReleaseOptions(owner));
+    if (from == null || view.now_ms < from) return;
+    for (const heir of pending) {
+      try {
+        await this.near.release(owner, heir);
+        this.opts.log("released", { owner, heir });
+      } catch (e) {
+        this.opts.log("release error", { owner, heir, error: String(e) });
+      }
+    }
   }
 
   async handle(

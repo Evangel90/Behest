@@ -50,9 +50,23 @@ export interface PlanView {
   plan: {
     owner: string;
     version: number;
-    proposal: { id: number; transfers: Transfer[] } | null;
+    proposal: { id: number; waiting_ends_at_ms?: number | null; transfers: Transfer[] } | null;
   };
   status: string;
+  now_ms?: number;
+}
+
+/** Release mode part of the contract's release options (D19). */
+export interface ReleaseOptions {
+  mode: "Claim" | "Automatic" | "Hybrid";
+  hybrid_grace_ms: number;
+}
+
+/** When third parties may start a heir's pending transfers, or null if never. Mirrors `release`. */
+export function releasableFrom(view: PlanView, opts: ReleaseOptions | null): number | null {
+  const end = view.plan.proposal?.waiting_ends_at_ms;
+  if (!opts || opts.mode === "Claim" || end == null) return null;
+  return opts.mode === "Automatic" ? end : end + opts.hybrid_grace_ms;
 }
 
 export interface ContractConfig {
@@ -79,6 +93,9 @@ export interface NearPort {
   getVaultWithdrawal(owner: string): Promise<Transfer | null>;
   /** Re-sign a failed, never-broadcast withdrawal's nonce as a 0-ETH transfer. */
   cancelVaultWithdrawal(owner: string): Promise<void>;
+  getReleaseOptions(owner: string): Promise<ReleaseOptions | null>;
+  /** Start `heir`'s pending transfers (automatic / hybrid release, D19). */
+  release(owner: string, heir: string): Promise<void>;
 }
 
 export interface Receipt {
