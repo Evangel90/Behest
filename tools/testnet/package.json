@@ -1,0 +1,23 @@
+{
+  "name": "@behest/testnet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Testnet deployment and end-to-end demo scripts for Behest.",
+  "scripts": {
+    "deploy-contract": "tsx --env-file=../../.env src/deploy.ts",
+    "typecheck": "tsc --noEmit",
+    "e2e": "tsx --env-file=../../.env src/scenarios.ts",
+    "e2e-eth": "tsx --env-file=../../.env src/eth-scenario.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0",
+    "viem": "2.57.16",
+    "@behest/executor": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
