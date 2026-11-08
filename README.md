@@ -11,6 +11,7 @@ Non-custodial inheritance for digital assets, enforced by a NEAR contract and NE
 | `docs/stage0/` | Spec: state machine, permissions, signing boundary, schema, threat model, decisions |
 | `contracts/behest/` | Rust NEAR contract (near-sdk 5.x) |
 | `services/executor/` | TypeScript executor: broadcasts contract-signed Sepolia transfers, tracks confirmations, retries |
+| `apps/web/` | Next.js web app: landing, owner dashboard and setup, guardian approval, mobile heir claim, public inspector, “Try as…” personas |
 | `services/relayer/` | Gas relayer: pays NEAR gas (NEP-366 meta-transactions) so heirs, guardians and owner check-ins need no NEAR |
 | `tools/testnet/` | Testnet deploy script and live end-to-end scenarios |
 | `deployments/testnet.json` | Current testnet deployment (public account IDs, wasm hash) |
@@ -38,6 +39,23 @@ pnpm --filter @behest/executor start
 ```
 
 The executor holds no authority. It verifies that each signed transaction was signed by the plan's vault and matches the snapshot transfer, then broadcasts it and reports status. Anyone can run one; the admin registers executors with `add_executor`.
+
+## Web app
+
+```sh
+pnpm --filter @behest/relayer start     # in one terminal (sponsored gas)
+pnpm --filter @behest/web dev           # http://localhost:3000
+pnpm --filter @behest/web test          # plan-logic unit tests
+pnpm --filter @behest/web smoke         # live: Try-as sandbox → release → Settled, via the app's own signing code
+```
+
+Sign-in options:
+- **NEAR wallets** through NEAR Connect (HOT, Meteor, Intear, MyNearWallet, Ledger, WalletConnect). Wallets that can sign delegate actions get gas sponsored for heir, guardian and check-in calls.
+- **Ethereum wallets** (MetaMask and others) through NEAR Connect's Ethereum Wallets module, acting from the eth-implicit `0x…` NEAR account. These wallets can't sign delegate actions, so they pay their own gas.
+- **Email, Google or passkey** through NEAR Auth. Shown, but switched off until `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set, because NEAR has to issue that client ID.
+- **Try as…** (testnet only). `/api/demo` creates six funded accounts under `DEMO_FUNDER_ACCOUNT_ID` from public keys the browser generates. The private keys never leave the browser. Rate limits: 3 sandboxes per hour per IP and 30 per day.
+
+Heirs see the paper theme in plain language; hashes appear only under "Technical details". Anyone can open `/plan/<owner>?view=inspect`.
 
 ## Gas relayer
 
@@ -70,7 +88,12 @@ pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → 
 | `insufficient-fee-reserve` | Proposal refused when the ETH vault can't cover the network-fee reserve |
 | `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
-| `e2e-eth` | MPC-signed Sepolia transfer, 60 s executor outage with nothing lost, then broadcast and confirmation |
+| `e2e-eth` | Two ETH heirs with freshly generated Sepolia wallets: MPC signs nonces 0 and 1 in claim order, a 60 s executor outage loses nothing, the executor holds nonce 1 until nonce 0 is mined, each heir receives exactly its share, and test ETH is swept back to the funder |
+| `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
+
+### Found by the live runs: Sepolia gas rules changed
+
+Since Glamsterdam, the first value transfer to an address that has never been used costs about 207k gas instead of 21k. Our first two-heir run used fresh wallets, so both transfers reverted with a fixed 21k limit, and the vault still paid the fees. The gas limit is now admin config (testnet: 250k), snapshotted per proposal. The executor refuses to broadcast when the signed limit is below the estimate, and `reissue_reverted_transfer` recovers mined reverts. The deployed contract was upgraded in place with `deploy-contract ekkr6 --migrate`; old plans convert lazily, and the reverted plan was recovered live (docs/stage0/03-signing-boundary.md).
 
 ### Known MVP limitation surfaced by the live run
 
@@ -85,5 +108,5 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 5. [x] Executor: broadcast, idempotency, confirmation tracking, retry
 6. [x] Fee cap and reserve enforcement on retry
 7. [x] Gas relayer for heirs and guardians (pulled forward from Stage 2; D14)
-8. [ ] Role-based web app with policy and transaction previews
+8. [x] Role-based web app with policy and transaction previews
 9. [x] Deploy scripts and live testnet e2e (all scenarios passing; first Sepolia release: [0x38e3…b323](https://sepolia.etherscan.io/tx/0x38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323))

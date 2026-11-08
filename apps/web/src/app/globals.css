@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/* Open Ledger tokens (Behest design system). */
+@theme {
+  --color-paper: #F4F3EE;
+  --color-void: #0A0A0A;
+  --color-mint: #00E59B;
+  --color-mint-ink: #007A52;
+  --color-card: #FFFFFF;
+  --color-panel: #141414;
+  --color-ink: #0B0B0B;
+  --color-muted: #5E5D58;
+  --color-muted-dark: #A3A29C;
+  --color-line: #D6D4CC;
+  --color-line-soft: #EAE9E2;
+  --color-line-dark: #2A2A2A;
+  --color-grid: #1A1A1A;
+  --color-testnet: #FFB224;
+
+  --color-s-active: #00E59B;
+  --color-s-overdue: #FFB224;
+  --color-s-proposed: #FF8A3D;
+  --color-s-approved: #4DA3FF;
+  --color-s-waiting: #9B7BFF;
+  --color-s-eligible: #F5E14B;
+  --color-s-signing: #FF6FD8;
+  --color-s-broadcast: #34D5FF;
+  --color-s-cancelled: #A3A29C;
+  --color-s-failed: #FF5A4E;
+
+  --font-display: var(--font-space-grotesk), Inter, system-ui, sans-serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --radius-tag: 4px;
+  --radius-tile: 12px;
+  --radius-card: 24px;
+
+  --ease-ledger: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+html { background: var(--color-paper); color: var(--color-ink); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 3px; }
+.void :focus-visible { outline-color: var(--color-mint); }
+
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.marquee { animation: marquee 40s linear infinite; }
+@keyframes ring-in { from { r: 0; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .marquee { animation: none; }
+  * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}

@@ -1,0 +1,7 @@
+export const CONTRACT_ID = process.env.NEXT_PUBLIC_BEHEST_CONTRACT_ID ?? "behest-ekkr6.testnet";
+export const NEAR_RPC = process.env.NEXT_PUBLIC_NEAR_RPC_URL ?? "https://test.rpc.fastnear.com";
+export const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? "http://localhost:8787";
+export const SEPOLIA_RPC = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
+export const MPC_CONTRACT = "v1.signer-prod.testnet";
+export const NEAR_EXPLORER = "https://testnet.nearblocks.io";
+export const ETH_EXPLORER = "https://sepolia.etherscan.io";
