@@ -10,3 +10,6 @@ node_modules/
 .env.*
 .executor-state.json*
 !.env.example
+.testnet-wallets.json
+.next/
+*.tsbuildinfo

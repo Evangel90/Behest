@@ -40,8 +40,10 @@ export function saveDeployment(d: Deployment) {
   writeFileSync(DEPLOYMENT_FILE, JSON.stringify(d, null, 2) + "\n");
 }
 
+// Optimistic finality: `call` returns once its receipts executed optimistically,
+// and a "final" read can lag that by a block or two (seen as a flaky null proposal).
 export const view = <T>(contractId: string, method: string, args: Record<string, unknown> = {}) =>
-  provider.callFunction({ contractId, method, args }) as Promise<T>;
+  provider.callFunction({ contractId, method, args, blockQuery: { finality: "optimistic" } }) as Promise<T>;
 
 export async function call(
   signer: string,
@@ -71,3 +73,17 @@ export function setEnv(values: Record<string, string>) {
 }
 
 export const log = (msg: string, data?: unknown) => console.log(`• ${msg}`, data === undefined ? "" : JSON.stringify(data));
+
+/** A freshly created account's key can take a block or two to be visible to the RPC node. */
+export async function waitForKey(accountId: string, publicKey: string, timeoutMs = 30_000) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await provider.viewAccessKey({ accountId, publicKey, finalityQuery: { finality: "optimistic" } });
+      return;
+    } catch (e) {
+      if (Date.now() > end) throw e;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+}

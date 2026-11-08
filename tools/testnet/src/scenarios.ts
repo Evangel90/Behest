@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { sponsoredCall } from "@behest/relayer/client";
-import { account, call, loadDeployment, log, provider, view } from "./near.js";
+import { account, call, loadDeployment, log, provider, view, waitForKey } from "./near.js";
 
 const d = loadDeployment();
 const C = d.contract;
@@ -69,6 +69,7 @@ async function freshOwner(prefix: string): Promise<string> {
   const sub = `${prefix}${Date.now().toString(36)}`;
   const id = `${sub}.${d.owner}`;
   await account(d.owner).createSubAccount({ accountOrPrefix: sub, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("0.6") });
+  await waitForKey(id, kp.getPublicKey().toString());
   const dir = join(homedir(), ".near-credentials/testnet");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${id}.json`), JSON.stringify({ account_id: id, public_key: kp.getPublicKey().toString(), private_key: kp.toString() }), { mode: 0o600 });
@@ -175,7 +176,7 @@ const scenarios: Record<string, () => Promise<void>> = {
   /** ETH vault balance below the fee reserve: the proposal is refused. */
   async "insufficient-fee-reserve"() {
     const owner = await overduePlan("fees", { amaraEth: "0x71c7656ec7ab88b098defb751b7401b5f6d8976f" });
-    // reserve = 1 ETH heir × 21000 gas × 50 gwei cap = 0.00105 ETH
+    // reserve = 1 ETH heir × gas limit × fee cap (250k × 10 gwei = 0.0025 ETH on testnet)
     await expectError("E_INSUFFICIENT_FEE_RESERVE", () => call(G1, C, "propose_release", { owner, eth_balance: "1000000000000000" }));
     log("proposal refused: vault balance does not cover the network-fee reserve");
     await call(owner, C, "check_in", {});
