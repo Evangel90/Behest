@@ -1,5 +1,5 @@
 import { baseEncode } from "near-api-js";
-import { hexToBytes, keccak256, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, hexToBytes, keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Engine, type Outcome } from "../src/engine.js";
@@ -14,13 +14,14 @@ const GWEI = 1_000_000_000n;
 const CAP = 50n * GWEI;
 const OWNER = "owner.testnet";
 
-async function signed(opts: { nonce?: number; to?: Hex; value?: bigint; maxFee?: bigint; chainId?: number; signer?: typeof vaultKey } = {}) {
+async function signed(opts: { nonce?: number; to?: Hex; value?: bigint; data?: Hex; maxFee?: bigint; chainId?: number; signer?: typeof vaultKey } = {}) {
   return (opts.signer ?? vaultKey).signTransaction({
     type: "eip1559",
     chainId: opts.chainId ?? 11155111,
     nonce: opts.nonce ?? 0,
     to: opts.to ?? HEIR,
     value: opts.value ?? 1000n,
+    data: opts.data,
     gas: 21000n,
     maxFeePerGas: opts.maxFee ?? 20n * GWEI,
     maxPriorityFeePerGas: 2n * GWEI,
@@ -135,6 +136,32 @@ describe("Signed transfers", () => {
     near.transfers = [transfer("Signed")];
     expect(await run()).toBe("needs-human");
     expect(eth.sent).toEqual([]);
+  });
+
+  describe("ERC-20", () => {
+    const TOKEN = "0xfff9976782d46cc05630d1f6ebab18b2324d6b14" as Hex;
+    const call = (to: Hex, amount: bigint) => encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [to, amount] });
+    const tokenTransfer = () => transfer("Signed", { asset: { Erc20: TOKEN } });
+
+    it("broadcasts a token transfer whose calldata matches the snapshot", async () => {
+      near.raw = await signed({ to: TOKEN, value: 0n, data: call(HEIR as Hex, 1000n) });
+      near.transfers = [tokenTransfer()];
+      expect(await run()).toBe("broadcast");
+      expect(eth.sent).toEqual([near.raw]);
+    });
+
+    it.each([
+      ["recipient in calldata", { to: TOKEN, value: 0n, data: call("0x000000000000000000000000000000000000dEaD", 1000n) }],
+      ["amount in calldata", { to: TOKEN, value: 0n, data: call(HEIR as Hex, 1001n) }],
+      ["token contract", { to: "0x000000000000000000000000000000000000dEaD" as Hex, value: 0n, data: call(HEIR as Hex, 1000n) }],
+      ["attached ETH value", { to: TOKEN, value: 1n, data: call(HEIR as Hex, 1000n) }],
+      ["a plain ETH transfer", { to: HEIR as Hex, value: 1000n }],
+    ])("refuses a token tx with a different %s", async (_k, opts) => {
+      near.raw = await signed(opts);
+      near.transfers = [tokenTransfer()];
+      expect(await run()).toBe("needs-human");
+      expect(eth.sent).toEqual([]);
+    });
   });
 
   it("refuses to broadcast when the signed gas limit is below the estimate", async () => {

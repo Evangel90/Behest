@@ -4,7 +4,7 @@
 // Spec: docs/stage0/01-state-machine.md (T3–T6), 03-signing-boundary.md.
 
 import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
-import type { EthPort, NearPort, Store, Transfer } from "./types.js";
+import { expectedCall, isEvm, type EthPort, type NearPort, type Store, type Transfer } from "./types.js";
 
 export interface EngineOptions {
   confirmations: number;
@@ -41,9 +41,9 @@ export class Engine {
     for (const owner of owners) {
       const view = await this.near.getPlan(owner);
       const transfers = view?.plan.proposal?.transfers ?? [];
-      const vault = transfers.some((t) => t.asset === "Eth") ? await this.near.vaultAddress(owner) : null;
+      const vault = transfers.some((t) => isEvm(t.asset)) ? await this.near.vaultAddress(owner) : null;
       for (const [index, t] of transfers.entries()) {
-        if (t.asset !== "Eth" || !vault) continue;
+        if (!isEvm(t.asset) || !vault) continue;
         const key = `${owner}#${view!.plan.proposal!.id}#${index}`;
         try {
           out.set(key, await this.handle(owner, index, t, vault, BigInt(config.eth_max_fee_cap), config.eth_chain_id, key));
@@ -96,7 +96,8 @@ export class Engine {
       await this.near.reportFailed(owner, index, "BadSignature");
       return "reported-failure";
     }
-    if (tx.to?.toLowerCase() !== t.destination.toLowerCase() || tx.value !== BigInt(t.amount) || tx.chainId !== chainId) {
+    const want = expectedCall(t);
+    if (tx.to?.toLowerCase() !== want.to || (tx.value ?? 0n) !== want.value || (tx.data ?? "0x").toLowerCase() !== want.data || tx.chainId !== chainId) {
       this.opts.log("payload mismatch: refusing to broadcast", { key });
       return "needs-human";
     }
@@ -112,7 +113,7 @@ export class Engine {
     // more than 21k, so check before sending. Re-signing at the same nonce with
     // a higher limit (after the admin raises it) is safe.
     if (mem.hashes.length === 0) {
-      const need = await this.eth.estimateTransferGas(vault, tx.to as `0x${string}`, tx.value ?? 0n).catch(() => null);
+      const need = await this.eth.estimateTransferGas(vault, tx.to as `0x${string}`, tx.value ?? 0n, want.data as `0x${string}`).catch(() => null);
       if (need !== null && need > (tx.gas ?? 0n)) {
         this.opts.log("gas limit too low: refusing to broadcast", { key, signed: String(tx.gas), needed: String(need) });
         await this.near.reportFailed(owner, index, "GasLimitTooLow");

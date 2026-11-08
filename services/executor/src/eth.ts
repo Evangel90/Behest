@@ -24,6 +24,6 @@ export function createEthPort(rpcUrl: string): EthPort {
     },
     blockNumber: () => client.getBlockNumber(),
     minedNonce: (address) => client.getTransactionCount({ address, blockTag: "latest" }),
-    estimateTransferGas: (from, to, value) => client.estimateGas({ account: from, to, value }),
+    estimateTransferGas: (from, to, value, data) => client.estimateGas({ account: from, to, value, data: data && data !== "0x" ? data : undefined }),
   };
 }

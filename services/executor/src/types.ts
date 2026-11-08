@@ -13,7 +13,8 @@ export interface EthTxParams {
 
 export interface Transfer {
   heir: string;
-  asset: "Near" | "Eth";
+  /** ERC-20 transfers carry the lowercase token address. */
+  asset: Asset;
   destination: string;
   amount: string;
   state: TransferState;
@@ -22,6 +23,24 @@ export interface Transfer {
   attempts: number;
   tx_hash: string | null;
   failure: string | null;
+}
+
+export type Asset = "Near" | "Eth" | { Erc20: string };
+
+/** Paid from the plan's Ethereum vault (ETH or an allowlisted ERC-20). */
+export const isEvm = (a: Asset) => a !== "Near";
+
+/**
+ * The exact call a vault transaction must make for a transfer: ETH goes to the
+ * heir; a token transfer calls the token's `transfer(heir, amount)`.
+ * Mirrors `evm_call` in contracts/behest/src/lib.rs.
+ */
+export function expectedCall(t: Pick<Transfer, "asset" | "destination" | "amount">): { to: string; value: bigint; data: string } {
+  if (t.asset === "Near") throw new Error("not an EVM transfer");
+  if (t.asset === "Eth") return { to: t.destination.toLowerCase(), value: BigInt(t.amount), data: "0x" };
+  const word = (hex: string) => hex.padStart(64, "0");
+  const data = `0xa9059cbb${word(t.destination.toLowerCase().slice(2))}${word(BigInt(t.amount).toString(16))}`;
+  return { to: t.asset.Erc20.toLowerCase(), value: 0n, data };
 }
 
 export interface PlanView {
@@ -68,8 +87,8 @@ export interface EthPort {
   blockNumber(): Promise<bigint>;
   /** Count of mined txs from `address` (the next usable nonce). */
   minedNonce(address: `0x${string}`): Promise<number>;
-  /** Gas a plain value transfer `from → to` needs right now. */
-  estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint): Promise<bigint>;
+  /** Gas the call `from → to` (value, calldata) needs right now. */
+  estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint, data?: `0x${string}`): Promise<bigint>;
 }
 
 /**
