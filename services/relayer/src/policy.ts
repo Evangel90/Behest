@@ -82,7 +82,7 @@ export function check(sd: DecodedDelegate, contractId: string): CallIntent {
 }
 
 interface PlanRoles {
-  plan: { owner: string; policy: { guardians: string[]; heirs: { account_id: string }[] } };
+  plan: { owner: string; policy: { guardians: string[]; heirs: { account_id: string }[] }; proposal?: { transfers: { heir: string }[] } | null };
 }
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
@@ -94,7 +94,10 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
     case "guardian":
       return plan.plan.policy.guardians.includes(intent.sender);
     case "heir":
-      return plan.plan.policy.heirs.some((h) => h.account_id === intent.sender);
+      // A named alternate or the fallback holds a transfer once it was reassigned to them.
+      return plan.plan.policy.heirs.some((h) => h.account_id === intent.sender) || (plan.plan.proposal?.transfers ?? []).some((t) => t.heir === intent.sender);
+    case "participant":
+      return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender) || holdsRole(plan, { ...intent, role: "heir" });
   }
 }
 

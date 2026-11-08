@@ -7,6 +7,7 @@ export const SPONSORED_METHODS = {
   reject_release: "guardian",
   check_in: "owner",
   cancel_release: "owner",
+  reassign_unclaimed: "participant",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 export type Role = (typeof SPONSORED_METHODS)[SponsoredMethod];
