@@ -28,13 +28,15 @@ Derived states are computed in a single view function (`get_plan_status`) so the
 | P1 | create plan | owner | owner has no plan; schema valid (04); attached deposit ≥ storage cost | plan stored at `version = 1`; `last_check_in = now` | second call fails `PlanExists` |
 | P2 | replace plan | owner | plan exists; **no open proposal** | plan replaced, `version += 1`, also counts as a check-in | each call is a new version |
 | P3 | check in | owner | plan exists; `now < waiting_ends_at` if a proposal is in `Waiting` | `last_check_in = now`; if a proposal is open it is cancelled (P7) | repeating just moves `last_check_in` |
-| P4 | propose release | guardian | state `Overdue`; no open proposal; fee reserve check passes (03) | proposal stored with snapshot of plan version, balances, per-heir amounts; proposer's approval recorded | fails `ProposalExists` if one is open |
+| P4 | propose release | guardian; or a heir for a follow-up round (D21: a release settled and the owner hasn't checked in since) | state `Overdue`, or `Settled` (archived first); no open proposal; fee reserve check passes (03) | proposal stored with snapshot of plan version, balances (reported ones recorded for `get_release_snapshot`), per-heir amounts; a guardian proposer's approval recorded | fails `ProposalExists` if one is open |
 | P5 | approve | guardian | proposal `Proposed`; caller has not approved this proposal id | approval recorded; if approvals ≥ quorum: `approved_at = now`, `waiting_ends_at = now + waiting_period`, state `Waiting` | second approval by same guardian fails `AlreadyVoted` |
-| P6 | reject | guardian | proposal `Proposed`; caller has not voted | rejection recorded; if `guardians − rejections < quorum` the proposal is archived as `Rejected` and the plan returns to `Overdue` | second vote fails `AlreadyVoted` |
+| P6 | reject | guardian | proposal `Proposed`; caller has not voted | rejection recorded; if `guardians − rejections < quorum` the proposal is dropped like a cancel (NEAR, NEP-141 shares and the token-registration reserve return to escrow) and the plan returns to `Overdue` | second vote fails `AlreadyVoted` |
 | P7 | cancel | owner | proposal `Proposed`, or `Waiting` with `now < waiting_ends_at` | proposal archived as `Cancelled`; `last_check_in = now`; plan `Active` | cancelling with no open proposal fails `NoProposal` |
 | P8 | claim | heir | state `Eligible` or `Executing`; heir has `Pending` or retryable transfers | starts each of the heir's transfers (T1) | already-started transfers are skipped, not duplicated |
 | P9 | withdraw NEAR | owner | state `Active`/`Overdue`; no open proposal | sends NEAR from the plan's escrow to the owner | amount ≤ escrow balance |
 | P10 | deposit NEAR | anyone | plan exists; no open proposal | escrow balance increases | additive |
+
+**After `Settled` (D21):** the next check-in, deposit, plan edit or proposal first moves the settled release to the plan's history (`get_release_history`, last 5) and records its fixed amounts as paid. The plan is then `Active` (after a check-in) or `Overdue`, so a follow-up round can distribute anything left; fixed amounts are paid once across rounds.
 
 **Last cancellation point:** `waiting_ends_at`. P3 and P7 are rejected at or after it; P8 is rejected before it. The two windows never overlap.
 

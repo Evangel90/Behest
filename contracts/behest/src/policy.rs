@@ -1,8 +1,9 @@
+use near_sdk::json_types::U128;
 use near_sdk::AccountId;
 use std::collections::HashSet;
 
 use crate::errors::{fail, Error};
-use crate::types::{Asset, ModeOverride, PlanInput, Recipient, ReleaseMode, ReleaseOptions, ReleaseRules};
+use crate::types::{Asset, FixedAmount, ModeOverride, PlanInput, Recipient, ReleaseMode, ReleaseOptions, ReleaseRules};
 
 pub const MAX_HEIRS: usize = 10;
 pub const MAX_GUARDIANS: usize = 10;
@@ -233,12 +234,20 @@ pub fn mode_for(o: &ReleaseOptions, heir: &AccountId, asset: &Asset) -> (Release
 /// (`eligible`) receive; the shares of the others stay undistributed.
 /// Returns one amount per heir, in plan order.
 pub fn split(total: u128, p: &PlanInput, rules: &ReleaseRules, asset: &Asset, eligible: impl Fn(usize) -> bool) -> Vec<u128> {
+    split_detailed(total, p, rules, asset, eligible).0
+}
+
+/// `split`, plus the part of each heir's amount that came from fixed
+/// amounts (D21: fixed amounts are paid once across release rounds).
+pub fn split_detailed(total: u128, p: &PlanInput, rules: &ReleaseRules, asset: &Asset, eligible: impl Fn(usize) -> bool) -> (Vec<u128>, Vec<u128>) {
     let mut out = vec![0u128; p.heirs.len()];
+    let mut fixed = vec![0u128; p.heirs.len()];
     let mut left = total;
     for f in rules.fixed.iter().filter(|f| &f.asset == asset) {
         if let Some(i) = p.heirs.iter().position(|h| h.account_id == f.heir).filter(|i| eligible(*i)) {
             let paid = f.amount.0.min(left);
             out[i] += paid;
+            fixed[i] += paid;
             left -= paid;
         }
     }
@@ -253,7 +262,23 @@ pub fn split(total: u128, p: &PlanInput, rules: &ReleaseRules, asset: &Asset, el
     if let Some(i) = rules.remainder_to.as_ref().and_then(|a| p.heirs.iter().position(|h| &h.account_id == a)).filter(|i| eligible(*i)) {
         out[i] += left - shared;
     }
-    out
+    (out, fixed)
+}
+
+/// The rules with each fixed amount reduced by what earlier rounds already
+/// paid that heir in that asset (saturating; a fully paid one drops out).
+pub fn rules_after_paid(rules: &ReleaseRules, paid: &[FixedAmount]) -> ReleaseRules {
+    let mut r = rules.clone();
+    let mut done: Vec<FixedAmount> = paid.to_vec();
+    for f in r.fixed.iter_mut() {
+        if let Some(d) = done.iter_mut().find(|d| d.heir == f.heir && d.asset == f.asset) {
+            let used = d.amount.0.min(f.amount.0);
+            f.amount = U128(f.amount.0 - used);
+            d.amount = U128(d.amount.0 - used);
+        }
+    }
+    r.fixed.retain(|f| f.amount.0 > 0);
+    r
 }
 
 /// `floor(total * bps / 10_000)`; the remainder stays undistributed (D12).

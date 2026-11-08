@@ -2372,3 +2372,144 @@ mod btc_flow {
         assert!(!AssetGroup::Ethereum.contains(&Asset::Btc));
     }
 }
+
+// ------------------------------------------------- D21 follow-up rounds
+
+mod follow_up {
+    use super::*;
+
+    fn o() -> AccountId {
+        acc("owner.testnet")
+    }
+
+    /// Runs a NEAR-only release to Settled and returns the env.
+    fn settle(mut e: Env) -> Env {
+        let id = e.as_("g1.testnet", 0).propose_release(o(), None, None, None);
+        e.as_("g2.testnet", 0).approve_release(o(), id);
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        let _ = e.as_("tobi.testnet", 0).claim(o());
+        let n = e.plan().proposal.unwrap().transfers.len() as u32;
+        for k in 0..n {
+            e.callback(vec![PromiseResult::Successful(vec![])]).on_near_transfer(o(), k);
+        }
+        assert_eq!(e.status(), PlanStatus::Settled);
+        e
+    }
+
+    fn near_amounts(e: &mut Env) -> Vec<(String, u128)> {
+        e.plan().proposal.unwrap().transfers.iter().filter(|t| t.asset == Asset::Near).map(|t| (t.heir.to_string(), t.amount.0)).collect()
+    }
+
+    #[test]
+    fn owner_can_check_in_and_deposit_after_a_settled_release() {
+        let mut e = settle(funded_overdue());
+        e.as_("owner.testnet", 0).check_in();
+        assert_eq!(e.status(), PlanStatus::Active);
+        assert!(e.plan().proposal.is_none());
+        e.as_("owner.testnet", NEAR).deposit(o());
+        assert_eq!(e.plan().escrow.0, NEAR);
+        let h = e.as_("x.testnet", 0).get_release_history(o());
+        assert_eq!(h.len(), 1);
+        assert!(h[0].transfers.iter().all(|t| t.state == TransferState::Confirmed));
+    }
+
+    #[test]
+    fn snapshot_records_reported_external_balances() {
+        let mut e = funded_overdue();
+        e.as_("g1.testnet", 0).propose_release(o(), Some(U128(NEAR)), None, None);
+        let s = e.as_("x.testnet", 0).get_release_snapshot(o());
+        assert_eq!(s, vec![(Asset::Near, U128(10 * NEAR)), (Asset::Eth, U128(NEAR))]);
+    }
+
+    #[test]
+    fn settled_release_shows_in_history_before_it_is_archived() {
+        let mut e = settle(funded_overdue());
+        assert_eq!(e.as_("x.testnet", 0).get_release_history(o()).len(), 1);
+    }
+
+    #[test]
+    fn heir_starts_a_follow_up_for_a_later_deposit_and_guardians_approve() {
+        let mut e = settle(funded_overdue());
+        e.as_("friend.testnet", 5 * NEAR).deposit(o());
+        assert_eq!(e.status(), PlanStatus::Overdue);
+        let id = e.as_("amara.testnet", 0).propose_release(o(), None, None, None);
+        let p = e.plan().proposal.unwrap();
+        assert_eq!((p.id, p.approvals.len(), p.proposer.as_str()), (id, 0, "amara.testnet"));
+        assert_eq!(near_amounts(&mut e), vec![("amara.testnet".into(), 3 * NEAR), ("tobi.testnet".into(), 2 * NEAR)]);
+        assert_eq!(e.as_("x.testnet", 0).get_release_snapshot(o()), vec![(Asset::Near, U128(5 * NEAR))]);
+        e.as_("g1.testnet", 0).approve_release(o(), id);
+        assert_eq!(e.status(), PlanStatus::Proposed);
+        e.as_("g3.testnet", 0).approve_release(o(), id);
+        assert_eq!(e.status(), PlanStatus::Waiting);
+        // the owner can still stop it
+        e.as_("owner.testnet", 0).cancel_release();
+        assert_eq!(e.plan().escrow.0, 5 * NEAR);
+        assert!(e.as_("x.testnet", 0).get_release_snapshot(o()).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "E_NOT_GUARDIAN")]
+    fn heir_cannot_start_the_first_round() {
+        let mut e = funded_overdue();
+        e.as_("amara.testnet", 0).propose_release(o(), None, None, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_NOT_GUARDIAN")]
+    fn heir_cannot_start_a_round_once_the_owner_is_back() {
+        let mut e = settle(funded_overdue());
+        e.as_("owner.testnet", 0).check_in();
+        e.advance(97 * DAY);
+        e.as_("amara.testnet", 0).propose_release(o(), None, None, None);
+    }
+
+    #[test]
+    fn fixed_amounts_are_paid_once_across_rounds() {
+        let mut e = Env::new();
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules {
+            fixed: vec![FixedAmount { heir: acc("tobi.testnet"), asset: Asset::Near, amount: U128(3 * NEAR) }],
+            ..Default::default()
+        }));
+        e.as_("owner.testnet", 10 * NEAR).deposit(o());
+        e.advance(97 * DAY);
+        let id = e.as_("g1.testnet", 0).propose_release(o(), None, None, None);
+        // 3 fixed to Tobi, then 60/40 of 7
+        assert_eq!(near_amounts(&mut e), vec![("amara.testnet".into(), 42 * NEAR / 10), ("tobi.testnet".into(), 58 * NEAR / 10)]);
+        e.as_("g2.testnet", 0).reject_release(o(), id);
+        e.as_("g3.testnet", 0).reject_release(o(), id);
+        // a rejected round paid nothing: the fixed amount still applies
+        assert!(e.as_("x.testnet", 0).get_fixed_paid(o()).is_empty());
+        let mut e = settle(e);
+        assert_eq!(e.as_("x.testnet", 0).get_fixed_paid(o()), vec![]); // recorded on archive
+        e.as_("friend.testnet", 5 * NEAR).deposit(o());
+        let paid = e.as_("x.testnet", 0).get_fixed_paid(o());
+        assert_eq!(paid, vec![FixedAmount { heir: acc("tobi.testnet"), asset: Asset::Near, amount: U128(3 * NEAR) }]);
+        e.as_("g1.testnet", 0).propose_release(o(), None, None, None);
+        assert_eq!(near_amounts(&mut e), vec![("amara.testnet".into(), 3 * NEAR), ("tobi.testnet".into(), 2 * NEAR)]);
+    }
+
+    #[test]
+    fn rejection_returns_tokens_and_the_registration_reserve() {
+        let mut e = with_wnear();
+        assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 0);
+        e.advance(97 * DAY);
+        let id = e.as_("g1.testnet", 0).propose_release(o(), None, None, None);
+        assert_eq!(ft_escrow_of(&mut e), 0);
+        e.as_("g2.testnet", 0).reject_release(o(), id);
+        e.as_("g3.testnet", 0).reject_release(o(), id);
+        assert!(e.plan().proposal.is_none());
+        assert_eq!(ft_escrow_of(&mut e), 1_000);
+        assert_eq!(e.plan().escrow.0, 10 * NEAR);
+    }
+
+    #[test]
+    fn token_deposit_accepted_after_a_settled_release() {
+        let mut e = with_wnear();
+        e.advance(97 * DAY);
+        let mut e = settle(e);
+        assert_eq!(ft_deposit(&mut e, WNEAR, "friend.testnet", 500, "owner.testnet"), 0);
+        assert_eq!(ft_escrow_of(&mut e), 500);
+    }
+}

@@ -239,7 +239,12 @@ impl Contract {
             policy::validate_options(&owner, &policy, o);
         }
         self.migrate_plan(&owner);
+        if self.plans.contains_key(&owner) {
+            self.archive_settled(&owner);
+        }
         let storage_before = env::storage_usage();
+        // A new plan version restates the owner's wishes: fixed amounts count afresh.
+        env::storage_remove(&fixed_paid_key(&owner));
 
         let version = match self.plans.get_mut(&owner) {
             Some(existing) => {
@@ -279,6 +284,7 @@ impl Contract {
     /// P3. During `Proposed`/`Waiting` this also cancels the proposal (P7).
     pub fn check_in(&mut self) {
         let owner = caller();
+        self.archive_settled(&owner);
         let had_proposal = self.plan_ref(&owner).proposal.is_some();
         if had_proposal {
             self.cancel_inner(&owner);
@@ -299,6 +305,7 @@ impl Contract {
     #[payable]
     pub fn deposit(&mut self, owner: AccountId) {
         let amount = env::attached_deposit().as_yoctonear();
+        self.archive_settled(&owner);
         let plan = self.plan_mut(&owner);
         if plan.proposal.is_some() {
             fail(Error::ProposalOpen);
@@ -332,6 +339,7 @@ impl Contract {
             fail(Error::ProposalOpen);
         }
         let storage_before = env::storage_usage();
+        env::storage_remove(&fixed_paid_key(&owner));
         match rules {
             Some(r) => {
                 let r = policy::validate_rules(&owner, &plan.policy, r, |a| btc_dest(&owner, a).is_some());
@@ -438,9 +446,12 @@ impl Contract {
                 Err(_) => return PromiseOrValue::Value(amount),
             }
         };
-        match self.read_plan(&owner) {
-            Some(plan) if plan.proposal.is_none() => {}
-            _ => return PromiseOrValue::Value(amount),
+        if self.read_plan(&owner).is_none() {
+            return PromiseOrValue::Value(amount);
+        }
+        self.archive_settled(&owner);
+        if self.read_plan(&owner).is_some_and(|p| p.proposal.is_some()) {
+            return PromiseOrValue::Value(amount);
         }
         set_ft_escrow(&token, &owner, ft_escrow(&token, &owner) + amount.0);
         emit("ft_deposit", near_sdk::serde_json::json!({"owner": owner, "token": token, "sender": sender_id, "amount": amount}));
@@ -650,6 +661,32 @@ impl Contract {
         read_btx_versions(&owner, index, pid)
     }
 
+    /// D21. Settled releases moved off the plan, oldest first (at most MAX_HISTORY).
+    pub fn get_release_history(&self, owner: AccountId) -> Vec<Proposal> {
+        let mut h = read_history(&owner);
+        // a settled release not yet archived is history too
+        if let Some(p) = self.read_plan(&owner).and_then(|p| p.proposal) {
+            if p.waiting_ends_at_ms.is_some() && p.transfers.iter().all(|t| t.state == TransferState::Confirmed) {
+                h.push(p);
+            }
+        }
+        h
+    }
+
+    /// D21. Balances the open proposal was built from: NEAR and NEP-141 as
+    /// counted by the contract, ETH, ERC-20 and BTC as reported by the proposer.
+    pub fn get_release_snapshot(&self, owner: AccountId) -> Vec<(Asset, U128)> {
+        if self.read_plan(&owner).and_then(|p| p.proposal).is_none() {
+            return vec![];
+        }
+        env::storage_read(&snapshot_key(&owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    /// D21. Fixed amounts already paid by earlier rounds, per heir and asset.
+    pub fn get_fixed_paid(&self, owner: AccountId) -> Vec<FixedAmount> {
+        read_fixed_paid(&owner)
+    }
+
     pub fn get_btc_release(&self, owner: AccountId) -> Option<BtcRelease> {
         let id = self.read_plan(&owner)?.proposal?.id;
         read_btc_release(&owner).filter(|r| r.proposal_id == id)
@@ -799,10 +836,18 @@ impl Contract {
         let fee_cap = self.eth_max_fee_cap.0;
         let gas_limit = self.eth_gas_limit;
         let t = now();
-        let plan = self.plan_mut(&owner);
-        if !plan.policy.guardians.contains(&g) {
+        self.archive_settled(&owner);
+        // D21: after a settled release the owner hasn't checked in since, a
+        // follow-up round may distribute what is left; heirs can start it too
+        // (they lose if a balance was under-reported). Guardians still approve.
+        let is_guardian = self.plan_ref(&owner).policy.guardians.contains(&g);
+        let follow_up = last_settled_at(&owner).is_some_and(|at| at > self.plan_ref(&owner).last_check_in_ms);
+        let is_heir = self.plan_ref(&owner).policy.heirs.iter().any(|h| h.account_id == g);
+        if !is_guardian && !(follow_up && is_heir) {
             fail(Error::NotGuardian);
         }
+        let paid = read_fixed_paid(&owner);
+        let plan = self.plan_mut(&owner);
         if plan.proposal.is_some() {
             fail(Error::ProposalExists);
         }
@@ -819,7 +864,7 @@ impl Contract {
         // NEP-141: each token's escrow is split like NEAR among heirs with a
         // NEAR destination. Registering a heir with a token (NEP-145) costs
         // NEAR, reserved here from the plan's escrow so heirs need none.
-        let rules = read_rules(&owner).unwrap_or_default();
+        let rules = policy::rules_after_paid(&read_rules(&owner).unwrap_or_default(), &paid);
         let pol = plan.policy.clone();
         let near_ok = |i: usize| pol.heirs[i].near_destination.is_some();
         let eth_ok = |i: usize| pol.heirs[i].eth_destination.is_some();
@@ -829,6 +874,7 @@ impl Contract {
         // change. The reserve covers each at the fee-rate cap: the first spends
         // the reported coins, the rest one change output each.
         let btc_utxos = btc_utxos.unwrap_or_default();
+        let btc_utxos_reported = btc_utxos.clone();
         let btc_heirs = (0..pol.heirs.len()).filter(|i| btc_ok(*i)).count() as u64;
         let (btc_total, btc_reserve) = if btc_heirs > 0 && !btc_utxos.is_empty() {
             if btc_pubkey(&owner).is_none() {
@@ -882,15 +928,25 @@ impl Contract {
         };
 
         // One transfer per heir per asset: fixed amount + share (+ remainder).
-        let near_split = policy::split(near_total, &pol, &rules, &Asset::Near, near_ok);
-        let ft_splits: Vec<Vec<u128>> = ft_snap.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Nep141(t.clone()), near_ok)).collect();
-        let eth_split = policy::split(eth_total, &pol, &rules, &Asset::Eth, eth_ok);
-        let erc_splits: Vec<Vec<u128>> = tokens.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Erc20(t.clone()), eth_ok)).collect();
+        // Each split also yields its fixed part, recorded as paid once this round settles.
+        let mut fixed_round: Vec<FixedAmount> = vec![];
+        let mut split = |total: u128, asset: Asset, ok: &dyn Fn(usize) -> bool, dust: u128| -> Vec<u128> {
+            let (out, fixed) = policy::split_detailed(total, &pol, &rules, &asset, ok);
+            let out: Vec<u128> = out.into_iter().map(|a| if a < dust { 0 } else { a }).collect();
+            for (i, f) in fixed.iter().enumerate() {
+                let f = (*f).min(out[i]);
+                if f > 0 {
+                    fixed_round.push(FixedAmount { heir: pol.heirs[i].account_id.clone(), asset: asset.clone(), amount: U128(f) });
+                }
+            }
+            out
+        };
+        let near_split = split(near_total, Asset::Near, &near_ok, 0);
+        let ft_splits: Vec<Vec<u128>> = ft_snap.iter().map(|(t, b)| split(*b, Asset::Nep141(t.clone()), &near_ok, 0)).collect();
+        let eth_split = split(eth_total, Asset::Eth, &eth_ok, 0);
+        let erc_splits: Vec<Vec<u128>> = tokens.iter().map(|(t, b)| split(*b, Asset::Erc20(t.clone()), &eth_ok, 0)).collect();
         // Outputs below the dust limit aren't relayed: such a share stays in the vault.
-        let btc_split: Vec<u128> = policy::split(btc_total as u128, &pol, &rules, &Asset::Btc, btc_ok)
-            .into_iter()
-            .map(|a| if a < btc::DUST as u128 { 0 } else { a })
-            .collect();
+        let btc_split = split(btc_total as u128, Asset::Btc, &btc_ok, btc::DUST as u128);
         let mut transfers = Vec::new();
         let near_reserved: u128 = near_split.iter().sum();
         for (i, h) in pol.heirs.iter().enumerate() {
@@ -955,8 +1011,27 @@ impl Contract {
             eth_gas_limit: gas_limit,
         });
         self.open_releases.insert(owner.clone());
-        emit("release_proposed", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id, "proposer": g}));
-        self.vote(owner, id, true);
+        // D21: what the proposer reported (or the contract counted), so
+        // approvers and auditors can compare it with the live vault.
+        let mut snap: Vec<(Asset, U128)> = vec![(Asset::Near, U128(near_total))];
+        snap.extend(ft_snap.iter().map(|(t, b)| (Asset::Nep141(t.clone()), U128(*b))));
+        if eth_balance > 0 {
+            snap.push((Asset::Eth, U128(eth_balance)));
+        }
+        snap.extend(tokens.iter().map(|(t, b)| (Asset::Erc20(t.clone()), U128(*b))));
+        if btc_total > 0 {
+            snap.push((Asset::Btc, U128(btc_utxos_reported.iter().map(|u| u.value.0 as u128).sum())));
+        }
+        env::storage_write(&snapshot_key(&owner), &near_sdk::borsh::to_vec(&snap).expect("borsh"));
+        if fixed_round.is_empty() {
+            env::storage_remove(&fixed_round_key(&owner));
+        } else {
+            env::storage_write(&fixed_round_key(&owner), &near_sdk::borsh::to_vec(&fixed_round).expect("borsh"));
+        }
+        emit("release_proposed", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id, "proposer": g, "follow_up": follow_up}));
+        if is_guardian {
+            self.vote(owner, id, true);
+        }
         id
     }
 
@@ -1487,6 +1562,37 @@ pub fn status_of(plan: &Plan, t: u64) -> PlanStatus {
 
 fn withdrawal_key(owner: &AccountId) -> Vec<u8> {
     [WITHDRAWAL_PREFIX, owner.as_bytes()].concat()
+}
+
+const MAX_HISTORY: usize = 5;
+
+fn history_key(owner: &AccountId) -> Vec<u8> {
+    format!("hist:{owner}").into_bytes()
+}
+
+fn read_history(owner: &AccountId) -> Vec<Proposal> {
+    env::storage_read(&history_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// When the latest archived release was proposed (its round began).
+fn last_settled_at(owner: &AccountId) -> Option<u64> {
+    read_history(owner).last().map(|p| p.created_at_ms)
+}
+
+fn snapshot_key(owner: &AccountId) -> Vec<u8> {
+    format!("snap:{owner}").into_bytes()
+}
+
+fn fixed_paid_key(owner: &AccountId) -> Vec<u8> {
+    format!("fixp:{owner}").into_bytes()
+}
+
+fn fixed_round_key(owner: &AccountId) -> Vec<u8> {
+    format!("fixr:{owner}").into_bytes()
+}
+
+fn read_fixed_paid(owner: &AccountId) -> Vec<FixedAmount> {
+    env::storage_read(&fixed_paid_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn read_withdrawal(owner: &AccountId) -> Option<Transfer> {
@@ -2233,24 +2339,61 @@ impl Contract {
             }
         }
         let id = p.id;
+        self.unwind_proposal(owner);
+        emit("release_cancelled", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id}));
+    }
+
+    /// Drops an unexecuted proposal and returns everything it reserved: NEAR
+    /// and NEP-141 shares to escrow, the token-registration reserve, and the
+    /// Bitcoin release record. Shared by cancel (P7) and rejection (P6).
+    fn unwind_proposal(&mut self, owner: &AccountId) {
+        let plan = self.plan_mut(owner);
+        let p = plan.proposal.take().unwrap_or_else(|| fail(Error::NoProposal));
         let reserved: u128 = p.transfers.iter().filter(|x| x.asset == Asset::Near).map(|x| x.amount.0).sum();
-        let tokens: Vec<(AccountId, u128)> = p
-            .transfers
-            .iter()
-            .filter_map(|x| match &x.asset {
-                Asset::Nep141(t) => Some((t.clone(), x.amount.0)),
-                _ => None,
-            })
-            .collect();
         plan.escrow = U128(plan.escrow.0 + reserved + ft_reserve(owner));
-        plan.proposal = None;
         set_ft_reserve(owner, 0);
         env::storage_remove(&btc_release_key(owner));
-        for (token, amount) in tokens {
-            set_ft_escrow(&token, owner, ft_escrow(&token, owner) + amount);
+        env::storage_remove(&fixed_round_key(owner));
+        env::storage_remove(&snapshot_key(owner));
+        for x in &p.transfers {
+            if let Asset::Nep141(t) = &x.asset {
+                set_ft_escrow(t, owner, ft_escrow(t, owner) + x.amount.0);
+            }
         }
         self.open_releases.remove(owner);
-        emit("release_cancelled", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id}));
+    }
+
+    /// D21. A settled release (every transfer confirmed) is moved to the
+    /// plan's release history, so the plan can check in, take deposits and
+    /// run a follow-up round. Its fixed amounts are recorded as paid.
+    fn archive_settled(&mut self, owner: &AccountId) -> bool {
+        let settled = self.read_plan(owner).and_then(|p| p.proposal).is_some_and(|p| p.waiting_ends_at_ms.is_some() && p.transfers.iter().all(|t| t.state == TransferState::Confirmed));
+        if !settled {
+            return false;
+        }
+        let p = self.plan_mut(owner).proposal.take().expect("checked");
+        let mut paid = read_fixed_paid(owner);
+        let round: Vec<FixedAmount> = env::storage_read(&fixed_round_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default();
+        for f in round {
+            match paid.iter_mut().find(|d| d.heir == f.heir && d.asset == f.asset) {
+                Some(d) => d.amount = U128(d.amount.0 + f.amount.0),
+                None => paid.push(f),
+            }
+        }
+        env::storage_write(&fixed_paid_key(owner), &near_sdk::borsh::to_vec(&paid).expect("borsh"));
+        env::storage_remove(&fixed_round_key(owner));
+        env::storage_remove(&btc_release_key(owner));
+        env::storage_remove(&snapshot_key(owner));
+        let id = p.id;
+        let mut hist = read_history(owner);
+        hist.push(p);
+        if hist.len() > MAX_HISTORY {
+            hist.remove(0);
+        }
+        env::storage_write(&history_key(owner), &near_sdk::borsh::to_vec(&hist).expect("borsh"));
+        self.open_releases.remove(owner);
+        emit("release_archived", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id}));
+        true
     }
 
     fn vote(&mut self, owner: AccountId, proposal_id: u64, approve: bool) {
@@ -2284,10 +2427,7 @@ impl Contract {
         } else {
             p.rejections.push(g.clone());
             if guardian_count - p.rejections.len() < quorum {
-                let reserved: u128 = p.transfers.iter().filter(|x| x.asset == Asset::Near).map(|x| x.amount.0).sum();
-                plan.escrow = U128(plan.escrow.0 + reserved);
-                plan.proposal = None;
-                self.open_releases.remove(&owner);
+                self.unwind_proposal(&owner);
                 emit("release_rejected", near_sdk::serde_json::json!({"owner": owner, "proposal_id": proposal_id}));
                 return;
             }

@@ -10,7 +10,7 @@
 | Cancel proposal (before `waiting_ends_at`) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Deposit NEAR to plan escrow | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Withdraw NEAR from escrow | ✓ (no open proposal) | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Propose release | ✗ | ✓ (when `Overdue`) | ✗ | ✗ | ✗ | ✗ |
+| Propose release | ✗ | ✓ (when `Overdue`, or after a settled release) | ✓ (follow-up round only: a release settled and the owner hasn't checked in since; D21) | ✗ | ✗ | ✗ |
 | Approve / reject proposal | ✗ | ✓ (once per proposal) | ✗ | ✗ | ✗ | ✗ |
 | Claim own share | ✗ | ✗ | ✓ (own only, after `waiting_ends_at`) | ✗ | ✗ | ✗ |
 | Retry a failed ETH transfer | ✗ | ✗ | ✓ (own) | ✓ | ✗ | ✗ |
