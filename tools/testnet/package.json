@@ -12,6 +12,7 @@
     "reissue": "tsx --env-file=../../.env src/reissue.ts",
     "bootstrap": "tsx --env-file=../../.env src/bootstrap.ts",
     "e2e-partial": "tsx --env-file=../../.env src/partial-scenario.ts",
+    "e2e-auto": "tsx --env-file=../../.env src/auto-scenario.ts",
     "e2e-rules": "tsx --env-file=../../.env src/rules-scenario.ts",
     "e2e-nep141": "tsx --env-file=../../.env src/nep141-scenario.ts",
     "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
