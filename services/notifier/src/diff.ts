@@ -18,7 +18,7 @@ export interface PlanView {
       id: number;
       approvals: string[];
       waiting_ends_at_ms: number | null;
-      transfers: { heir: string; asset: string; amount: string; state: string; failure: string | null; attempts: number }[];
+      transfers: { heir: string; asset: string | { Erc20: string }; amount: string; state: string; failure: string | null; attempts: number }[];
     };
     proposals_opened: number;
   };
@@ -66,7 +66,7 @@ export function notices(prev: PlanView | null, cur: PlanView): Notice[] {
     }
     p.transfers.forEach((t, i) => {
       if (t.state === "Failed") {
-        out.push({ key: `${o}:failed:${p.id}:${i}:${t.attempts}:${t.failure ?? "?"}`, owner: o, kind: "transfer_failed", to: ["heirs"], text: `${name(t.heir)}'s ${t.asset} transfer from ${who}'s plan failed (${t.failure ?? "unknown"}). The funds are safe and it can be retried.` });
+        out.push({ key: `${o}:failed:${p.id}:${i}:${t.attempts}:${t.failure ?? "?"}`, owner: o, kind: "transfer_failed", to: ["heirs"], text: `${name(t.heir)}'s ${typeof t.asset === "object" ? "token" : t.asset.toUpperCase()} transfer from ${who}'s plan failed (${t.failure ?? "unknown"}). The funds are safe and it can be retried.` });
       }
     });
     if (cur.status === "Settled") {

@@ -8,12 +8,12 @@ import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } fro
 import { Pulse } from "@/components/Pulse";
 import { Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
-import { ethBalance, getConfig, vaultAddress } from "@/lib/contract";
+import { ethBalance, getConfig, tokenBalances, vaultAddress } from "@/lib/contract";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
-import { actionsFor, describePlan, duration, failureText, formatAmount, formatEth, formatNear, parseNear, relative, rolesOf, shortAddr, shortName, type Role } from "@/lib/plan";
+import { actionsFor, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, vaultSplit, type Role } from "@/lib/plan";
 import { useSession } from "@/lib/session";
-import type { ContractConfig, PlanView } from "@/lib/types";
+import type { ContractConfig, Erc20Token, PlanView } from "@/lib/types";
 
 type Tab = Role | "public";
 
@@ -92,16 +92,24 @@ interface Props {
   refresh?: () => Promise<void>;
 }
 
+interface Vault {
+  address: Hex;
+  balance: bigint | null;
+  /** Allowlisted tokens with their vault balance (null while unread or on error). */
+  tokens: { token: Erc20Token; balance: bigint | null }[];
+}
+
 function useVault(owner: string) {
-  const [vault, setVault] = useState<{ address: Hex; balance: bigint | null } | null>(null);
+  const [vault, setVault] = useState<Vault | null>(null);
   useEffect(() => {
     let off = false;
     (async () => {
-      const address = await vaultAddress(owner).catch(() => null);
+      const [address, cfg] = await Promise.all([vaultAddress(owner).catch(() => null), getConfig().catch(() => null)]);
       if (!address || off) return;
-      setVault({ address, balance: null });
-      const balance = await ethBalance(address).catch(() => null);
-      if (!off) setVault({ address, balance });
+      const list = cfg?.erc20_tokens ?? [];
+      setVault({ address, balance: null, tokens: list.map((token) => ({ token, balance: null })) });
+      const [balance, toks] = await Promise.all([ethBalance(address).catch(() => null), tokenBalances(address, list)]);
+      if (!off) setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })) });
     })();
     return () => {
       off = true;
@@ -265,8 +273,11 @@ function GuardianView({ view, now, refresh }: Props) {
   const s = view.status;
   const p = view.plan.proposal;
   const ethHeirs = view.plan.policy.heirs.filter((h) => h.eth_destination).length;
-  const reserve = cfg ? BigInt(ethHeirs) * BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap) : null;
-  const ethToSplit = vault?.balance != null && reserve != null ? (vault.balance > reserve ? vault.balance - reserve : 0n) : null;
+  const heldTokens = (vault?.tokens ?? []).filter((t) => t.balance != null && t.balance > 0n);
+  const split =
+    cfg && vault?.balance != null
+      ? vaultSplit({ ethHeirs, ethBalance: vault.balance, tokenBalances: heldTokens.map((t) => t.balance!), gasLimit: cfg.eth_gas_limit, feeCap: BigInt(cfg.eth_max_fee_cap) })
+      : null;
   const act = (label: string, method: string, args: Record<string, unknown>) =>
     run(label, async () => {
       const r = await session!.call(method, args, { tgas: 100 });
@@ -304,15 +315,25 @@ function GuardianView({ view, now, refresh }: Props) {
             {ethHeirs > 0 && (
               <>
                 <Row k="ETH in vault" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "reading…"} />
-                <Row k="Network-fee reserve" v={reserve != null ? `${formatEth(reserve)} ETH (${ethHeirs} transfer${ethHeirs > 1 ? "s" : ""})` : "…"} />
-                <Row k="ETH to distribute" v={ethToSplit != null ? `${formatEth(ethToSplit)} ETH` : "…"} />
+                {heldTokens.map(({ token, balance }) => (
+                  <Row key={token.address} k={`${token.symbol} to distribute`} v={`${formatToken(balance!, token)} ${token.symbol}`} />
+                ))}
+                <Row k="Network-fee reserve" v={split ? `${formatEth(split.reserve)} ETH (${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : "…"} />
+                <Row k="ETH to distribute" v={split ? `${formatEth(split.ethToSplit)} ETH` : "…"} />
+                {split?.error && <Notice tone="error">The vault doesn't hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
               </>
             )}
           </div>
           <Button
             className="self-start"
-            disabled={!!busy || (ethHeirs > 0 && vault?.balance == null)}
-            onClick={() => act("Propose release", "propose_release", { owner: view.plan.owner, eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null })}
+            disabled={!!busy || (ethHeirs > 0 && (vault?.balance == null || vault.tokens.some((t) => t.balance == null) || !!split?.error))}
+            onClick={() =>
+              act("Propose release", "propose_release", {
+                owner: view.plan.owner,
+                eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null,
+                erc20_balances: ethHeirs > 0 && heldTokens.length ? heldTokens.map((t) => ({ token: t.token.address, amount: t.balance!.toString() })) : null,
+              })
+            }
           >
             {busy ? "Proposing…" : "Propose release"}
           </Button>
@@ -467,7 +488,7 @@ function HeirView({ view, now, refresh }: Props) {
           <Row k="Plan" v={view.plan.owner} mono />
           <Row k="Contract" v={CONTRACT_ID} mono />
           {mine.map(({ t, index }) => (
-            <Row key={index} k={`${t.asset} transfer #${index}`} v={`${t.destination}${t.tx_hash ? ` · ${t.tx_hash}` : ""}${t.eth_tx ? ` · nonce ${t.eth_tx.nonce}` : ""}`} mono />
+            <Row key={index} k={`${assetLabel(t.asset)} transfer #${index}`} v={`${t.destination}${t.tx_hash ? ` · ${t.tx_hash}` : ""}${t.eth_tx ? ` · nonce ${t.eth_tx.nonce}` : ""}`} mono />
           ))}
         </div>
       </details>
@@ -511,6 +532,9 @@ function PublicView({ view, now }: Props) {
             <Row k="NEAR escrow" v={`${formatNear(view.plan.escrow)} NEAR`} />
             <Row k="ETH vault" v={vault ? <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink> : "…"} mono />
             <Row k="Vault balance" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "…"} />
+            {vault?.tokens.map(({ token, balance }) => (
+              <Row key={token.address} k={`Vault ${token.symbol}`} v={balance != null ? `${formatToken(balance, token)} ${token.symbol}` : "…"} />
+            ))}
             <Row k="Vault next nonce" v={view.plan.eth_next_nonce} />
             <Row k="Contract" v={<ExtLink href={`${NEAR_EXPLORER}/address/${CONTRACT_ID}`}>{CONTRACT_ID}</ExtLink>} mono />
           </div>

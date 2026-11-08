@@ -1,6 +1,6 @@
 // Pure plan logic for the UI: plain-language summaries, roles, what each person
 // can do right now, and display formatting. No I/O, so it's unit-tested.
-import type { PlanInput, PlanStatus, PlanView, Transfer, TransferState } from "./types";
+import type { PlanInput, PlanStatus, PlanView, Transfer, TransferState, Asset, Erc20Token } from "./types";
 
 export type Role = "owner" | "guardian" | "heir";
 
@@ -140,7 +140,46 @@ function fmt(value: bigint, unit: bigint, digits: number): string {
 }
 export const formatNear = (yocto: string | bigint, digits = 4) => fmt(BigInt(yocto), NEAR, digits);
 export const formatEth = (wei: string | bigint, digits = 6) => fmt(BigInt(wei), ETH, digits);
-export const formatAmount = (t: Pick<Transfer, "asset" | "amount">) => (t.asset === "Near" ? `${formatNear(t.amount)} NEAR` : `${formatEth(t.amount)} ETH`);
+
+// Allowlisted tokens, filled from the contract config on first read.
+let TOKENS: Erc20Token[] = [];
+export const registerTokens = (tokens: Erc20Token[]) => void (TOKENS = tokens);
+export const tokenOf = (asset: Asset) => (typeof asset === "object" ? TOKENS.find((t) => t.address === asset.Erc20.toLowerCase()) : undefined);
+export const isEvm = (asset: Asset) => asset !== "Near";
+export function assetLabel(asset: Asset): string {
+  if (asset === "Near") return "NEAR";
+  if (asset === "Eth") return "ETH";
+  return tokenOf(asset)?.symbol ?? `token ${asset.Erc20.slice(0, 8)}…`;
+}
+export function formatToken(amount: string | bigint, token: Pick<Erc20Token, "decimals">, digits = 6) {
+  return fmt(BigInt(amount), 10n ** BigInt(token.decimals), digits);
+}
+export function formatAmount(t: Pick<Transfer, "asset" | "amount">): string {
+  if (t.asset === "Near") return `${formatNear(t.amount)} NEAR`;
+  if (t.asset === "Eth") return `${formatEth(t.amount)} ETH`;
+  const tok = tokenOf(t.asset);
+  return tok ? `${formatToken(t.amount, tok)} ${tok.symbol}` : `${t.amount} (raw) ${assetLabel(t.asset)}`;
+}
+
+/**
+ * What a proposal made now would distribute from the ETH vault. Mirrors
+ * `propose_release`: one max-fee reserve per vault transaction; token
+ * transfers are funded first, ETH is split only if what's left also covers
+ * the ETH transfers. `error` matches the contract's refusal.
+ */
+export function vaultSplit(opts: { ethHeirs: number; ethBalance: bigint; tokenBalances: bigint[]; gasLimit: number; feeCap: bigint }) {
+  const heirs = BigInt(opts.ethHeirs);
+  const perTx = BigInt(opts.gasLimit) * opts.feeCap;
+  const tokens = opts.tokenBalances.filter((b) => b > 0n).length;
+  const tokenTxs = heirs > 0n ? heirs * BigInt(tokens) : 0n;
+  const tokenReserve = tokenTxs * perTx;
+  if (opts.ethBalance < tokenReserve) return { error: "E_INSUFFICIENT_FEE_RESERVE" as const, reserve: tokenReserve, ethToSplit: 0n, transfers: Number(tokenTxs) };
+  const after = opts.ethBalance - tokenReserve;
+  const ethReserve = heirs * perTx;
+  if (heirs > 0n && after > ethReserve) return { reserve: tokenReserve + ethReserve, ethToSplit: after - ethReserve, transfers: Number(tokenTxs + heirs) };
+  if (heirs > 0n && opts.ethBalance > 0n && tokenTxs === 0n) return { error: "E_INSUFFICIENT_FEE_RESERVE" as const, reserve: ethReserve, ethToSplit: 0n, transfers: Number(heirs) };
+  return { reserve: tokenReserve, ethToSplit: 0n, transfers: Number(tokenTxs) };
+}
 
 export function parseNear(text: string): bigint {
   const [w = "0", f = ""] = text.trim().split(".");

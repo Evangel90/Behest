@@ -1,10 +1,11 @@
 // Read-only access to the Behest contract, the MPC vault and Sepolia.
 import { JsonRpcProvider, baseDecode } from "near-api-js";
-import { bytesToHex, createPublicClient, http, type Hex } from "viem";
+import { bytesToHex, createPublicClient, erc20Abi, http, type Hex } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { CONTRACT_ID, MPC_CONTRACT, NEAR_RPC, SEPOLIA_RPC } from "./config";
-import type { ContractConfig, PlanView } from "./types";
+import { registerTokens } from "./plan";
+import type { ContractConfig, Erc20Token, PlanView } from "./types";
 
 export const provider = new JsonRpcProvider({ url: NEAR_RPC });
 export const sepoliaClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
@@ -14,7 +15,11 @@ export async function view<T>(method: string, args: Record<string, unknown> = {}
 }
 
 export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { owner });
-export const getConfig = () => view<ContractConfig>("get_config");
+export async function getConfig() {
+  const cfg = await view<ContractConfig>("get_config");
+  registerTokens(cfg.erc20_tokens ?? []);
+  return cfg;
+}
 export const listOpenReleases = () => view<string[]>("list_open_releases", { from_index: 0, limit: 100 });
 
 export async function nearBalance(accountId: string): Promise<bigint | null> {
@@ -35,3 +40,10 @@ export async function vaultAddress(owner: string): Promise<Hex> {
 }
 
 export const ethBalance = (address: Hex) => sepoliaClient.getBalance({ address });
+
+/** Vault balance of each allowlisted token (null where the read failed). */
+export function tokenBalances(address: Hex, tokens: Erc20Token[]) {
+  return Promise.all(
+    tokens.map((t) => sepoliaClient.readContract({ address: t.address as Hex, abi: erc20Abi, functionName: "balanceOf", args: [address] }).catch(() => null)),
+  );
+}

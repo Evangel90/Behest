@@ -91,7 +91,7 @@ export function GuardianList({ view }: { view: PlanView }) {
 }
 
 export function receiptUrl(t: Transfer): string | null {
-  if (t.asset === "Eth" && t.tx_hash) return `${ETH_EXPLORER}/tx/${t.tx_hash}`;
+  if (t.asset !== "Near" && t.tx_hash) return `${ETH_EXPLORER}/tx/${t.tx_hash}`;
   if (t.asset === "Near" && t.state === "Confirmed") return `${NEAR_EXPLORER}/address/${t.destination}`;
   return null;
 }

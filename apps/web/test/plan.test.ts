@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, describePlan, duration, formatEth, formatNear, parseNear, rolesOf, shortName, validateDraft } from "../src/lib/plan";
+import { actionsFor, assetLabel, describePlan, duration, formatAmount, formatEth, formatNear, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -90,5 +90,31 @@ describe("amounts", () => {
     expect(formatEth("3160000000000000")).toBe("0.00316");
     expect(parseNear("0.3")).toBe(300_000_000_000_000_000_000_000n);
     expect(() => parseNear("1e3")).toThrow();
+  });
+});
+
+describe("ERC-20 support", () => {
+  const WETH = "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
+  const GWEI = 1_000_000_000n;
+  const PER_TX = 21_000n * 50n * GWEI;
+  const base = { ethHeirs: 1, gasLimit: 21_000, feeCap: 50n * GWEI };
+
+  it("matches the contract's fee-reserve split", () => {
+    // mirrors token_snapshot_reserves_a_fee_for_every_vault_transaction
+    expect(vaultSplit({ ...base, ethBalance: 10n ** 24n, tokenBalances: [1000n] })).toEqual({ reserve: 2n * PER_TX, ethToSplit: 10n ** 24n - 2n * PER_TX, transfers: 2 });
+    // token-only vault: gas money for the token transfer, nothing more
+    expect(vaultSplit({ ...base, ethBalance: PER_TX, tokenBalances: [1000n] })).toEqual({ reserve: PER_TX, ethToSplit: 0n, transfers: 1 });
+    expect(vaultSplit({ ...base, ethBalance: PER_TX - 1n, tokenBalances: [1000n] }).error).toBe("E_INSUFFICIENT_FEE_RESERVE");
+    // ETH only, below the reserve (eth_balance_below_fee_reserve_is_rejected)
+    expect(vaultSplit({ ...base, ethBalance: PER_TX, tokenBalances: [] }).error).toBe("E_INSUFFICIENT_FEE_RESERVE");
+    // empty balances are ignored
+    expect(vaultSplit({ ...base, ethBalance: 0n, tokenBalances: [0n] })).toEqual({ reserve: 0n, ethToSplit: 0n, transfers: 0 });
+  });
+
+  it("formats token amounts with the allowlist's symbol and decimals", () => {
+    registerTokens([{ address: WETH, symbol: "WETH", decimals: 18 }]);
+    expect(assetLabel({ Erc20: WETH })).toBe("WETH");
+    expect(formatAmount({ asset: { Erc20: WETH.toUpperCase().replace("0X", "0x") }, amount: "3000000000000000" })).toBe("0.003 WETH");
+    expect(formatAmount({ asset: "Eth", amount: "2000000000000000" })).toBe("0.002 ETH");
   });
 });

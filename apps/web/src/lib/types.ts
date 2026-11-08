@@ -19,9 +19,18 @@ export interface PlanInput {
   heirs: HeirInput[];
 }
 
+/** ERC-20 transfers carry the lowercase token address. */
+export type Asset = "Near" | "Eth" | { Erc20: string };
+
+export interface Erc20Token {
+  address: string;
+  symbol: string;
+  decimals: number;
+}
+
 export interface Transfer {
   heir: string;
-  asset: "Near" | "Eth";
+  asset: Asset;
   destination: string;
   amount: string;
   state: TransferState;
@@ -73,6 +82,7 @@ export interface ContractConfig {
   eth_initial_max_fee: string;
   eth_priority_fee: string;
   eth_gas_limit: number;
+  erc20_tokens: Erc20Token[];
   paused: boolean;
   executors: string[];
   demo_timers: boolean;

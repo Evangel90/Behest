@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPlan } from "./contract";
+import { getConfig, getPlan } from "./contract";
 import type { PlanView } from "./types";
 
 /** Polls a plan; `chainNow` advances locally between polls from the chain's clock. */
@@ -9,6 +9,9 @@ export function usePlan(owner: string | null, intervalMs = 4000) {
   const [error, setError] = useState<string | null>(null);
   const [chainNow, setChainNow] = useState(0);
   const offset = useRef(0);
+
+  // Loads the token allowlist so ERC-20 amounts format with symbol and decimals.
+  useEffect(() => void getConfig().catch(() => {}), []);
 
   const refresh = useCallback(async () => {
     if (!owner) return;
