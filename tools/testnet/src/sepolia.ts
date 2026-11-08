@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createPublicClient, createWalletClient, erc20Abi, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { ROOT, keyOf, log, provider, view } from "./near.js";
+import { ROOT, call, keyOf, log, provider, view } from "./near.js";
 
 export const transport = http(process.env.SEPOLIA_RPC_URL?.trim() || undefined);
 export const pub = createPublicClient({ chain: sepolia, transport });
@@ -81,4 +81,43 @@ export function executor(contract: string, executorAccountId: string) {
     memoryStore(),
     { confirmations: 3, stuckAfterMs: 10 * 60_000, retryBackoffMs: 60_000, now: Date.now, log: (m, x) => log(`executor: ${m}`, x) },
   );
+}
+
+const RETRYABLE = new Set(["SignFailed", "Stuck", "Underpriced", "FeeAboveCap", "Dropped", "BadSignature"]);
+
+/**
+ * Owner vault withdrawal (D7) of everything the vault holds back to `to`:
+ * each token in full, then ETH minus one max-cost transaction (the node needs
+ * value + gas_limit × max_fee available). Drives the executor until each
+ * withdrawal confirms. Returns what came back.
+ */
+export async function reclaimVault(contract: string, owner: string, vault: Hex, engine: ReturnType<typeof executor>, to: Hex) {
+  const cfg = await view<{ eth_gas_limit: number; eth_max_fee_cap: string; erc20_tokens: { address: Hex; symbol: string }[] }>(contract, "get_config");
+  async function withdraw(asset: unknown, amount: bigint) {
+    await call(owner, contract, "withdraw_vault", { asset, amount: amount.toString(), to: to.toLowerCase() }, { tgas: 100 });
+    const end = Date.now() + 10 * 60_000;
+    for (;;) {
+      await engine.tick();
+      const w = await view<{ state: string; failure: string | null; tx_hash: string | null } | null>(contract, "get_vault_withdrawal", { owner });
+      if (w?.state === "Confirmed") return w.tx_hash;
+      if (w?.state === "Failed" && !RETRYABLE.has(w.failure ?? "")) throw new Error(`vault withdrawal failed: ${w.failure}`);
+      if (Date.now() > end) throw new Error(`vault withdrawal not confirmed in time (${w?.state})`);
+      await new Promise((r) => setTimeout(r, 6_000));
+    }
+  }
+  const back: Record<string, string> = {};
+  for (const t of cfg.erc20_tokens) {
+    const bal = await tokenBalance(t.address, vault);
+    if (bal > 0n) {
+      const tx = await withdraw({ Erc20: t.address }, bal);
+      back[t.symbol] = `${bal} units (${tx})`;
+    }
+  }
+  const eth = await pub.getBalance({ address: vault });
+  const keep = BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap);
+  if (eth > keep) {
+    const tx = await withdraw("Eth", eth - keep);
+    back.ETH = `${eth - keep} wei (${tx})`;
+  }
+  return back;
 }

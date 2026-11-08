@@ -180,7 +180,7 @@ const scenarios: Record<string, () => Promise<void>> = {
   async "insufficient-fee-reserve"() {
     const owner = await overduePlan("fees", { amaraEth: "0x71c7656ec7ab88b098defb751b7401b5f6d8976f" });
     // reserve = 1 ETH heir × gas limit × fee cap (250k × 10 gwei = 0.0025 ETH on testnet)
-    await expectError("E_INSUFFICIENT_FEE_RESERVE", () => call(G1, C, "propose_release", { owner, eth_balance: "1000000000000000" }));
+    await expectError("E_INSUFFICIENT_FEE_RESERVE", () => call(G1, C, "propose_release", { owner, eth_balance: "500000000000000" }));
     log("proposal refused: vault balance does not cover the network-fee reserve");
     await call(owner, C, "check_in", {});
   },

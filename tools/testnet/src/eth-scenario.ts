@@ -17,7 +17,7 @@ import { erc20Abi, createWalletClient, formatEther, parseEther, type Hex } from 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { account, call, loadDeployment, log, view, reclaimScenarioOwners, waitForKey } from "./near.js";
-import { WETH, executor, funderAccount, loadWallets, pub, saveWallets, sweep, sweepToken, tokenBalance, transport, vaultOf as vaultFor } from "./sepolia.js";
+import { WETH, executor, funderAccount, loadWallets, pub, reclaimVault, saveWallets, sweep, tokenBalance, transport, vaultOf as vaultFor } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -26,9 +26,10 @@ const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];
 const MINUTE = 60_000;
 // The fee reserve covers one max-fee tx per vault transfer: 2 heirs × (ETH + WETH)
-// × 250k gas × 10 gwei = 0.01 ETH; the remaining 0.005 ETH is split 60/40.
-const FUND = parseEther(process.env.E2E_VAULT_FUND_ETH ?? "0.015");
-const FUND_WETH = parseEther(process.env.E2E_VAULT_FUND_WETH ?? "0.002");
+// × 250k gas × 3 gwei = 0.003 ETH. Only 0.00005 ETH and 0.00001 WETH are split;
+// the unspent reserve is withdrawn back to the funder at the end (D7).
+const FUND = parseEther(process.env.E2E_VAULT_FUND_ETH ?? "0.00305");
+const FUND_WETH = parseEther(process.env.E2E_VAULT_FUND_WETH ?? "0.00001");
 
 const funder = funderAccount();
 const fundWallet = createWalletClient({ chain: sepolia, transport, account: funder });
@@ -172,9 +173,9 @@ assert(final.status === "Settled", "plan settled");
 const shares = async (k: Hex) => `${formatEther(await pub.getBalance({ address: heirAddr(k) }))} ETH + ${formatEther(await tokenBalance(WETH, heirAddr(k)))} WETH`;
 log("heirs received exact shares", { amara: await shares(keys.amara), tobi: await shares(keys.tobi) });
 
-// WETH first: moving it is paid from the heir's ETH, which is swept after.
-const sweptWeth = (await sweepToken(keys.amara, WETH, funder.address)) + (await sweepToken(keys.tobi, WETH, funder.address));
-log("test WETH swept back to funder", { weth: formatEther(sweptWeth) });
+// The heirs' shares are dust (moving them would cost more than they're worth).
+// The vault's unspent fee reserve is what matters: the owner withdraws it (D7).
+log("vault reclaimed by owner withdrawal", await reclaimVault(C, owner, vault, engine, funder.address));
 const swept = (await sweep(keys.amara, funder.address)) + (await sweep(keys.tobi, funder.address));
-log("test ETH swept back to funder", { eth: formatEther(swept), leftInVault: formatEther(await pub.getBalance({ address: vault })) });
+log("leftovers", { heirEthSwept: formatEther(swept), vaultEth: formatEther(await pub.getBalance({ address: vault })), vaultWeth: formatEther(await tokenBalance(WETH, vault)) });
 console.log("✓ two heirs × (ETH + WETH) + nonce ordering + delayed executor");

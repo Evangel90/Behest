@@ -33,9 +33,12 @@ const init = {
   mpc_contract: process.env.MPC_CONTRACT_ID || "v1.signer-prod.testnet",
   eth_chain_id: 11155111,
   // Sepolia base fee is ~0 and tips ~1 gwei (Nov 2026); the cap bounds the reserve.
-  eth_max_fee_cap: "10000000000", // 10 gwei
-  eth_initial_max_fee: "3000000000", // 3 gwei
-  eth_priority_fee: "1500000000", // 1.5 gwei
+  // Sepolia runs at ≈0 base fee and ≈1–1.5 gwei priority. The cap sizes the fee
+  // reserve locked per transfer (250k × cap), so keep it low on testnet; a
+  // spike above it only delays a transfer (FeeAboveCap, retried later).
+  eth_max_fee_cap: "3000000000", // 3 gwei
+  eth_initial_max_fee: "2000000000", // 2 gwei
+  eth_priority_fee: "1000000000", // 1 gwei
   eth_gas_limit: 250_000, // a first transfer to an unused address needs ≈207k since Glamsterdam
 };
 

@@ -19,7 +19,7 @@ import { createWalletClient, erc20Abi, formatEther, parseEther, type Hex } from 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey } from "./near.js";
-import { WETH, executor, funderAccount, pub, saveWallets, sweep, sweepToken, tokenBalance, transport, vaultOf } from "./sepolia.js";
+import { WETH, executor, funderAccount, pub, reclaimVault, saveWallets, tokenBalance, transport, vaultOf } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -27,11 +27,13 @@ const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];
 const MINUTE = 60_000;
-// Reserve: 1 ETH heir × (ETH + WETH) × 250k gas × 10 gwei = 0.005 ETH; 0.003 ETH is split.
-const FUND_ETH = parseEther("0.008");
-const VAULT_WETH = parseEther("0.0005");
-const REPORTED_WETH = parseEther("0.002");
-const TOP_UP_WETH = parseEther("0.0008");
+// Reserve: 1 ETH heir × (ETH + WETH) × 250k gas × 3 gwei = 0.0015 ETH; 0.00005 ETH
+// is split. Amara's WETH share of the reported 0.00002 is 0.000012 > 0.000005 held.
+// The unspent reserve is withdrawn back to the funder at the end (D7).
+const FUND_ETH = parseEther("0.00155");
+const VAULT_WETH = parseEther("0.000005");
+const REPORTED_WETH = parseEther("0.00002");
+const TOP_UP_WETH = parseEther("0.00001");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function assert(cond: unknown, msg: string): asserts cond {
@@ -68,7 +70,7 @@ async function sendWeth(to: Hex, amount: bigint) {
   return hash;
 }
 const funderStart = await pub.getBalance({ address: funder.address });
-assert(funderStart > FUND_ETH + VAULT_WETH + TOP_UP_WETH + parseEther("0.002"), `funder has ${formatEther(funderStart)} ETH; needs ≈ 0.011`);
+assert(funderStart > FUND_ETH + VAULT_WETH + TOP_UP_WETH + parseEther("0.0005"), `funder has ${formatEther(funderStart)} ETH; needs ≈ 0.0021`);
 
 // ------------------------------------------------------------------ setup
 const keys = { amara: generatePrivateKey(), tobi: generatePrivateKey() };
@@ -154,7 +156,6 @@ assert(gotWeth === BigInt(a.weth.amount), `Amara holds ${gotWeth} WETH units, ex
 await until("plan settled", 2 * MINUTE, async () => (await plan(owner)).status === "Settled");
 log("confirmed", { eth: `https://sepolia.etherscan.io/tx/${a.eth.tx_hash}`, weth: `https://sepolia.etherscan.io/tx/${a.weth.tx_hash}`, amara: `${formatEther(gotEth)} ETH + ${formatEther(gotWeth)} WETH` });
 
-await sweepToken(keys.amara, WETH, funder.address);
-const back = await sweep(keys.amara, funder.address);
-log("test funds swept back", { eth: formatEther(back), leftInVault: `${formatEther(await pub.getBalance({ address: vault }))} ETH + ${formatEther(await tokenBalance(WETH, vault))} WETH` });
+log("vault reclaimed by owner withdrawal", await reclaimVault(C, owner, vault, engine, funder.address));
+log("leftovers", { vaultEth: formatEther(await pub.getBalance({ address: vault })), vaultWeth: formatEther(await tokenBalance(WETH, vault)) });
 console.log("✓ partial failure across two assets, retried without replaying the confirmed transfer");

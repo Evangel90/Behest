@@ -11,7 +11,8 @@
     "e2e-eth": "tsx --env-file=../../.env src/eth-scenario.ts",
     "reissue": "tsx --env-file=../../.env src/reissue.ts",
     "bootstrap": "tsx --env-file=../../.env src/bootstrap.ts",
-    "e2e-partial": "tsx --env-file=../../.env src/partial-scenario.ts"
+    "e2e-partial": "tsx --env-file=../../.env src/partial-scenario.ts",
+    "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
   },
   "dependencies": {
     "near-api-js": "7.4.0",
