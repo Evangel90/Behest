@@ -97,3 +97,19 @@ export interface ContractConfig {
   executors: string[];
   demo_timers: boolean;
 }
+
+/** Someone who can receive in place of a heir (alternate or fallback). */
+export interface Recipient {
+  account_id: string;
+  near_destination: string | null;
+  eth_destination: string | null;
+}
+
+/** Optional per-plan release rules (contract D17). */
+export interface ReleaseRules {
+  fixed: { heir: string; asset: Asset; amount: string }[];
+  remainder_to: string | null;
+  alternates: { heir: string; recipient: Recipient }[];
+  fallback: Recipient | null;
+  claim_window_ms: number;
+}

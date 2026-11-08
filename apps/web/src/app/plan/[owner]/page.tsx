@@ -6,6 +6,7 @@ import { parseUnits, type Hex } from "viem";
 import { AppHeader, TestnetBar } from "@/components/chrome";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
+import { RulesCard, useRules } from "@/components/ReleaseRules";
 import { Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
 import { ethBalance, getConfig, getVaultWithdrawal, tokenBalances, vaultAddress } from "@/lib/contract";
@@ -78,7 +79,7 @@ function PlanScreen() {
             {active === "owner" && <OwnerView view={view} now={chainNow} refresh={refresh} />}
             {active === "guardian" && <GuardianView view={view} now={chainNow} refresh={refresh} />}
             {active === "heir" && <HeirView view={view} now={chainNow} refresh={refresh} />}
-            {active === "public" && <PublicView view={view} now={chainNow} />}
+            {active === "public" && <PublicView view={view} now={chainNow} refresh={refresh} />}
           </>
         )}
       </main>
@@ -199,6 +200,7 @@ function OwnerView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
   const vault = useVault(view.plan.owner);
+  const rules = useRules(view.plan.owner);
   const [amount, setAmount] = useState("0.1");
   const p = view.plan.policy;
   const s = view.status;
@@ -318,6 +320,18 @@ function OwnerView({ view, now, refresh }: Props) {
         <HeirList view={view} />
         <GuardianList view={view} />
       </div>
+      <RulesCard
+        view={view}
+        now={now}
+        rules={rules.rules}
+        editable={!view.plan.proposal || s === "Settled"}
+        act={async (l, m, a, d) => {
+          await act(l, m, a, d);
+          await rules.reload();
+        }}
+        busy={!!busy}
+        signedIn
+      />
       {view.plan.proposal && (
         <Card className="flex flex-col gap-3">
           <Bracket>Proposed transfers</Bracket>
@@ -421,6 +435,7 @@ function GuardianView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
   const vault = useVault(view.plan.owner);
+  const rules = useRules(view.plan.owner);
   const [cfg, setCfg] = useState<ContractConfig | null>(null);
   useEffect(() => void getConfig().then(setCfg).catch(() => {}), []);
   const me = session!.accountId;
@@ -524,6 +539,7 @@ function GuardianView({ view, now, refresh }: Props) {
           )}
         </Card>
       )}
+      <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
       <GuardianList view={view} />
     </>
   );
@@ -535,6 +551,7 @@ function GuardianView({ view, now, refresh }: Props) {
 function HeirView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
+  const rules = useRules(view.plan.owner);
   const me = session!.accountId;
   const first = shortName(me);
   const owner = shortName(view.plan.owner);
@@ -588,7 +605,7 @@ function HeirView({ view, now, refresh }: Props) {
 
       <section className="flex flex-col gap-2 rounded-card border-[1.5px] border-ink bg-card p-5">
         <span className="text-sm text-muted">Set aside for you</span>
-        <span className="font-display text-[32px] font-bold leading-none tracking-[-0.03em]">{heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : "—"}</span>
+        <span className="font-display text-[32px] font-bold leading-none tracking-[-0.03em]">{heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share of ${owner}'s plan passed to you` : "—"}</span>
         <span className="text-base leading-normal">
           {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" and ") : "Amounts are fixed when a release is proposed."}
           {heir?.eth_destination && <> · Ethereum wallet ending in <strong>{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
@@ -640,6 +657,21 @@ function HeirView({ view, now, refresh }: Props) {
         </section>
       )}
 
+      <RulesCard
+        view={view}
+        now={now}
+        rules={rules.rules}
+        editable={false}
+        act={(l, _m, a) =>
+          run(l, async () => {
+            const r = await session!.call("reassign_unclaimed", a, { tgas: 50 });
+            await refresh?.();
+            return r;
+          })
+        }
+        busy={!!busy}
+        signedIn
+      />
       <details className="rounded-card border-[1.5px] border-line p-4">
         <summary className="min-h-11 cursor-pointer content-center font-semibold">Technical details</summary>
         <div className="flex flex-col gap-1 pt-2">
@@ -659,7 +691,10 @@ function HeirView({ view, now, refresh }: Props) {
 
 // ------------------------------------------------------------------ public
 
-function PublicView({ view, now }: Props) {
+function PublicView({ view, now, refresh }: Props) {
+  const { session } = useSession();
+  const { busy, result, run } = useAction();
+  const rules = useRules(view.plan.owner);
   const vault = useVault(view.plan.owner);
   const p = view.plan.policy;
   const prop = view.plan.proposal;
@@ -702,6 +737,22 @@ function PublicView({ view, now }: Props) {
           <GuardianList view={view} />
         </div>
       </div>
+      <RulesCard
+        view={view}
+        now={now}
+        rules={rules.rules}
+        editable={false}
+        act={(l, m, a) =>
+          run(l, async () => {
+            const r = await session!.call(m, a, { tgas: 50 });
+            await refresh?.();
+            return r;
+          })
+        }
+        busy={!!busy}
+        signedIn={!!session}
+      />
+      <Result result={result} />
       {prop && (
         <Card className="flex flex-col gap-3">
           <div className="flex flex-wrap justify-between gap-2">

@@ -1,6 +1,6 @@
 // Pure plan logic for the UI: plain-language summaries, roles, what each person
 // can do right now, and display formatting. No I/O, so it's unit-tested.
-import type { PlanInput, PlanStatus, PlanView, Transfer, TransferState, Asset, Erc20Token, Nep141Token } from "./types";
+import type { PlanInput, PlanStatus, PlanView, Recipient, ReleaseRules, Transfer, TransferState, Asset, Erc20Token, Nep141Token } from "./types";
 
 export type Role = "owner" | "guardian" | "heir";
 
@@ -58,7 +58,8 @@ export function rolesOf(view: PlanView | null, account: string | null): Role[] {
   const r: Role[] = [];
   if (view.plan.owner === account) r.push("owner");
   if (view.plan.policy.guardians.includes(account)) r.push("guardian");
-  if (view.plan.policy.heirs.some((h) => h.account_id === account)) r.push("heir");
+  // An alternate or the fallback acts as a heir once a share was reassigned to them.
+  if (view.plan.policy.heirs.some((h) => h.account_id === account) || view.plan.proposal?.transfers.some((t) => t.heir === account)) r.push("heir");
   return r;
 }
 
@@ -216,4 +217,38 @@ export function validateDraft(p: PlanInput, owner: string): string[] {
   }
   if (p.guardians.includes(owner)) errs.push("You can't be your own guardian.");
   return errs;
+}
+
+// ------------------------------------------------------------ release rules
+
+const receives = (r: Recipient, asset: Asset) => (isEvm(asset) ? r.eth_destination : r.near_destination) != null;
+
+/**
+ * Who an unclaimed transfer can be moved to, and from when. Mirrors
+ * `reassign_unclaimed`: a heir's transfer goes to their alternate (or the
+ * fallback if the alternate can't receive this asset) one claim window after
+ * the plan became claimable; an alternate's goes to the fallback a window later.
+ */
+export function nextHolder(view: PlanView, rules: ReleaseRules | null, t: Transfer): { to: Recipient; from_ms: number } | null {
+  const start = view.plan.proposal?.waiting_ends_at_ms;
+  if (!rules || start == null || t.state !== "Pending") return null;
+  const fallback = rules.fallback && receives(rules.fallback, t.asset) ? rules.fallback : null;
+  if (view.plan.policy.heirs.some((h) => h.account_id === t.heir)) {
+    const alt = rules.alternates.find((a) => a.heir === t.heir)?.recipient;
+    const to = alt && receives(alt, t.asset) ? alt : fallback;
+    return to ? { to, from_ms: start + rules.claim_window_ms } : null;
+  }
+  if (rules.alternates.some((a) => a.recipient.account_id === t.heir) && fallback) return { to: fallback, from_ms: start + 2 * rules.claim_window_ms };
+  return null;
+}
+
+/** Plain-language lines for a plan's release rules. */
+export function describeRules(rules: ReleaseRules | null): string[] {
+  if (!rules) return [];
+  const out: string[] = [];
+  for (const f of rules.fixed) out.push(`${shortName(f.heir)} receives ${formatAmount({ asset: f.asset, amount: f.amount })} first, before shares are split.`);
+  if (rules.remainder_to) out.push(`Rounding leftovers go to ${shortName(rules.remainder_to)}.`);
+  for (const a of rules.alternates) out.push(`If ${shortName(a.heir)} doesn't claim within ${duration(rules.claim_window_ms)}, their share goes to ${a.recipient.account_id}.`);
+  if (rules.fallback) out.push(`Anything still unclaimed after that goes to ${rules.fallback.account_id}.`);
+  return out;
 }

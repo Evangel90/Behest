@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, assetLabel, failureText, describePlan, duration, formatAmount, formatEth, formatNear, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
-import type { PlanInput, PlanView } from "../src/lib/types";
+import { actionsFor, assetLabel, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import type { PlanInput, PlanView, Transfer } from "../src/lib/types";
 
 const DAY = 86_400_000;
 const policy: PlanInput = {
@@ -118,5 +118,32 @@ describe("ERC-20 support", () => {
     expect(formatAmount({ asset: "Eth", amount: "2000000000000000" })).toBe("0.002 ETH");
     const t = { heir: "a", asset: { Erc20: WETH }, destination: "0x", amount: "1", state: "Failed", eth_tx: null, attempts: 1, tx_hash: null, failure: "WouldRevert" } as const;
     expect(failureText(t)).toMatch(/enough WETH.*Retry once the vault is topped up/);
+  });
+});
+
+describe("release rules", () => {
+  const view = {
+    plan: { policy: { heirs: [{ account_id: "amara.testnet" }, { account_id: "tobi.testnet" }] }, proposal: { waiting_ends_at_ms: 1_000 } },
+  } as unknown as PlanView;
+  const kemi = { account_id: "kemi.testnet", near_destination: "kemi.testnet", eth_destination: "0xbb" };
+  const ngo = { account_id: "ngo.testnet", near_destination: "ngo.testnet", eth_destination: null };
+  const rules = { fixed: [], remainder_to: null, alternates: [{ heir: "amara.testnet", recipient: kemi }], fallback: ngo, claim_window_ms: 60_000 };
+  const tr = (heir: string, asset: Transfer["asset"], state = "Pending") => ({ heir, asset, state }) as Transfer;
+
+  it("moves a heir's share to their alternate after one window", () => {
+    expect(nextHolder(view, rules, tr("amara.testnet", "Near"))).toEqual({ to: kemi, from_ms: 61_000 });
+  });
+  it("sends a heir without an alternate straight to the fallback", () => {
+    expect(nextHolder(view, rules, tr("tobi.testnet", "Near"))?.to).toBe(ngo);
+  });
+  it("moves an alternate's share to the fallback one window later", () => {
+    expect(nextHolder(view, rules, tr("kemi.testnet", "Near"))).toEqual({ to: ngo, from_ms: 121_000 });
+  });
+  it("skips recipients without a destination on that chain", () => {
+    expect(nextHolder(view, rules, tr("kemi.testnet", "Eth"))).toBeNull();
+    expect(nextHolder(view, rules, tr("tobi.testnet", "Eth"))).toBeNull();
+  });
+  it("never moves a claimed transfer", () => {
+    expect(nextHolder(view, rules, tr("amara.testnet", "Near", "Sending"))).toBeNull();
   });
 });
