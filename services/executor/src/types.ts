@@ -87,8 +87,12 @@ export interface EthPort {
   blockNumber(): Promise<bigint>;
   /** Count of mined txs from `address` (the next usable nonce). */
   minedNonce(address: `0x${string}`): Promise<number>;
-  /** Gas the call `from → to` (value, calldata) needs right now. */
-  estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint, data?: `0x${string}`): Promise<bigint>;
+  /**
+   * Gas the call `from → to` (value, calldata) needs right now, or "reverts"
+   * when the node's simulation reverts (e.g. the vault lacks the token).
+   * Other errors (RPC trouble) are thrown.
+   */
+  estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint, data?: `0x${string}`): Promise<bigint | "reverts">;
 }
 
 /**

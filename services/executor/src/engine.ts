@@ -108,12 +108,21 @@ export class Engine {
     if (nonce > mined) return "waiting-for-earlier-nonce";
     if (nonce < mined) return this.reconcileConsumedNonce(owner, index, raw, key);
 
-    // A transfer that runs out of gas still burns the vault's fee and its
-    // nonce. Since Glamsterdam a first transfer to an unused address costs far
-    // more than 21k, so check before sending. Re-signing at the same nonce with
-    // a higher limit (after the admin raises it) is safe.
+    // A mined revert still burns the vault's fee and its nonce, and then only
+    // the admin can re-issue. So simulate before the first broadcast:
+    // - it would revert (e.g. the vault holds less of a token than was
+    //   reported): report WouldRevert and keep the nonce unused, so the heir can
+    //   retry at the same nonce once the vault is topped up. No trust needed.
+    // - it needs more gas than signed (since Glamsterdam a first transfer to an
+    //   unused address costs far more than 21k): report GasLimitTooLow; a
+    //   same-nonce re-sign after the admin raises the limit is safe.
     if (mem.hashes.length === 0) {
       const need = await this.eth.estimateTransferGas(vault, tx.to as `0x${string}`, tx.value ?? 0n, want.data as `0x${string}`).catch(() => null);
+      if (need === "reverts") {
+        this.opts.log("transfer would revert: refusing to broadcast", { key });
+        await this.near.reportFailed(owner, index, "WouldRevert");
+        return "reported-failure";
+      }
       if (need !== null && need > (tx.gas ?? 0n)) {
         this.opts.log("gas limit too low: refusing to broadcast", { key, signed: String(tx.gas), needed: String(need) });
         await this.near.reportFailed(owner, index, "GasLimitTooLow");

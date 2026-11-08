@@ -1,4 +1,4 @@
-import { createPublicClient, http } from "viem";
+import { BaseError, ExecutionRevertedError, createPublicClient, http } from "viem";
 import { sepolia } from "viem/chains";
 import type { EthPort } from "./types.js";
 
@@ -24,6 +24,13 @@ export function createEthPort(rpcUrl: string): EthPort {
     },
     blockNumber: () => client.getBlockNumber(),
     minedNonce: (address) => client.getTransactionCount({ address, blockTag: "latest" }),
-    estimateTransferGas: (from, to, value, data) => client.estimateGas({ account: from, to, value, data: data && data !== "0x" ? data : undefined }),
+    async estimateTransferGas(from, to, value, data) {
+      try {
+        return await client.estimateGas({ account: from, to, value, data: data && data !== "0x" ? data : undefined });
+      } catch (e) {
+        if (e instanceof BaseError && e.walk((x) => x instanceof ExecutionRevertedError)) return "reverts";
+        throw e;
+      }
+    },
   };
 }

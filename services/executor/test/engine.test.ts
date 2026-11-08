@@ -79,7 +79,7 @@ class FakeEth implements EthPort {
   known = async (h: Hex) => this.mempool.has(h) || this.receipts.has(h);
   blockNumber = async () => this.head;
   minedNonce = async () => this.mined;
-  needGas = 21_000n;
+  needGas: bigint | "reverts" = 21_000n;
   estimateTransferGas = async () => this.needGas;
 }
 
@@ -162,6 +162,21 @@ describe("Signed transfers", () => {
       expect(await run()).toBe("needs-human");
       expect(eth.sent).toEqual([]);
     });
+  });
+
+  it("reports WouldRevert without broadcasting, keeping the nonce for a same-nonce retry", async () => {
+    near.raw = await signed();
+    near.transfers = [transfer("Signed")];
+    eth.needGas = "reverts"; // e.g. the vault holds less of the token than was reported
+    expect(await run()).toBe("reported-failure");
+    expect(eth.sent).toEqual([]);
+    expect(near.calls).toEqual(["failed:0:WouldRevert"]);
+  });
+
+  it("does not auto-retry WouldRevert (someone has to top up the vault first)", async () => {
+    near.transfers = [transfer("Failed", { failure: "WouldRevert" })];
+    expect(await run()).toBe("needs-human");
+    expect(near.calls).toEqual([]);
   });
 
   it("refuses to broadcast when the signed gas limit is below the estimate", async () => {

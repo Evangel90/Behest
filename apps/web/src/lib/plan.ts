@@ -124,6 +124,8 @@ export function failureText(t: Transfer): string {
       return "The network didn't pick it up. It will be retried automatically; your share is safe.";
     case "GasLimitTooLow":
       return "The network now needs more gas for this transfer. An operator has to raise the limit; your share is safe.";
+    case "WouldRevert":
+      return `The vault doesn't hold enough ${assetLabel(t.asset)} for this transfer right now, so nothing was sent. Your other transfers aren't affected. Retry once the vault is topped up; your share is safe.`;
     case "Reverted":
       return "The network rejected the transaction. An operator has to re-issue it; your share is safe.";
     default:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, assetLabel, describePlan, duration, formatAmount, formatEth, formatNear, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import { actionsFor, assetLabel, failureText, describePlan, duration, formatAmount, formatEth, formatNear, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -116,5 +116,7 @@ describe("ERC-20 support", () => {
     expect(assetLabel({ Erc20: WETH })).toBe("WETH");
     expect(formatAmount({ asset: { Erc20: WETH.toUpperCase().replace("0X", "0x") }, amount: "3000000000000000" })).toBe("0.003 WETH");
     expect(formatAmount({ asset: "Eth", amount: "2000000000000000" })).toBe("0.002 ETH");
+    const t = { heir: "a", asset: { Erc20: WETH }, destination: "0x", amount: "1", state: "Failed", eth_tx: null, attempts: 1, tx_hash: null, failure: "WouldRevert" } as const;
+    expect(failureText(t)).toMatch(/enough WETH.*Retry once the vault is topped up/);
   });
 });
