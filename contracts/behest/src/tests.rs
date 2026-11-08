@@ -21,7 +21,7 @@ struct Env {
 impl Env {
     fn new() -> Self {
         testing_env!(VMContextBuilder::new().current_account_id(acc("behest.testnet")).build());
-        Env { c: Contract::new(acc("admin.testnet"), acc("v1.signer-prod.testnet"), 11155111, U128(50 * GWEI), U128(20 * GWEI), U128(2 * GWEI)), t: 1_000 * DAY }
+        Env { c: Contract::new(acc("admin.testnet"), acc("v1.signer-prod.testnet"), 11155111, U128(50 * GWEI), U128(20 * GWEI), U128(2 * GWEI), Some(21_000)), t: 1_000 * DAY }
     }
 
     fn as_(&mut self, who: &str, deposit: u128) -> &mut Contract {
@@ -410,6 +410,7 @@ fn eip1559_encoding_matches_viem() {
         nonce: 0,
         max_priority_fee_per_gas: 2 * GWEI,
         max_fee_per_gas: 20 * GWEI,
+        gas_limit: 21_000,
         to: &to,
         value: 599_999_979_000_000_000,
     };
@@ -456,7 +457,7 @@ fn eth_claim_assigns_nonce_and_requests_exact_payload() {
 
     // The hash sent to the MPC is exactly the snapshot transfer.
     let to = eth::parse_address(&tr.destination).unwrap();
-    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, to: &to, value: tr.amount.0 };
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &to, value: tr.amount.0 };
     assert_eq!(p.payload_hash, eth::hex_encode(&expected.signing_hash()));
 
     let mpc = receipts.iter().find(|r| r.receiver_id == acc("v1.signer-prod.testnet")).expect("MPC receipt");
@@ -685,4 +686,182 @@ fn claim_schedules_independent_chains_for_near_and_eth() {
     assert_eq!(started, 2);
     assert!(receipts.iter().any(|r| r.receiver_id == acc("amara.testnet")), "NEAR transfer scheduled");
     assert!(receipts.iter().any(|r| r.receiver_id == acc("v1.signer-prod.testnet")), "MPC sign scheduled");
+}
+
+// ------------------------------------------------------ gas limit and upgrade
+
+#[test]
+fn gas_limit_is_snapshotted_into_the_proposal() {
+    let mut e = funded_overdue();
+    e.as_("admin.testnet", 0).set_eth_gas_limit(250_000);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    // reserve = 1 ETH heir × 250k gas × 50 gwei cap
+    let p = e.plan().proposal.unwrap();
+    assert_eq!((p.eth_gas_limit, p.eth_fee_reserve.0), (250_000, 250_000 * 50 * GWEI));
+
+    // Raising the limit later doesn't change what this proposal signs.
+    e.as_("admin.testnet", 0).set_eth_gas_limit(400_000);
+    e.advance(30 * DAY);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let tr = e.eth_transfer();
+    let params = tr.eth_tx.clone().unwrap();
+    assert_eq!(params.gas_limit, 250_000);
+    let to = eth::parse_address(&tr.destination).unwrap();
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 250_000, to: &to, value: tr.amount.0 };
+    assert_eq!(params.payload_hash, eth::hex_encode(&expected.signing_hash()));
+}
+
+#[test]
+#[should_panic(expected = "E_BAD_GAS_LIMIT")]
+fn gas_limit_bounds_enforced() {
+    let mut e = Env::new();
+    e.as_("admin.testnet", 0).set_eth_gas_limit(1_000);
+}
+
+#[test]
+#[should_panic(expected = "E_UNAUTHORIZED")]
+fn only_admin_sets_gas_limit() {
+    let mut e = Env::new();
+    e.as_("g1.testnet", 0).set_eth_gas_limit(300_000);
+}
+
+fn eth_reverted() -> Env {
+    let mut e = eth_signed();
+    e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+    let i = e.eth_index();
+    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), i, "0xabc".into());
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), i, "Reverted".into());
+    e
+}
+
+#[test]
+fn reverted_transfer_is_reissued_on_a_fresh_nonce_with_current_gas() {
+    let mut e = eth_reverted();
+    e.as_("admin.testnet", 0).set_eth_gas_limit(250_000);
+    let i = e.eth_index();
+    let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+    let tr = e.eth_transfer();
+    let p = tr.eth_tx.unwrap();
+    assert_eq!((tr.state, p.nonce, p.gas_limit, p.max_fee_per_gas.0), (TransferState::Signing, 1, 250_000, 20 * GWEI));
+    assert_eq!(e.plan().eth_next_nonce, 2);
+    // the reverted version stays on record
+    assert_eq!(tr.signed_versions.len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "E_UNAUTHORIZED")]
+fn only_admin_reissues() {
+    let mut e = eth_reverted();
+    let i = e.eth_index();
+    let _ = e.as_("exec.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_TRANSFER_STATE")]
+fn reissue_needs_a_reverted_transfer() {
+    let mut e = eth_signed();
+    let i = e.eth_index();
+    let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+}
+
+#[test]
+fn reverted_transfer_cannot_be_retried_on_the_same_nonce() {
+    let mut e = eth_reverted();
+    let i = e.eth_index();
+    // `retry_transfer` keeps the nonce; a mined nonce can't be reused, so the
+    // executor never auto-retries "Reverted" (it isn't in AUTO_RETRY). The
+    // contract still allows a manual retry, which keeps nonce 0.
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    assert_eq!(e.eth_transfer().eth_tx.unwrap().nonce, 0);
+}
+
+#[test]
+fn v1_state_migrates_lazily() {
+    use crate::legacy::{ContractV1, PlanV1, ProposalV1, TransferV1};
+    let mut e = Env::new();
+    let mut plans = near_sdk::store::LookupMap::new(StorageKey::Plans);
+    let owner = acc("owner.testnet");
+    plans.insert(
+        owner.clone(),
+        PlanV1 {
+            owner: owner.clone(),
+            version: 1,
+            policy: plan_input(),
+            last_check_in_ms: 0,
+            escrow: U128(3 * NEAR),
+            eth_next_nonce: 2,
+            proposals_opened: 1,
+            proposal: Some(ProposalV1 {
+                id: 1,
+                plan_version: 1,
+                proposer: acc("g1.testnet"),
+                created_at_ms: 0,
+                approvals: vec![acc("g1.testnet"), acc("g2.testnet")],
+                rejections: vec![],
+                approved_at_ms: Some(0),
+                waiting_ends_at_ms: Some(0),
+                near_snapshot: U128(0),
+                eth_snapshot: U128(NEAR),
+                eth_fee_reserve: U128(21_000 * 50 * GWEI),
+                transfers: vec![TransferV1 {
+                    heir: acc("amara.testnet"),
+                    asset: Asset::Eth,
+                    destination: AMARA_ETH.into(),
+                    amount: U128(1_000),
+                    state: TransferState::Failed,
+                    eth_tx: None,
+                    signature: None,
+                    signed_versions: vec![],
+                    attempts: 1,
+                    tx_hash: Some("0xabc".into()),
+                    failure: Some("Reverted".into()),
+                }],
+            }),
+        },
+    );
+    plans.flush();
+    let mut execs = near_sdk::store::IterableSet::new(StorageKey::Executors);
+    execs.insert(acc("exec.testnet"));
+    execs.flush();
+    let old = ContractV1 {
+        admin: acc("admin.testnet"),
+        mpc_contract: acc("v1.signer-prod.testnet"),
+        eth_chain_id: 11155111,
+        eth_max_fee_cap: U128(50 * GWEI),
+        eth_initial_max_fee: U128(20 * GWEI),
+        eth_priority_fee: U128(2 * GWEI),
+        paused: false,
+        executors: execs,
+        open_releases: near_sdk::store::IterableSet::new(StorageKey::OpenReleases),
+        plans,
+    };
+    env::state_write(&old);
+
+    e.c = Contract::migrate(250_000);
+    let cfg = e.c.get_config();
+    assert_eq!((cfg.eth_gas_limit, cfg.executors), (250_000, vec![acc("exec.testnet")]));
+
+    // read without writing: old transfers report the 21k they were built with
+    let view = e.c.get_plan(owner.clone()).unwrap();
+    assert_eq!((view.plan.escrow.0, view.plan.eth_next_nonce), (3 * NEAR, 2));
+    assert_eq!(view.plan.proposal.as_ref().unwrap().eth_gas_limit, 21_000);
+
+    // first write moves it, and a reissue picks up the new gas limit and nonce 2
+    let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(owner.clone(), 0);
+    let p = e.plan().proposal.unwrap();
+    assert_eq!((p.eth_gas_limit, p.transfers[0].eth_tx.as_ref().unwrap().nonce), (250_000, 2));
+}
+
+#[test]
+fn retry_after_gas_limit_too_low_keeps_nonce_and_raises_gas() {
+    let mut e = eth_signed();
+    e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+    let i = e.eth_index();
+    e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), i, "GasLimitTooLow".into());
+    e.as_("admin.testnet", 0).set_eth_gas_limit(300_000);
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    let p = e.eth_transfer().eth_tx.unwrap();
+    assert_eq!((p.nonce, p.gas_limit), (0, 300_000));
+    assert_eq!(e.plan().eth_next_nonce, 1);
 }

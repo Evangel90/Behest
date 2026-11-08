@@ -5,6 +5,7 @@
 
 mod errors;
 pub mod eth;
+mod legacy;
 mod policy;
 mod types;
 
@@ -22,7 +23,12 @@ pub use types::*;
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 /// Conservative storage cost per byte (10^19 yocto = 0.00001 NEAR).
 const STORAGE_BYTE_COST: u128 = 10_000_000_000_000_000_000;
-const ETH_TRANSFER_GAS: u128 = eth::GAS_LIMIT;
+/// Default gas limit for vault transfers. A transfer to an address that has
+/// never been used costs far more than 21 000 gas since Sepolia's Glamsterdam
+/// upgrade (≈207k observed); unused gas is not charged.
+pub const DEFAULT_ETH_GAS_LIMIT: u64 = 250_000;
+const MIN_ETH_GAS_LIMIT: u64 = 15_000;
+const MAX_ETH_GAS_LIMIT: u64 = 2_000_000;
 /// MPC `sign` requires 15 Tgas attached on testnet (config v3.18); keep headroom.
 const MPC_SIGN_GAS: Gas = Gas::from_tgas(50);
 const MPC_DOMAIN_SECP256K1: u32 = 0;
@@ -74,9 +80,11 @@ pub fn eth_vault_path(owner: &AccountId) -> String {
 #[near]
 #[derive(BorshStorageKey)]
 enum StorageKey {
+    /// v0.1 plan layout; read and converted lazily (see legacy.rs).
     Plans,
     Executors,
     OpenReleases,
+    PlansV2,
 }
 
 #[near(contract_state)]
@@ -95,6 +103,9 @@ pub struct Contract {
     /// Owners with a proposal that is not yet settled (for executors and UIs).
     open_releases: IterableSet<AccountId>,
     plans: LookupMap<AccountId, Plan>,
+    legacy_plans: LookupMap<AccountId, legacy::PlanV1>,
+    /// Gas limit snapshotted into each new proposal.
+    eth_gas_limit: u64,
 }
 
 #[near(serializers = [json])]
@@ -105,6 +116,7 @@ pub struct ConfigView {
     pub eth_max_fee_cap: U128,
     pub eth_initial_max_fee: U128,
     pub eth_priority_fee: U128,
+    pub eth_gas_limit: u64,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -128,6 +140,7 @@ fn caller() -> AccountId {
 #[near]
 impl Contract {
     #[init]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         admin: AccountId,
         mpc_contract: AccountId,
@@ -135,7 +148,10 @@ impl Contract {
         eth_max_fee_cap: U128,
         eth_initial_max_fee: U128,
         eth_priority_fee: U128,
+        eth_gas_limit: Option<u64>,
     ) -> Self {
+        let eth_gas_limit = eth_gas_limit.unwrap_or(DEFAULT_ETH_GAS_LIMIT);
+        assert_gas_limit(eth_gas_limit);
         Self {
             admin,
             mpc_contract,
@@ -146,7 +162,32 @@ impl Contract {
             paused: false,
             executors: IterableSet::new(StorageKey::Executors),
             open_releases: IterableSet::new(StorageKey::OpenReleases),
-            plans: LookupMap::new(StorageKey::Plans),
+            plans: LookupMap::new(StorageKey::PlansV2),
+            legacy_plans: LookupMap::new(StorageKey::Plans),
+            eth_gas_limit,
+        }
+    }
+
+    /// Upgrade from the v0.1 layout. Config, executors and open releases carry
+    /// over; plans move to the new layout one by one as they are next touched.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate(eth_gas_limit: u64) -> Self {
+        assert_gas_limit(eth_gas_limit);
+        let old: legacy::ContractV1 = env::state_read().unwrap_or_else(|| env::panic_str("no v0.1 state"));
+        Self {
+            admin: old.admin,
+            mpc_contract: old.mpc_contract,
+            eth_chain_id: old.eth_chain_id,
+            eth_max_fee_cap: old.eth_max_fee_cap,
+            eth_initial_max_fee: old.eth_initial_max_fee,
+            eth_priority_fee: old.eth_priority_fee,
+            paused: old.paused,
+            executors: old.executors,
+            open_releases: old.open_releases,
+            plans: LookupMap::new(StorageKey::PlansV2),
+            legacy_plans: old.plans,
+            eth_gas_limit,
         }
     }
 
@@ -158,6 +199,7 @@ impl Contract {
     pub fn set_plan(&mut self, plan: PlanInput) {
         let owner = caller();
         let policy = policy::validate(&owner, plan);
+        self.migrate_plan(&owner);
         let storage_before = env::storage_usage();
 
         let version = match self.plans.get_mut(&owner) {
@@ -248,6 +290,7 @@ impl Contract {
     pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>) -> u64 {
         let g = caller();
         let fee_cap = self.eth_max_fee_cap.0;
+        let gas_limit = self.eth_gas_limit;
         let t = now();
         let plan = self.plan_mut(&owner);
         if !plan.policy.guardians.contains(&g) {
@@ -263,7 +306,7 @@ impl Contract {
         let near_total = plan.escrow.0;
         let eth_heirs = plan.policy.heirs.iter().filter(|h| h.eth_destination.is_some()).count() as u128;
         let eth_balance = eth_balance.map(|b| b.0).unwrap_or(0);
-        let fee_reserve = eth_heirs * ETH_TRANSFER_GAS * fee_cap;
+        let fee_reserve = eth_heirs * gas_limit as u128 * fee_cap;
         if eth_heirs > 0 && eth_balance > 0 && eth_balance <= fee_reserve {
             fail(Error::InsufficientFeeReserve);
         }
@@ -306,6 +349,7 @@ impl Contract {
             eth_snapshot: U128(eth_balance),
             eth_fee_reserve: U128(if eth_balance > 0 { fee_reserve } else { 0 }),
             transfers,
+            eth_gas_limit: gas_limit,
         });
         self.open_releases.insert(owner.clone());
         emit("release_proposed", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id, "proposer": g}));
@@ -504,6 +548,39 @@ impl Contract {
         self.paused = paused;
     }
 
+    /// Gas limit for proposals opened from now on (open proposals keep theirs).
+    pub fn set_eth_gas_limit(&mut self, gas_limit: u64) {
+        self.assert_admin();
+        assert_gas_limit(gas_limit);
+        self.eth_gas_limit = gas_limit;
+    }
+
+    /// Re-issue an ETH transfer whose transaction was mined but reverted, on a
+    /// fresh nonce with the current gas limit and starting fees.
+    ///
+    /// Trust assumption (05-threat-model): the contract cannot see Ethereum, so
+    /// it relies on the admin having checked the revert on-chain. Without that
+    /// check a still-pending original could be mined alongside the re-issue.
+    pub fn reissue_reverted_transfer(&mut self, owner: AccountId, index: u32) -> Promise {
+        self.assert_admin();
+        let gas_limit = self.eth_gas_limit;
+        let plan = self.plan_mut(&owner);
+        let next_nonce = plan.eth_next_nonce;
+        let p = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
+        let tr = p.transfers.get_mut(index as usize).unwrap_or_else(|| fail(Error::BadIndex));
+        if tr.asset != Asset::Eth || tr.state != TransferState::Failed || tr.failure.as_deref() != Some("Reverted") {
+            fail(Error::InvalidTransferState);
+        }
+        let old_nonce = tr.eth_tx.as_ref().map(|t| t.nonce);
+        tr.eth_tx = None; // sign_eth assigns the next nonce and initial fees
+        p.eth_gas_limit = p.eth_gas_limit.max(gas_limit);
+        emit(
+            "transfer_reissued",
+            near_sdk::serde_json::json!({"owner": owner, "index": index, "old_nonce": old_nonce, "new_nonce": next_nonce}),
+        );
+        self.sign_eth(&owner, index as usize)
+    }
+
     pub fn set_eth_fees(&mut self, max_fee_cap: U128, initial_max_fee: U128, priority_fee: U128) {
         self.assert_admin();
         self.eth_max_fee_cap = max_fee_cap;
@@ -514,25 +591,27 @@ impl Contract {
     // ---------------------------------------------------------------- views
 
     pub fn get_plan(&self, owner: AccountId) -> Option<PlanView> {
-        self.plans.get(&owner).map(|plan| PlanView {
-            status: status_of(plan, now()),
-            overdue_at_ms: overdue_at(plan),
+        self.read_plan(&owner).map(|plan| PlanView {
+            status: status_of(&plan, now()),
+            overdue_at_ms: overdue_at(&plan),
             now_ms: now(),
-            plan: plan.clone(),
+            plan,
         })
     }
 
     /// Raw signed transaction (`0x…`) for a `Signed`/`Broadcast` ETH transfer.
     /// Anyone can broadcast it; the executor is a convenience, not an authority.
     pub fn get_signed_tx(&self, owner: AccountId, index: u32) -> Option<String> {
-        let tr = self.plans.get(&owner)?.proposal.as_ref()?.transfers.get(index as usize)?;
+        let plan = self.read_plan(&owner)?;
+        let tr = plan.proposal.as_ref()?.transfers.get(index as usize)?;
         raw_signed_tx(tr, tr.eth_tx.as_ref()?, tr.signature.as_ref()?)
     }
 
     /// Every signed version of an ETH transfer (oldest first), as raw `0x…`
     /// transactions. They share one nonce, so at most one can be mined.
     pub fn get_signed_tx_versions(&self, owner: AccountId, index: u32) -> Vec<String> {
-        let Some(tr) = self.plans.get(&owner).and_then(|p| p.proposal.as_ref()).and_then(|p| p.transfers.get(index as usize)) else {
+        let plan = self.read_plan(&owner);
+        let Some(tr) = plan.as_ref().and_then(|p| p.proposal.as_ref()).and_then(|p| p.transfers.get(index as usize)) else {
             return vec![];
         };
         tr.signed_versions.iter().filter_map(|v| raw_signed_tx(tr, &v.eth_tx, &v.signature)).collect()
@@ -558,6 +637,7 @@ impl Contract {
             admin: self.admin.clone(),
             mpc_contract: self.mpc_contract.clone(),
             eth_chain_id: self.eth_chain_id,
+            eth_gas_limit: self.eth_gas_limit,
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
@@ -603,6 +683,7 @@ fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Opt
         nonce: params.nonce,
         max_priority_fee_per_gas: params.max_priority_fee_per_gas.0,
         max_fee_per_gas: params.max_fee_per_gas.0,
+        gas_limit: params.gas_limit,
         to: &to,
         value: tr.amount.0,
     };
@@ -612,6 +693,12 @@ fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Opt
         y_parity: sig.recovery_id,
     };
     Some(format!("0x{}", eth::hex_encode(&tx.signed(&rsv))))
+}
+
+fn assert_gas_limit(gas_limit: u64) {
+    if !(MIN_ETH_GAS_LIMIT..=MAX_ETH_GAS_LIMIT).contains(&gas_limit) {
+        env::panic_str("E_BAD_GAS_LIMIT: gas limit out of bounds");
+    }
 }
 
 fn emit_transfer(owner: &AccountId, index: u32, state: TransferState) {
@@ -635,19 +722,36 @@ fn new_transfer(heir: &AccountId, asset: Asset, destination: String, amount: u12
 }
 
 impl Contract {
-    fn plan_ref(&self, owner: &AccountId) -> &Plan {
-        self.plans.get(owner).unwrap_or_else(|| fail(Error::NoPlan))
+    /// Current-layout copy of a plan, converting a v0.1 plan without writing.
+    fn read_plan(&self, owner: &AccountId) -> Option<Plan> {
+        match self.plans.get(owner) {
+            Some(p) => Some(p.clone()),
+            None => self.legacy_plans.get(owner).cloned().map(Plan::from),
+        }
+    }
+
+    /// Moves a v0.1 plan into the current layout (storage stays with the contract).
+    fn migrate_plan(&mut self, owner: &AccountId) {
+        if !self.plans.contains_key(owner) {
+            if let Some(old) = self.legacy_plans.remove(owner) {
+                self.plans.insert(owner.clone(), old.into());
+            }
+        }
+    }
+
+    fn plan_ref(&self, owner: &AccountId) -> Plan {
+        self.read_plan(owner).unwrap_or_else(|| fail(Error::NoPlan))
     }
 
     fn plan_mut(&mut self, owner: &AccountId) -> &mut Plan {
+        self.migrate_plan(owner);
         self.plans.get_mut(owner).unwrap_or_else(|| fail(Error::NoPlan))
     }
 
     fn close_if_settled(&mut self, owner: &AccountId) {
         let settled = self
-            .plans
-            .get(owner)
-            .and_then(|p| p.proposal.as_ref())
+            .read_plan(owner)
+            .and_then(|p| p.proposal)
             .is_some_and(|p| p.transfers.iter().all(|t| t.state == TransferState::Confirmed));
         if settled {
             self.open_releases.remove(owner);
@@ -686,6 +790,7 @@ impl Contract {
     /// only the fees move on retry, bounded by the cap.
     fn sign_eth(&mut self, owner: &AccountId, index: usize) -> Promise {
         let chain_id = self.eth_chain_id;
+        let configured_gas = self.eth_gas_limit;
         let cap = self.eth_max_fee_cap.0;
         let initial = self.eth_initial_max_fee.0.min(cap);
         let priority = self.eth_priority_fee.0;
@@ -693,12 +798,17 @@ impl Contract {
 
         let plan = self.plan_mut(owner);
         let next_nonce = plan.eth_next_nonce;
-        let tr = &mut plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal)).transfers[index];
-        let (nonce, max_fee, prio_fee, fresh) = match &tr.eth_tx {
-            None => (next_nonce, initial, priority.min(initial), true),
+        let proposal = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
+        let snapshot_gas = proposal.eth_gas_limit;
+        let tr = &mut proposal.transfers[index];
+        // A re-sign keeps the nonce, so at most one version can be mined; it may
+        // raise the gas limit to the configured one (fixes "GasLimitTooLow").
+        let (nonce, max_fee, prio_fee, gas_limit, fresh) = match &tr.eth_tx {
+            None => (next_nonce, initial, priority.min(initial), snapshot_gas, true),
             Some(prev) => {
                 let max_fee = eth::bump(prev.max_fee_per_gas.0, cap);
-                (prev.nonce, max_fee, eth::bump(prev.max_priority_fee_per_gas.0, max_fee), false)
+                let gas = prev.gas_limit.max(configured_gas);
+                (prev.nonce, max_fee, eth::bump(prev.max_priority_fee_per_gas.0, max_fee), gas, false)
             }
         };
         let to = eth::parse_address(&tr.destination).unwrap_or_else(|| fail(Error::BadDestination));
@@ -707,6 +817,7 @@ impl Contract {
             nonce,
             max_priority_fee_per_gas: prio_fee,
             max_fee_per_gas: max_fee,
+            gas_limit,
             to: &to,
             value: tr.amount.0,
         }
@@ -719,6 +830,7 @@ impl Contract {
             max_fee_per_gas: U128(max_fee),
             max_priority_fee_per_gas: U128(prio_fee),
             payload_hash: payload_hash.clone(),
+            gas_limit,
         });
         tr.signature = None;
         tr.tx_hash = None;

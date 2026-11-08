@@ -1,7 +1,9 @@
 // Deploys the demo-timers build and initialises it in one transaction, then
-// registers the executor. Usage: pnpm --filter @behest/testnet deploy-contract <suffix> [--upgrade]
+// registers the executor. Usage: pnpm --filter @behest/testnet deploy-contract <suffix> [--upgrade | --migrate]
 // --upgrade replaces the code of an existing deployment without re-initialising;
 // only use it when the stored state layout is unchanged.
+// --migrate replaces the code and calls `migrate` in the same transaction
+// (v0.1 → configurable ETH gas limit; plans convert lazily).
 // Accounts behest-<suffix>[-admin|-exec|-owner|-g1..3|-amara|-tobi].testnet
 // must already exist in the legacy keychain (created via the faucet).
 import { createHash } from "node:crypto";
@@ -11,7 +13,8 @@ import { actions, teraToGas } from "near-api-js";
 import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
 
 const suffix = process.argv[2];
-const upgrade = process.argv.includes("--upgrade");
+const migrate = process.argv.includes("--migrate");
+const upgrade = migrate || process.argv.includes("--upgrade");
 if (!suffix) throw new Error("usage: deploy <suffix>");
 const id = (n?: string) => `behest-${suffix}${n ? `-${n}` : ""}.testnet`;
 
@@ -25,14 +28,23 @@ const init = {
   admin,
   mpc_contract: process.env.MPC_CONTRACT_ID || "v1.signer-prod.testnet",
   eth_chain_id: 11155111,
-  eth_max_fee_cap: "50000000000", // 50 gwei
-  eth_initial_max_fee: "20000000000", // 20 gwei
-  eth_priority_fee: "2000000000", // 2 gwei
+  // Sepolia base fee is ~0 and tips ~1 gwei (Nov 2026); the cap bounds the reserve.
+  eth_max_fee_cap: "10000000000", // 10 gwei
+  eth_initial_max_fee: "3000000000", // 3 gwei
+  eth_priority_fee: "1500000000", // 1.5 gwei
+  eth_gas_limit: 250_000, // a first transfer to an unused address needs ≈207k since Glamsterdam
 };
 
 const state = await account(contract).getState().catch(() => null);
 const hasCode = state && state.codeHash !== "11111111111111111111111111111111";
-if (hasCode && upgrade) {
+if (hasCode && migrate) {
+  log("upgrading code and migrating state", { contract, bytes: wasm.length, sha256: sha });
+  await account(contract).signAndSendTransaction({
+    receiverId: contract,
+    actions: [actions.deployContract(wasm), actions.functionCall("migrate", { eth_gas_limit: init.eth_gas_limit }, teraToGas(100), 0n)],
+  });
+  await call(admin, contract, "set_eth_fees", { max_fee_cap: init.eth_max_fee_cap, initial_max_fee: init.eth_initial_max_fee, priority_fee: init.eth_priority_fee });
+} else if (hasCode && upgrade) {
   log("upgrading code (state kept)", { contract, bytes: wasm.length, sha256: sha });
   await account(contract).deployContract(wasm);
 } else if (hasCode) {

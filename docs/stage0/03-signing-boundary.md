@@ -32,7 +32,7 @@ An EIP-1559 (type 2) transaction, built inside the contract by `contracts/behest
 | `to` | heir's ETH destination from the proposal snapshot | no |
 | `value` | heir's ETH amount from the proposal snapshot | no |
 | `data` | empty | no |
-| `gas_limit` | `21000` | no |
+| `gas_limit` | the proposal's `eth_gas_limit`, snapshotted from admin config `eth_gas_limit` (testnet: 250 000) when the proposal opens | only upward, on a same-nonce re-sign |
 | `max_priority_fee_per_gas`, `max_fee_per_gas` | first attempt: admin-set `eth_priority_fee` and `eth_initial_max_fee` (clamped to the cap); each retry bumps both by ≥ 12.5% (replacement rule), never above the global `eth_max_fee_cap` | yes, bounded |
 | `access_list` | empty | no |
 
@@ -40,16 +40,23 @@ The contract computes `keccak256(0x02 || rlp(fields))` and sends it as `payload_
 
 Every signed version of a transfer is kept in contract state (`get_signed_tx_versions`, at most 32). Any executor, including a freshly started one with no local state, can therefore find which version was mined.
 
-Because the nonce is fixed per transfer, a retry can only replace the same transfer. Two different transfers can never both land with the same nonce, and a stale signed copy of the same transfer is harmless.
+Because the nonce is fixed per transfer, a retry can only replace the same transfer.
+
+### Gas limit
+
+A fixed 21 000 was the original design. Since Sepolia's Glamsterdam upgrade (observed November 2026), a value transfer to an address that has never been used costs about 207 000 gas. The first live two-heir run, with freshly generated heir wallets, reverted both transfers with 21 000 used, and the vault still paid the fees. The limit is therefore admin config (bounded to 15 000–2 000 000), snapshotted into each proposal so the fee reserve and the signed transactions agree. Unused gas isn't charged.
+
+- Before its first broadcast of a transfer, the executor estimates the gas the transfer needs. If the signed limit is lower, it reports `Failed(GasLimitTooLow)` instead of sending. The admin raises `eth_gas_limit`, and a retry re-signs at the **same nonce** with the higher limit. Only one version can ever be mined, so this needs no trust.
+- A transfer that was mined but reverted has used up its nonce, so it can't be retried. `reissue_reverted_transfer` (admin only) re-signs it on a fresh nonce with the current gas limit and initial fees. The contract can't see Ethereum, so this relies on the admin having confirmed the revert on-chain (`pnpm --filter @behest/testnet reissue <owner>` checks the receipt before calling). See threat 20 in 05-threat-model. Two different transfers can never both land with the same nonce, and a stale signed copy of the same transfer is harmless.
 
 Callbacks carry an attempt number, so a late MPC response for a superseded attempt can't attach a signature to the current one. The contract doesn't verify the signature itself (it would need the derived public key on-chain). The executor must `ecrecover` every signed transaction and check the sender is the plan's vault address before broadcasting. An invalid signature can't move funds anyway, because the recovered sender would not be the vault.
 
 ## Fee sponsorship (MVP)
 
-- Destination-chain fees come from the ETH vault itself. At proposal time the contract reserves `eth_heir_count × 21000 × max_fee_cap` from the reported ETH balance before computing shares, so heirs never need ETH for gas.
+- Destination-chain fees come from the ETH vault itself. At proposal time the contract reserves `eth_heir_count × eth_gas_limit × max_fee_cap` from the reported ETH balance before computing shares, so heirs never need ETH for gas.
 - If the reported balance is below that reserve, `propose_release` fails with `InsufficientFeeReserve` (one of the required failure demos).
 - If network fees exceed `max_fee_cap`, the executor reports `Failed(FeeAboveCap)` and retries later; funds stay in the vault.
-- NEAR gas for `claim` is paid by the heir's NEAR account in the MVP. NEP-366 meta-transactions through a relayer are a Stage 2 item.
+- NEAR gas for heirs and guardians is sponsored by the NEP-366 relayer (`services/relayer`, D14). Calling directly still works if the relayer is down.
 
 ## Nonce gaps
 

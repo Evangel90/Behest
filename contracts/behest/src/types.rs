@@ -56,6 +56,9 @@ pub struct Proposal {
     pub eth_snapshot: U128,
     pub eth_fee_reserve: U128,
     pub transfers: Vec<Transfer>,
+    /// Gas limit of every ETH transfer in this proposal, fixed when the fee
+    /// reserve is computed so the reserve always covers what gets signed.
+    pub eth_gas_limit: u64,
 }
 
 #[near(serializers = [borsh, json])]
@@ -96,6 +99,7 @@ pub struct EthTxParams {
     pub max_priority_fee_per_gas: U128,
     /// keccak256 of the unsigned transaction, hex (what the MPC signed).
     pub payload_hash: String,
+    pub gas_limit: u64,
 }
 
 #[near(serializers = [borsh, json])]

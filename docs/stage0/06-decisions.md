@@ -7,7 +7,7 @@
 | D3 | **One contract, many plans:** one plan per owner, keyed by owner account | Simple discovery and indexing | Stage 3 if multiple plans per owner are needed |
 | D4 | **NEAR custody:** NEAR is deposited into contract escrow per plan; the owner withdraws freely with no open proposal | Contract can transfer NEAR directly without an executor | — |
 | D5 | **Balance snapshot at proposal time**; withdrawals frozen while a proposal is open; later deposits not distributed in MVP | Matches the guardian-approves-a-snapshot model | Stage 2: recount and later-deposit rules |
-| D6 | **ETH fee model:** fees paid from the vault; reserve `heirs × 21000 × max_fee_cap` at proposal; global `max_fee_cap` set by admin | Heir needs no ETH; caps bound the cost | Stage 2: per-chain reserves and quotes |
+| D6 | **ETH fee model:** fees paid from the vault; reserve `heirs × eth_gas_limit × max_fee_cap` at proposal; `max_fee_cap` and `eth_gas_limit` set by admin, gas limit snapshotted per proposal (was a fixed 21000 until Glamsterdam made first transfers to unused addresses cost ≈207k) | Heir needs no ETH; caps bound the cost | Stage 2: per-chain reserves and quotes |
 | D7 | **Owner ETH withdrawal deferred** | Owner withdrawals consume vault nonces and complicate nonce ordering. Testnet value is zero | Stage 2 (must ship before any mainnet) |
 | D8 | **Executor:** team-operated, but contract-registered and replaceable; anyone can rebroadcast the public signed tx | Proves replaceability without building a market | Stage 3: second independent executor |
 | D9 | **Upgrade and pause authority:** single admin account on testnet; pause covers new plans and new sign requests only | Speed for MVP; risk documented (05 #13) | Stage 4: time-locked multisig |

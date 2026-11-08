@@ -17,8 +17,10 @@ Severity is for a mainnet deployment of the same design. Status says what the MV
 | 11 | Sepolia reorg | Status says Confirmed for a dropped tx | Executor waits N confirmations (default 6); retry reuses the same nonce | Mitigated |
 | 12 | MPC timeout / failure | Transfer stuck in `Signing` | Callback failure → `Failed(SignFailed)`, retryable with the same nonce | Mitigated |
 | 13 | Contract upgrade key compromised | Total loss | MVP uses a single testnet full-access key. Stage 4: time-locked multi-party upgrades, or lock the contract | **Accepted (testnet only)** |
-| 14 | Admin abuse | Pause griefing | Admin can pause but has no fund-moving or plan-editing method | Mitigated |
+| 14 | Admin abuse | Pause griefing; a false re-issue (see 20) | Admin can pause and re-issue a reverted transfer to its fixed heir and amount; no method changes recipients, amounts or plans | Partly (MVP) |
 | 15 | Frontend compromised | User signs a malicious `set_plan` | Plain-language and rule view show the exact plan; wallet shows the call. Stage 3: signed builds | Partly |
 | 16 | Demo timers in production | Releases in minutes | Timer bounds compiled in by feature flag; production build rejects demo durations (tested) | Mitigated |
 | 17 | Heir loses destination key | Share unrecoverable | Destination fixed by owner; Stage 2 alternates/fallback | **Accepted (MVP)** |
 | 18 | Unbounded storage growth / spam | Storage DoS | Caps on heirs/guardians; owner pays storage deposit at plan creation | Mitigated |
+| 19 | Destination-chain gas rule change | Transfer reverts for out-of-gas; fee spent, nonce used | Configurable gas limit snapshotted per proposal; executor estimates before first broadcast and reports `GasLimitTooLow` instead of sending; same-nonce re-sign with a higher limit | Mitigated |
+| 20 | Admin re-issues a transfer that didn't really revert | The original (still valid) and the re-issue could both be mined, paying that heir twice from the vault | Admin-only; the reissue tool checks the Sepolia receipt is `reverted` first; event `transfer_reissued` is public. MVP trust assumption; Stage 2: receipt or light-client proof | Accepted (MVP) |

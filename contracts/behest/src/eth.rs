@@ -4,14 +4,13 @@
 
 use near_sdk::env;
 
-pub const GAS_LIMIT: u128 = 21_000;
-
 /// Fields of a type-2 transaction with empty `data` and `access_list`.
 pub struct EthTransfer<'a> {
     pub chain_id: u64,
     pub nonce: u64,
     pub max_priority_fee_per_gas: u128,
     pub max_fee_per_gas: u128,
+    pub gas_limit: u64,
     pub to: &'a [u8; 20],
     pub value: u128,
 }
@@ -29,7 +28,7 @@ impl EthTransfer<'_> {
             rlp_uint(self.nonce as u128),
             rlp_uint(self.max_priority_fee_per_gas),
             rlp_uint(self.max_fee_per_gas),
-            rlp_uint(GAS_LIMIT),
+            rlp_uint(self.gas_limit as u128),
             rlp_bytes(self.to),
             rlp_uint(self.value),
             rlp_bytes(&[]),  // data
