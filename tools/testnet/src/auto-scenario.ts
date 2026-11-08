@@ -5,9 +5,10 @@
 //   1. After approval, the signers extend the waiting period by 1 minute
 //      (reason code only). Past the original end a heir still can't claim:
 //      the owner's cancel window and the signing cutoff moved with it.
-//   2. When the extended period ends, the executor starts every heir's
-//      transfers on its own (`release`). Heirs sign nothing and receive
-//      exactly their shares.
+//   2. Amara has a per-heir override back to Claim. When the extended period
+//      ends, the executor starts Tobi's transfer on its own (`release`); Tobi
+//      signs nothing and receives exactly his share. Amara's share waits
+//      until she claims it.
 // Usage: pnpm --filter @behest/testnet e2e-auto
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -65,7 +66,15 @@ await call(owner, C, "set_plan", {
   },
 }, { deposit: nearToYocto("0.05") });
 await call(owner, C, "set_release_options", {
-  options: { mode: "Automatic", hybrid_grace_ms: 0, delay_signers: [ds1, ds2], delay_quorum: 2, max_extension_ms: MINUTE, max_total_extension_ms: 2 * MINUTE },
+  options: {
+    mode: "Automatic",
+    hybrid_grace_ms: 0,
+    delay_signers: [ds1, ds2],
+    delay_quorum: 2,
+    max_extension_ms: MINUTE,
+    max_total_extension_ms: 2 * MINUTE,
+    overrides: [{ heir: AMARA, assets: "All", mode: "Claim", hybrid_grace_ms: 0 }],
+  },
 }, { deposit: nearToYocto("0.01") });
 await call(owner, C, "deposit", { owner }, { deposit: ESCROW });
 log("automatic-release plan with two delay signers", { owner, delaySigners: [ds1, ds2] });
@@ -97,19 +106,28 @@ const snap = Object.fromEntries((await plan(owner)).plan.proposal!.transfers.map
 const before = { amara: await balance(AMARA), tobi: await balance(TOBI) };
 await waitChain(owner, extended);
 const engine = executor(C, d.executor);
+const stateOf = (p: PlanView, heir: string) => p.plan.proposal!.transfers.find((t) => t.heir === heir)!.state;
 let p = await plan(owner);
-for (let i = 0; i < 20 && p.status !== "Settled"; i++) {
+for (let i = 0; i < 20 && stateOf(p, TOBI) !== "Confirmed"; i++) {
   await engine.tick();
   await sleep(3_000);
   p = await plan(owner);
 }
-assert(p.status === "Settled", `plan settled by the executor (is ${p.status})`);
-const gain = { amara: (await balance(AMARA)) - before.amara, tobi: (await balance(TOBI)) - before.tobi };
-assert(gain.amara === snap[AMARA] && gain.tobi === snap[TOBI], `heirs received exactly their shares without signing (${gain.amara}, ${gain.tobi})`);
-log("executor released; heirs received exactly", { amara: gain.amara.toString(), tobi: gain.tobi.toString() });
+for (let i = 0; i < 3; i++) await engine.tick(); // more passes: Amara's must stay put
+p = await plan(owner);
+assert(stateOf(p, TOBI) === "Confirmed" && stateOf(p, AMARA) === "Pending", `executor released Tobi only (${stateOf(p, TOBI)}, ${stateOf(p, AMARA)})`);
+assert((await balance(TOBI)) - before.tobi === snap[TOBI], "Tobi received exactly his share without signing");
+log("executor released Tobi; Amara's share (Claim override) waits", { tobi: snap[TOBI]!.toString() });
+
+await call(AMARA, C, "claim", { owner }, { tgas: 100 });
+for (let i = 0; i < 10 && p.status !== "Settled"; i++) await sleep(3_000), (p = await plan(owner));
+assert(p.status === "Settled", `plan settled after Amara's claim (is ${p.status})`);
+const gain = (await balance(AMARA)) - before.amara;
+assert(gain > snap[AMARA]! - nearToYocto("0.01") && gain <= snap[AMARA]!, "Amara received her share, less her own claim gas");
+log("Amara claimed", { share: snap[AMARA]!.toString() });
 
 for (const id of [ds1, ds2]) {
   await account(id).signAndSendTransaction({ receiverId: id, actions: [actions.deleteAccount(d.owner)] });
   rmSync(join(dir, `${id}.json`));
 }
-console.log("✓ delay signers extended the wait; the executor released without any heir action");
+console.log("✓ delay signers extended the wait; the executor released Tobi automatically and left Amara's share for her claim");

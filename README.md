@@ -112,7 +112,7 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | Two heirs, each receiving ETH and WETH, with freshly generated Sepolia wallets: MPC signs nonces 0–3 in claim order, a 60 s executor outage loses nothing, the executor holds each later nonce until the earlier one is mined, each heir receives exactly its ETH and WETH share, and test ETH and WETH are swept back to the funder |
-| `e2e-auto` | Delay signers and automatic release: two delay signers extend an approved release's waiting period by one minute (a heir's claim inside it is refused), then the executor starts both heirs' transfers by itself; the heirs sign nothing and receive exactly their shares |
+| `e2e-auto` | Delay signers and automatic release: two delay signers extend an approved release's waiting period by one minute (a heir's claim inside it is refused), then the executor starts Tobi's transfer by itself (he signs nothing and receives exactly his share) while Amara's per-heir Claim override leaves hers until she claims |
 | `e2e-rules` | Release rules: 0.05 NEAR + 7 yocto with a 0.01 NEAR fixed amount for Tobi, the rest 60/40, the remainder to Amara (every yocto distributed). Nobody claims; after the 1-minute claim window Amara's share moves to her named alternate and Tobi's to the fallback, and both claim it |
 | `e2e-nep141` | NEP-141: the owner wraps NEAR and deposits wNEAR (a deposit for an unknown plan is refunded), withdraws part of it, then the release splits it 60/40 to two fresh accounts the contract registers with the token first; heirs hold exactly their shares and the registration reserve is spent exactly |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
@@ -129,7 +129,7 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 
 ### Delay signers and automatic release (Stage 2)
 
-`e2e-auto`, 2026-11-08. A plan in Automatic mode with two delay signers (quorum 2, ≤ 1 minute per extension, ≤ 2 in total). After approval the signers extended the waiting period from 19:03:35 to 19:04:35 UTC with the reason code `checking-on-owner`. A heir's claim at 19:03:40 was refused (`E_NOT_ELIGIBLE`). When the extended period ended, the executor called `release` for each heir and the plan settled; the heirs' balances rose by exactly 0.03 and 0.02 NEAR without them signing anything.
+`e2e-auto`, 2026-11-08. A plan in Automatic mode with two delay signers (quorum 2, ≤ 1 minute per extension, ≤ 2 in total). After approval the signers extended the waiting period from 19:03:35 to 19:04:35 UTC with the reason code `checking-on-owner`. A heir's claim at 19:03:40 was refused (`E_NOT_ELIGIBLE`). When the extended period ended, the executor called `release` for each heir and the plan settled; the heirs' balances rose by exactly 0.03 and 0.02 NEAR without them signing anything. A rerun at 19:15 UTC gave Amara a per-heir override back to Claim: the executor released only Tobi (exactly 0.02 NEAR, no signature from him), left Amara's share pending through further passes, and the plan settled when she claimed.
 
 ### Release rules (Stage 2)
 
@@ -169,7 +169,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Partial failure and retry across two assets without replaying the successful transfer (`e2e-partial`; executor `WouldRevert` pre-check)
 - [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
 - [ ] Bitcoin testnet adapter
-- [x] Delay-signer quorum; automatic and hybrid release modes (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
+- [x] Delay-signer quorum; automatic and hybrid release modes per plan, heir and asset group (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)
