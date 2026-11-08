@@ -112,6 +112,7 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | Two heirs, each receiving ETH and WETH, with freshly generated Sepolia wallets: MPC signs nonces 0–3 in claim order, a 60 s executor outage loses nothing, the executor holds each later nonce until the earlier one is mined, each heir receives exactly its ETH and WETH share, and test ETH and WETH are swept back to the funder |
+| `e2e-nep141` | NEP-141: the owner wraps NEAR and deposits wNEAR (a deposit for an unknown plan is refunded), withdraws part of it, then the release splits it 60/40 to two fresh accounts the contract registers with the token first; heirs hold exactly their shares and the registration reserve is spent exactly |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
 | `recover-vaults <owner>…` | Withdraws what earlier runs left in plan vaults back to the funder via D7 (re-creates deleted scenario owner accounts by name) |
 | `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
@@ -123,6 +124,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 ### Partial failure and retry across two assets (Stage 2 exit criterion)
 
 `e2e-partial`, 2026-11-08: a guardian reported 0.002 WETH when the vault held 0.0005. Amara's [ETH](https://sepolia.etherscan.io/tx/0xad0c2294c6180e148d42cd35c79a7fd147c2b56eef2d3798cb3a0d8a7da706b3) confirmed at nonce 0. The executor's simulation caught her WETH transfer (`WouldRevert`) before broadcast, so no fee was spent and nonce 1 stayed free. After a top-up she retried, and the contract re-signed WETH at nonce 1, which [confirmed](https://sepolia.etherscan.io/tx/0xfa9b1e06413893fba3e6622521e60fc495c303c006b2228375b35a6e120a08ed). The ETH transfer was never re-signed. The vault sent exactly two transactions, and Amara ended with exactly 0.0018 ETH + 0.0012 WETH.
+
+### First NEP-141 release (Stage 2)
+
+`e2e-nep141`, 2026-11-08, on the upgraded main contract (no migration). The owner deposited 0.01 wNEAR with `ft_transfer_call`, and a deposit naming a plan that doesn't exist was refunded by the token. The owner withdrew 0.001. On release the remaining 0.009 wNEAR went 60/40 to two fresh implicit accounts (0.0054 and 0.0036); the contract registered each with `wrap.testnet` first, from 0.0025 NEAR it had reserved out of the plan's escrow. The first attempt found a gap: a token only pays registered accounts, and Behest itself wasn't registered. Listing a token now registers the contract with it.
 
 ### Clean reproduction (Stage 1 exit gate)
 
@@ -152,7 +157,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 
 - [x] Allowlisted Sepolia ERC-20 (WETH): token address snapshotted per transfer, `transfer()` calldata signed by MPC, one fee reserve per vault transaction, executor calldata check (D15, threats 21–22)
 - [x] Partial failure and retry across two assets without replaying the successful transfer (`e2e-partial`; executor `WouldRevert` pre-check)
-- [ ] Allowlisted NEP-141 token
+- [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
 - [ ] Bitcoin testnet adapter
 - [ ] Delay-signer quorum; automatic and hybrid release modes
 - [ ] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback

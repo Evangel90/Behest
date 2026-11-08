@@ -32,7 +32,6 @@ const init = {
   admin,
   mpc_contract: process.env.MPC_CONTRACT_ID || "v1.signer-prod.testnet",
   eth_chain_id: 11155111,
-  // Sepolia base fee is ~0 and tips ~1 gwei (Nov 2026); the cap bounds the reserve.
   // Sepolia runs at ≈0 base fee and ≈1–1.5 gwei priority. The cap sizes the fee
   // reserve locked per transfer (250k × cap), so keep it low on testnet; a
   // spike above it only delays a transfer (FeeAboveCap, retried later).
@@ -64,11 +63,22 @@ if (hasCode && migrate) {
   });
 }
 
-const config = await view<{ executors: string[]; demo_timers: boolean; erc20_tokens?: { address: string }[] }>(contract, "get_config");
+const config = await view<{ executors: string[]; demo_timers: boolean; erc20_tokens?: { address: string }[]; nep141_tokens?: { account_id: string }[] }>(contract, "get_config");
 if (!config.demo_timers) throw new Error("expected a demo-timers build on testnet");
 if (!(config.erc20_tokens ?? []).some((t) => t.address === WETH_TOKEN.address)) {
   await call(admin, contract, "set_erc20_tokens", { tokens: [WETH_TOKEN] });
   log("ERC-20 allowlist set", { tokens: [WETH_TOKEN.symbol] });
+}
+// wNEAR: wrap.testnet registers an account for 0.00125 NEAR (storage_balance_bounds.min).
+const WNEAR = { account_id: "wrap.testnet", symbol: "wNEAR", decimals: 24, storage_deposit: "1250000000000000000000" };
+// Listing registers the contract with the token, paid by the attached deposit.
+if (!(config.nep141_tokens ?? []).some((t) => t.account_id === WNEAR.account_id)) {
+  await call(admin, contract, "set_nep141_tokens", { tokens: [WNEAR] }, { deposit: BigInt(WNEAR.storage_deposit), tgas: 50 });
+  log("NEP-141 allowlist set", { tokens: [WNEAR.symbol] });
+} else if ((await view(WNEAR.account_id, "storage_balance_of", { account_id: contract })) === null) {
+  // Listed by an older contract that didn't register itself.
+  await call(admin, WNEAR.account_id, "storage_deposit", { account_id: contract, registration_only: true }, { deposit: BigInt(WNEAR.storage_deposit) });
+  log("contract registered with token", { token: WNEAR.account_id });
 }
 if (!config.executors.includes(executor)) {
   await call(admin, contract, "add_executor", { account_id: executor });
