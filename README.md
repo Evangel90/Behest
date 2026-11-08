@@ -116,6 +116,7 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `e2e-rules` | Release rules: 0.05 NEAR + 7 yocto with a 0.01 NEAR fixed amount for Tobi, the rest 60/40, the remainder to Amara (every yocto distributed). Nobody claims; after the 1-minute claim window Amara's share moves to her named alternate and Tobi's to the fallback, and both claim it |
 | `e2e-nep141` | NEP-141: the owner wraps NEAR and deposits wNEAR (a deposit for an unknown plan is refunded), withdraws part of it, then the release splits it 60/40 to two fresh accounts the contract registers with the token first; heirs hold exactly their shares and the registration reserve is spent exactly |
 | `e2e-btc` | Bitcoin testnet4 (D20): a plan registers an MPC-derived P2WPKH vault; the funder sends it tBTC; the owner withdraws part of it (MPC-signed, executor-broadcast, change back to the vault); guardians propose with the vault's coin; Amara (Taproot address) and Tobi (P2WPKH) claim, their payouts are chained (Tobi's spends Amara's change before either is mined), each address receives exactly its share and the plan settles. Needs ≥ 32k sats on the `btc-funder` address; waits for 2–3 blocks |
+| `e2e-followup` | Follow-up rounds (D21): a release with Tobi's 0.01 NEAR fixed amount settles; a friend deposits 0.02 NEAR afterwards; Amara (an heir) proposes a follow-up round, guardians approve, both heirs receive a plain 60/40 split (the fixed amount isn't paid twice); the history holds both rounds and the owner can check in again |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
 | `recover-vaults <owner>…` | Withdraws what earlier runs left in plan vaults back to the funder via D7 (re-creates deleted scenario owner accounts by name) |
 | `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
@@ -135,6 +136,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 ### Release rules (Stage 2)
 
 `e2e-rules`, 2026-11-08. The escrow of 0.05 NEAR + 7 yocto snapshotted as 0.026000…002 for Tobi (0.01 fixed + 40%) and 0.024000…005 for Amara (60% + the 1-yocto remainder), with nothing left in the plan. Neither heir claimed. A minute after claiming opened, a guardian moved Amara's share to her alternate and Tobi's (no alternate) to the fallback; both claimed and received exactly those amounts. The relayer sponsors claims by alternates and the fallback, and lets any plan participant move an unclaimed share without gas.
+
+### Follow-up rounds (Stage 2)
+
+`e2e-followup`, 2026-11-09. A release split 0.05 NEAR as 0.026 to Tobi (0.01 fixed + 40%) and 0.024 to Amara, and settled. Afterwards a friend deposited 0.02 NEAR; the owner never checked in, so Amara herself proposed a follow-up round. Two guardians approved, and after the waiting period the heirs received 0.012 and 0.008: a plain 60/40 split, because Tobi's fixed amount was already paid. Both rounds are in the plan's history, and the owner could check in again afterwards (before D21 a settled release blocked check-ins and deposits for good).
 
 ### First NEP-141 release (Stage 2)
 
@@ -173,4 +178,5 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Delay-signer quorum; automatic and hybrid release modes per plan, heir and asset group (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve
+- [x] Follow-up release rounds: settled releases archived, heirs can start a round for what is left, fixed amounts paid once, reported balances recorded and checked against the live vaults before voting; rejection returns NEP-141 shares; owners can check in after a release (D21, threat 4; live `e2e-followup`)
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)

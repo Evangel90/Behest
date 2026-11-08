@@ -108,7 +108,13 @@ export async function reclaimScenarioOwners(contract: string, parent: string) {
   // (e.g. happymw7v6arh). Deployment accounts made by `bootstrap` under the
   // same parent (behest-<suffix>-…) never match.
   const scenario = new RegExp(`^[a-z]{2,12}m[0-9a-z]{7}\\.${parent.replace(/\./g, "\\.")}\\.json$`);
-  const owners = readdirSync(dir).filter((f) => scenario.test(f)).map((f) => f.slice(0, -5));
+  // Names end in Date.now() in base 36: leave recent ones, which may belong to
+  // a scenario still running in parallel (a Bitcoin run takes hours).
+  const age = (id: string) => Date.now() - parseInt(id.split(".")[0]!.match(/m[0-9a-z]{7}$/)![0], 36);
+  const owners = readdirSync(dir)
+    .filter((f) => scenario.test(f))
+    .map((f) => f.slice(0, -5))
+    .filter((id) => age(id) > 6 * 3_600_000);
   let n = 0;
   for (const owner of owners) {
     try {
