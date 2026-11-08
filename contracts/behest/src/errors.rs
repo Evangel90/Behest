@@ -45,6 +45,11 @@ pub enum Error {
     ExtensionTooLong,
     ExtensionPending,
     NotReleasable,
+    BtcVaultUnknown,
+    InvalidBtcAddress,
+    InvalidUtxos,
+    BtcNotHead,
+    FeeAtCap,
 }
 
 impl Error {
@@ -92,6 +97,11 @@ impl Error {
             Error::ExtensionTooLong => "E_EXTENSION_TOO_LONG",
             Error::ExtensionPending => "E_EXTENSION_PENDING",
             Error::NotReleasable => "E_NOT_RELEASABLE",
+            Error::BtcVaultUnknown => "E_BTC_VAULT_UNKNOWN",
+            Error::InvalidBtcAddress => "E_INVALID_BTC_ADDRESS",
+            Error::InvalidUtxos => "E_INVALID_UTXOS",
+            Error::BtcNotHead => "E_BTC_NOT_HEAD",
+            Error::FeeAtCap => "E_FEE_AT_CAP",
         }
     }
 }

@@ -111,7 +111,7 @@ fn check_recipient(r: &mut Recipient) {
 /// Validates release rules against the current plan. Alternates and the
 /// fallback must be outsiders (not the owner, a heir or a guardian) so a
 /// transfer's current holder always says which step of the chain it is at.
-pub fn validate_rules(owner: &AccountId, p: &PlanInput, mut r: ReleaseRules) -> ReleaseRules {
+pub fn validate_rules(owner: &AccountId, p: &PlanInput, mut r: ReleaseRules, has_btc: impl Fn(&AccountId) -> bool) -> ReleaseRules {
     let heir = |a: &AccountId| p.heirs.iter().find(|h| &h.account_id == a);
     let insider = |a: &AccountId| a == owner || heir(a).is_some() || p.guardians.contains(a);
     if r.fixed.len() > MAX_FIXED || r.alternates.len() > MAX_HEIRS {
@@ -124,7 +124,13 @@ pub fn validate_rules(owner: &AccountId, p: &PlanInput, mut r: ReleaseRules) -> 
     }
     for f in &r.fixed {
         let h = heir(&f.heir).unwrap_or_else(|| fail(Error::InvalidRules));
-        let has_dest = if f.asset.is_evm() { h.eth_destination.is_some() } else { h.near_destination.is_some() };
+        let has_dest = if f.asset.is_evm() {
+            h.eth_destination.is_some()
+        } else if f.asset.is_btc() {
+            has_btc(&h.account_id)
+        } else {
+            h.near_destination.is_some()
+        };
         if f.amount.0 == 0 || !has_dest || r.fixed.iter().filter(|g| g.heir == f.heir && g.asset == f.asset).count() > 1 {
             fail(Error::InvalidRules);
         }

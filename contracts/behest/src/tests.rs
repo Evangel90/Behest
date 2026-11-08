@@ -80,7 +80,7 @@ fn funded_overdue() -> Env {
 
 fn approved() -> Env {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e
 }
@@ -99,7 +99,7 @@ fn lifecycle_active_to_eligible() {
     e.advance(1);
     assert_eq!(e.status(), PlanStatus::Overdue);
 
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     assert_eq!(e.status(), PlanStatus::Proposed);
     e.as_("g3.testnet", 0).approve_release(acc("owner.testnet"), id);
     assert_eq!(e.status(), PlanStatus::Waiting);
@@ -161,7 +161,7 @@ fn owner_check_in_cancels_waiting_proposal_and_restores_escrow() {
 #[test]
 fn owner_cancels_proposed_release() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.as_("owner.testnet", 0).cancel_release();
     assert_eq!(e.status(), PlanStatus::Active);
 }
@@ -204,28 +204,28 @@ fn cannot_propose_while_owner_current() {
     let mut e = Env::new();
     e.as_("owner.testnet", NEAR).set_plan(plan_input());
     e.as_("owner.testnet", NEAR).deposit(acc("owner.testnet"));
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
 }
 
 #[test]
 #[should_panic(expected = "E_NOT_GUARDIAN")]
 fn non_guardian_cannot_propose() {
     let mut e = funded_overdue();
-    e.as_("amara.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("amara.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
 }
 
 #[test]
 #[should_panic(expected = "E_ALREADY_VOTED")]
 fn guardian_cannot_vote_twice() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.as_("g1.testnet", 0).approve_release(acc("owner.testnet"), id);
 }
 
 #[test]
 fn insufficient_quorum_stays_proposed() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.advance(365 * DAY);
     assert_eq!(e.status(), PlanStatus::Proposed);
 }
@@ -233,7 +233,7 @@ fn insufficient_quorum_stays_proposed() {
 #[test]
 fn rejections_that_make_quorum_impossible_kill_the_proposal() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.as_("g2.testnet", 0).reject_release(acc("owner.testnet"), id);
     assert_eq!(e.status(), PlanStatus::Proposed);
     e.as_("g3.testnet", 0).reject_release(acc("owner.testnet"), id);
@@ -292,7 +292,7 @@ fn pause_blocks_claims() {
 #[should_panic(expected = "E_INSUFFICIENT_FEE_RESERVE")]
 fn eth_balance_below_fee_reserve_is_rejected() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(21_000 * 50 * GWEI)), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(21_000 * 50 * GWEI)), None, None);
 }
 
 // -------------------------------------------------------------- validation
@@ -649,12 +649,12 @@ fn vault_path_is_per_owner() {
 #[test]
 fn open_release_index_tracks_proposals() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     assert_eq!(e.as_("x.testnet", 0).list_open_releases(None, None), vec![acc("owner.testnet")]);
     e.as_("g2.testnet", 0).reject_release(acc("owner.testnet"), id);
     e.as_("g3.testnet", 0).reject_release(acc("owner.testnet"), id);
     assert!(e.as_("x.testnet", 0).list_open_releases(None, None).is_empty());
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.as_("owner.testnet", 0).cancel_release();
     assert!(e.as_("x.testnet", 0).list_open_releases(None, None).is_empty());
 }
@@ -695,7 +695,7 @@ fn claim_schedules_independent_chains_for_near_and_eth() {
 fn gas_limit_is_snapshotted_into_the_proposal() {
     let mut e = funded_overdue();
     e.as_("admin.testnet", 0).set_eth_gas_limit(250_000);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     // reserve = 1 ETH heir × 250k gas × 50 gwei cap
     let p = e.plan().proposal.unwrap();
@@ -873,10 +873,10 @@ fn retry_after_gas_limit_too_low_keeps_nonce_and_raises_gas() {
 #[should_panic(expected = "E_NOT_PROPOSED")]
 fn approval_for_a_cancelled_proposal_cannot_be_replayed_on_the_next() {
     let mut e = funded_overdue();
-    let old = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let old = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("owner.testnet", 0).cancel_release();
     e.advance(97 * DAY);
-    let new = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let new = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     assert_ne!(old, new);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), old);
 }
@@ -884,13 +884,13 @@ fn approval_for_a_cancelled_proposal_cannot_be_replayed_on_the_next() {
 #[test]
 fn edited_destinations_need_a_fresh_proposal_and_fresh_votes() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("owner.testnet", 0).cancel_release();
     let mut edited = plan_input();
     edited.heirs[0].eth_destination = Some("0x000000000000000000000000000000000000dead".into());
     e.as_("owner.testnet", NEAR).set_plan(edited);
     e.advance(97 * DAY);
-    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     let p = e.plan().proposal.unwrap();
     // votes don't carry over (only the proposer's own), and the snapshot pins the version
     assert!(id2 > id);
@@ -961,7 +961,7 @@ fn erc20_encoding_matches_viem() {
 #[test]
 fn token_snapshot_reserves_a_fee_for_every_vault_transaction() {
     let mut e = with_weth();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000), None);
     let p = e.plan().proposal.unwrap();
     // amara (the only ETH heir) gets one ETH and one WETH transfer: two reserved fees
     assert_eq!(p.eth_fee_reserve.0, 2 * PER_TX);
@@ -972,7 +972,7 @@ fn token_snapshot_reserves_a_fee_for_every_vault_transaction() {
 #[test]
 fn token_only_vault_needs_eth_for_gas_but_not_more() {
     let mut e = with_weth();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX)), bal(WETH, 1_000));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX)), bal(WETH, 1_000), None);
     let p = e.plan().proposal.unwrap();
     assert_eq!(p.eth_fee_reserve.0, PER_TX);
     assert!(p.transfers.iter().all(|t| t.asset != Asset::Eth));
@@ -983,14 +983,14 @@ fn token_only_vault_needs_eth_for_gas_but_not_more() {
 #[should_panic(expected = "E_INSUFFICIENT_FEE_RESERVE")]
 fn token_transfers_without_gas_money_are_rejected() {
     let mut e = with_weth();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX - 1)), bal(WETH, 1_000));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX - 1)), bal(WETH, 1_000), None);
 }
 
 #[test]
 #[should_panic(expected = "E_UNKNOWN_TOKEN")]
 fn unlisted_token_is_rejected() {
     let mut e = with_weth();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal("0x000000000000000000000000000000000000dead", 5));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal("0x000000000000000000000000000000000000dead", 5), None);
 }
 
 #[test]
@@ -998,7 +998,7 @@ fn unlisted_token_is_rejected() {
 fn token_cannot_be_reported_twice() {
     let mut e = with_weth();
     let twice = Some(vec![TokenBalance { token: WETH.into(), amount: U128(1) }, TokenBalance { token: weth(), amount: U128(1) }]);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), twice);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), twice, None);
 }
 
 #[test]
@@ -1011,7 +1011,7 @@ fn only_admin_sets_tokens() {
 #[test]
 fn token_claim_signs_a_transfer_call_on_the_next_nonce() {
     let mut e = with_weth();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000), None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e.advance(30 * DAY);
     let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
@@ -1035,7 +1035,7 @@ fn token_claim_signs_a_transfer_call_on_the_next_nonce() {
 #[test]
 fn removing_a_token_from_the_allowlist_keeps_open_snapshots() {
     let mut e = with_weth();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000), None);
     e.as_("admin.testnet", 0).set_erc20_tokens(vec![]);
     assert!(e.plan().proposal.unwrap().transfers.iter().any(|t| t.asset == Asset::Erc20(weth())));
     assert!(e.as_("anyone.testnet", 0).get_config().erc20_tokens.is_empty());
@@ -1131,7 +1131,7 @@ fn release_cannot_snapshot_a_vault_with_an_unresolved_withdrawal() {
     e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
     withdraw_eth(&mut e, 1);
     e.advance(97 * DAY);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
 }
 
 #[test]
@@ -1143,7 +1143,7 @@ fn confirmed_withdrawal_frees_the_vault_and_heirs_take_later_nonces() {
     assert_eq!(withdrawal(&mut e).state, TransferState::Confirmed);
     assert!(e.as_("x.testnet", 0).list_vault_withdrawals().is_empty());
     e.advance(97 * DAY);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e.advance(30 * DAY);
     let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
@@ -1236,7 +1236,7 @@ fn ft_approved() -> Env {
     let mut e = with_wnear();
     assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 0);
     e.advance(97 * DAY);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e
 }
@@ -1259,7 +1259,7 @@ fn deposits_that_cannot_be_accepted_are_refunded() {
     assert_eq!(ft_deposit(&mut e, WNEAR, "nobody.testnet", 5, ""), 5, "no plan");
     assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 5, "not an account!"), 5, "bad msg");
     e.advance(97 * DAY);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 5, ""), 5, "release open");
     assert_eq!(ft_escrow_of(&mut e), 0);
 }
@@ -1285,7 +1285,7 @@ fn token_release_needs_near_for_registrations() {
     e.as_("owner.testnet", REG).deposit(acc("owner.testnet"));
     ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, "");
     e.advance(97 * DAY);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
 }
 
 #[test]
@@ -1405,7 +1405,7 @@ fn ruled(r: ReleaseRules, eth: u128) -> Env {
     e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(r));
     e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
     e.advance(97 * DAY);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(eth)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(eth)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e
 }
@@ -1450,7 +1450,7 @@ fn without_rules_rounding_remainder_stays() {
     e.as_("owner.testnet", NEAR).set_plan(plan_input());
     e.as_("owner.testnet", 10 * NEAR + 3).deposit(acc("owner.testnet"));
     e.advance(97 * DAY);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     assert_eq!(e.plan().escrow.0, 1);
 }
 
@@ -1464,7 +1464,7 @@ fn zero_share_heir_receives_only_a_fixed_amount() {
     e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { fixed: rules().fixed, ..Default::default() }));
     e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
     e.advance(97 * DAY);
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     assert_eq!(near_of(&mut e), vec![("amara.testnet".into(), 7 * NEAR), ("tobi.testnet".into(), 3 * NEAR)]);
 }
 
@@ -1640,7 +1640,7 @@ fn with_options(o: ReleaseOptions) -> Env {
     e.as_("owner.testnet", NEAR / 100).set_release_options(Some(o));
     e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
     e.advance(97 * DAY);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e
 }
@@ -1783,7 +1783,7 @@ fn no_extension_before_approval() {
     e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Claim)));
     e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
     e.advance(97 * DAY);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
 }
 
@@ -1794,7 +1794,7 @@ fn extension_state_does_not_carry_into_a_new_proposal() {
     e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
     e.as_("owner.testnet", 0).cancel_release();
     e.advance(97 * DAY);
-    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
     assert!(e.as_("x.testnet", 0).get_extension(acc("owner.testnet")).is_none());
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id2);
     e.as_("d2.testnet", 0).request_extension(acc("owner.testnet"), id2, DAY, None); // not blocked by the old request
@@ -1915,4 +1915,389 @@ fn options_stored_before_overrides_still_read() {
     env::storage_write(b"opts:owner.testnet", &near_sdk::borsh::to_vec(&v1).unwrap());
     let o = e.as_("x.testnet", 0).get_release_options(acc("owner.testnet")).unwrap();
     assert_eq!((o.mode, o.overrides.len()), (ReleaseMode::Automatic, 0));
+}
+
+// ------------------------------------------------------------------ bitcoin
+// Vector generated with @scure/btc-signer 2.4.1 (key 0x01…01, see git log).
+
+mod btc_vectors {
+    use crate::btc::*;
+
+    fn h(s: &str) -> Vec<u8> {
+        crate::eth::hex_decode(s).unwrap()
+    }
+    fn h32(s: &str) -> [u8; 32] {
+        h(s).try_into().unwrap()
+    }
+    const PUB: &str = "031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f";
+    const PKH: &str = "79b000887626b294a914501a4cd226b58b235983";
+    const TAPROOT: &str = "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw";
+
+    fn tx() -> Tx {
+        Tx {
+            inputs: vec![
+                Input { txid: h32(&format!("{}01", "aa".repeat(31))), vout: 1, value: 50_000 },
+                Input { txid: h32(&format!("{}02", "bb".repeat(31))), vout: 0, value: 7_000 },
+            ],
+            outputs: vec![
+                Output { script: address_script(TAPROOT).unwrap(), value: 30_000 },
+                Output { script: p2wpkh_script(&h(PKH).try_into().unwrap()), value: 26_500 },
+            ],
+        }
+    }
+
+    /// (r, s) out of a DER signature + sighash byte.
+    fn rs(der: &str) -> ([u8; 32], [u8; 32]) {
+        let d = h(der);
+        let rl = d[3] as usize;
+        let r = &d[4..4 + rl];
+        let sl = d[5 + rl] as usize;
+        let s = &d[6 + rl..6 + rl + sl];
+        let pad = |x: &[u8]| {
+            let x = if x.len() == 33 { &x[1..] } else { x };
+            let mut o = [0u8; 32];
+            o[32 - x.len()..].copy_from_slice(x);
+            o
+        };
+        (pad(r), pad(s))
+    }
+
+    const SIG0: &str = "3045022100de7b249a9c6f0ff4c393c141f1973d27f744342dc0424744090630bf049b28df022002adb29b7835521958c4cf38887c3a9697d0c443fc2c8a29085c45c47298c59201";
+    const SIG1: &str = "304402204dd745d8487314c4f167ab80db61decf731ba2d07c5e161bcb97efb66de38c010220385c31daf6be3642669ecc2cf51db492514d8683ffc0ec55e461cb5795f4469601";
+
+    #[test]
+    fn addresses_decode_and_encode() {
+        assert_eq!(address_script(TAPROOT).unwrap(), h("5120a674c2b152a383126b1e2a3a0683eb07a4d6568983a73dfb26dec2a7a9fb0643"));
+        assert_eq!(address_script("tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla").unwrap(), h(&format!("0014{PKH}")));
+        assert_eq!(p2wpkh_address(&h(PKH).try_into().unwrap()), "tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla");
+        assert_eq!(hash160(&h(PUB)), h32(&format!("{PKH}{}", "00".repeat(12)))[..20]);
+    }
+
+    #[test]
+    fn bad_addresses_are_refused() {
+        for a in [
+            "tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulylb",                             // checksum
+            "bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla",                             // mainnet
+            "TB1Q0XCQPZRKY6EFF2G52QDYE53XKK9JXKVRAULYLA",                             // uppercase
+            "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqx",         // bech32m checksum
+            "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn",                                     // legacy
+        ] {
+            assert!(address_script(a).is_none(), "{a}");
+        }
+    }
+
+    #[test]
+    fn sighashes_txid_and_signed_tx_match_scure() {
+        let t = tx();
+        let pkh: [u8; 20] = h(PKH).try_into().unwrap();
+        assert_eq!(crate::eth::hex_encode(&t.sighash(0, &pkh)), "43e76f3eab784e81a73c2bc2f85ebd2a0384dd00e41245a6cff5ebcdc75094bd");
+        assert_eq!(crate::eth::hex_encode(&t.sighash(1, &pkh)), "162d5c0bb501ec3bdd9375e478dfec5797766fa65fa274949ec123eee72e55d5");
+        assert_eq!(crate::eth::hex_encode(&t.txid()), "e862c0219ad42586e7f815d5bf3beb6639b60b4235ae20fdb2f5a0cf3bb64af6");
+        let sigs: Vec<Vec<u8>> = [SIG0, SIG1].iter().map(|s| {
+            let (r, s) = rs(s);
+            der_sig(&r, &s)
+        }).collect();
+        assert_eq!(sigs[0], h(SIG0));
+        assert_eq!(sigs[1], h(SIG1));
+        let raw = t.signed(&h(PUB).try_into().unwrap(), &sigs);
+        assert_eq!(crate::eth::hex_encode(&raw), "0200000000010201aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0100000000fdffffff02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000fdffffff023075000000000000225120a674c2b152a383126b1e2a3a0683eb07a4d6568983a73dfb26dec2a7a9fb0643846700000000000016001479b000887626b294a914501a4cd226b58b23598302483045022100de7b249a9c6f0ff4c393c141f1973d27f744342dc0424744090630bf049b28df022002adb29b7835521958c4cf38887c3a9697d0c443fc2c8a29085c45c47298c5920121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402204dd745d8487314c4f167ab80db61decf731ba2d07c5e161bcb97efb66de38c010220385c31daf6be3642669ecc2cf51db492514d8683ffc0ec55e461cb5795f446960121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f00000000");
+    }
+
+    #[test]
+    fn high_s_is_normalized() {
+        // n - s gives the same (low-S) DER
+        const N: &str = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141";
+        let (r, s) = rs(SIG0);
+        let n = h32(N);
+        let mut hi = [0u8; 32];
+        let mut borrow = 0i16;
+        for i in (0..32).rev() {
+            let mut d = n[i] as i16 - s[i] as i16 - borrow;
+            borrow = (d < 0) as i16;
+            if d < 0 {
+                d += 256;
+            }
+            hi[i] = d as u8;
+        }
+        assert_eq!(der_sig(&r, &hi), h(SIG0));
+    }
+
+    #[test]
+    fn vsize_estimate_covers_the_real_size() {
+        let est = vsize(2, &[34, 22]);
+        assert!((221..=223).contains(&est), "{est}");
+    }
+
+    #[test]
+    fn compress_uses_y_parity() {
+        let mut xy = [0u8; 64];
+        xy[0] = 7;
+        xy[63] = 3;
+        assert_eq!(compress(&xy).unwrap()[0], 3);
+        xy[63] = 4;
+        assert_eq!(compress(&xy).unwrap()[..2], [2, 7]);
+    }
+}
+
+// -------------------------------------------------------------- bitcoin flow
+
+mod btc_flow {
+    use super::*;
+
+    /// MPC `derived_public_key` answer for private key 0x01…01 (see btc_vectors).
+    const MPC_KEY: &str = "secp256k1:Yupq21BV61j6SMaWtDW5wtnq48cnFVcJQk4h3Nh4qNH2GBzqasSkjTTTMuRsjMKVKpYd6ECNHYx7DLoGtK8tgic";
+    const VAULT: &str = "tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla";
+    const AMARA_BTC: &str = "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw";
+    const TOBI_BTC: &str = "tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla";
+    const COIN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01";
+
+    fn utxo(txid: &str, vout: u32, value: u64) -> BtcUtxo {
+        BtcUtxo { txid: txid.into(), vout, value: U64(value) }
+    }
+
+    fn o() -> AccountId {
+        acc("owner.testnet")
+    }
+
+    fn with_vault() -> Env {
+        let mut e = Env::new();
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        let _ = e.as_("anyone.testnet", 0).register_btc_vault(o());
+        let key = format!("\"{MPC_KEY}\"");
+        assert!(e.callback(vec![PromiseResult::Successful(key.into_bytes())]).on_btc_vault_key(o()));
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![
+            BtcDestination { account_id: acc("amara.testnet"), address: AMARA_BTC.into() },
+            BtcDestination { account_id: acc("tobi.testnet"), address: TOBI_BTC.into() },
+        ]);
+        e.as_("owner.testnet", 10 * NEAR).deposit(o());
+        e
+    }
+
+    fn proposed(e: &mut Env, utxos: Vec<BtcUtxo>) -> u64 {
+        e.advance(97 * DAY);
+        let id = e.as_("g1.testnet", 0).propose_release(o(), None, None, Some(utxos));
+        e.as_("g2.testnet", 0).approve_release(o(), id);
+        id
+    }
+
+    fn btc_idx(e: &mut Env, heir: &str) -> u32 {
+        e.plan().proposal.unwrap().transfers.iter().position(|t| t.asset == Asset::Btc && t.heir == acc(heir)).unwrap() as u32
+    }
+
+    fn sign(e: &mut Env, idx: u32, n: usize) {
+        let attempt = e.plan().proposal.unwrap().transfers[idx as usize].attempts;
+        e.callback((0..n).map(|_| mpc_ok(BIG_R, S, 0)).collect()).on_btc_signed(o(), idx, attempt);
+    }
+
+    #[test]
+    fn vault_key_and_address() {
+        let mut e = with_vault();
+        let v = e.as_("x.testnet", 0).get_btc_vault(o()).unwrap();
+        assert_eq!(v.address, VAULT);
+        assert_eq!(v.path, "behest/v1/owner.testnet/btc");
+        assert_eq!(v.pubkey, "031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f");
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_BTC_ADDRESS")]
+    fn mainnet_destination_refused() {
+        let mut e = with_vault();
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: "bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla".into() }]);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_HEIRS")]
+    fn destination_for_stranger_refused() {
+        let mut e = with_vault();
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("mallory.testnet"), address: AMARA_BTC.into() }]);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_BTC_VAULT_UNKNOWN")]
+    fn proposal_with_coins_needs_registered_vault() {
+        let mut e = Env::new();
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: AMARA_BTC.into() }]);
+        e.advance(97 * DAY);
+        e.as_("g1.testnet", 0).propose_release(o(), None, None, Some(vec![utxo(COIN, 0, 100_000)]));
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_UTXOS")]
+    fn duplicate_coins_refused() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 0, 100_000), utxo(COIN, 0, 100_000)]);
+    }
+
+    #[test]
+    fn split_reserves_fees_and_chains_payouts() {
+        let mut e = with_vault();
+        let id = proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        let rel = e.as_("x.testnet", 0).get_btc_release(o()).unwrap();
+        // two payouts at the 5 sat/vB cap: 153 vB each
+        assert_eq!(rel.reserve.0, 1_530);
+        let (a, t) = (btc_idx(&mut e, "amara.testnet"), btc_idx(&mut e, "tobi.testnet"));
+        let tr = e.plan().proposal.unwrap().transfers;
+        assert_eq!((tr[a as usize].amount.0, tr[t as usize].amount.0), (59_082, 39_388));
+        assert_eq!(tr[a as usize].destination, AMARA_BTC);
+
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        let receipts = near_sdk::test_utils::get_created_receipts();
+        let ta = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap();
+        assert_eq!(ta.inputs, vec![utxo(COIN, 1, 100_000)]);
+        assert_eq!(ta.outputs[0].value.0, 59_082);
+        assert_eq!(ta.fee.0, 306);
+        assert_eq!(ta.outputs[1].value.0, 100_000 - 59_082 - 306);
+        // the MPC is asked for exactly the BIP143 digest, on the vault path
+        let mpc = receipts.iter().find(|r| r.receiver_id == acc("v1.signer-prod.testnet")).expect("MPC receipt");
+        if let near_sdk::mock::MockAction::FunctionCallWeight { args, .. } = &mpc.actions[0] {
+            let a = String::from_utf8(args.clone()).unwrap();
+            assert!(a.contains(&ta.sighashes[0]) && a.contains("behest/v1/owner.testnet/btc"), "{a}");
+        }
+        let rel = e.as_("x.testnet", 0).get_btc_release(o()).unwrap();
+        assert_eq!((rel.signed, rel.last), (1, Some(a)));
+        assert_eq!(rel.head, vec![utxo(&ta.txid, 1, 40_612)]);
+
+        sign(&mut e, a, 1);
+        let ta = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap();
+        let raw = ta.raw.clone().unwrap();
+        assert!(raw.starts_with("020000000001") && raw.ends_with("00000000"));
+        assert_eq!(e.plan().proposal.unwrap().transfers[a as usize].state, TransferState::Signed);
+
+        // Tobi's payout spends Amara's change
+        let _ = e.as_("tobi.testnet", 0).claim(o());
+        let tt = e.as_("x.testnet", 0).get_btc_tx(o(), t).unwrap();
+        assert_eq!(tt.inputs, vec![utxo(&ta.txid, 1, 40_612)]);
+        assert_eq!(tt.seq, 1);
+        assert_eq!(tt.outputs[0].value.0, 39_388);
+        assert_eq!(tt.outputs[1].value.0, 40_612 - 39_388 - 282); // P2WPKH heir: 141 vB
+        let _ = id;
+    }
+
+    #[test]
+    fn only_the_latest_payout_can_be_fee_bumped() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        let (a, t) = (btc_idx(&mut e, "amara.testnet"), btc_idx(&mut e, "tobi.testnet"));
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        sign(&mut e, a, 1);
+        let _ = e.as_("tobi.testnet", 0).claim(o());
+        sign(&mut e, t, 1);
+        let before = e.as_("x.testnet", 0).get_btc_tx(o(), t).unwrap();
+        e.as_("exec.testnet", 0).report_failed(o(), t, "Dropped".into());
+        let _ = e.as_("exec.testnet", 0).retry_transfer(o(), t);
+        let after = e.as_("x.testnet", 0).get_btc_tx(o(), t).unwrap();
+        assert_eq!(after.inputs, before.inputs);
+        assert_eq!(after.outputs[0], before.outputs[0]);
+        assert_eq!(after.fee_rate, 3);
+        assert!(after.outputs[1].value.0 < before.outputs[1].value.0);
+
+        e.as_("exec.testnet", 0).report_failed(o(), a, "Dropped".into());
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = e.as_("exec.testnet", 0).retry_transfer(o(), a);
+        }));
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn signing_failure_resigns_the_same_tx() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        let a = btc_idx(&mut e, "amara.testnet");
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        let first = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap().txid;
+        e.callback(vec![PromiseResult::Failed]).on_btc_signed(o(), a, 1);
+        assert_eq!(e.plan().proposal.unwrap().transfers[a as usize].state, TransferState::Failed);
+        let _ = e.as_("amara.testnet", 0).retry_transfer(o(), a);
+        let again = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap();
+        assert_eq!(again.txid, first);
+        assert_eq!(e.as_("x.testnet", 0).get_btc_release(o()).unwrap().signed, 1);
+    }
+
+    #[test]
+    fn guardian_rebase_replaces_unsent_payouts() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        let a = btc_idx(&mut e, "amara.testnet");
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        sign(&mut e, a, 1);
+        // the reported coin had a sibling: rebase must keep an old coin
+        let other = "bb".repeat(32);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            e.as_("g1.testnet", 0).rebase_btc(o(), vec![utxo(&other, 0, 200_000)]);
+        }));
+        assert!(r.is_err());
+        e.as_("g1.testnet", 0).rebase_btc(o(), vec![utxo(COIN, 1, 100_000), utxo(&other, 0, 5_000)]);
+        assert_eq!(e.plan().proposal.unwrap().transfers[a as usize].state, TransferState::Pending);
+        assert!(e.as_("x.testnet", 0).get_btc_tx(o(), a).is_none());
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        assert_eq!(e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap().inputs.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_TRANSFER_STATE")]
+    fn rebase_refused_after_broadcast() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        let a = btc_idx(&mut e, "amara.testnet");
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        sign(&mut e, a, 1);
+        let txid = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap().txid;
+        e.as_("exec.testnet", 0).report_broadcast(o(), a, txid);
+        e.as_("g1.testnet", 0).rebase_btc(o(), vec![utxo(COIN, 1, 100_000)]);
+    }
+
+    #[test]
+    fn btc_settles_with_the_plan() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        let _ = e.as_("tobi.testnet", 0).claim(o());
+        let p = e.plan().proposal.unwrap();
+        for (i, t) in p.transfers.iter().enumerate() {
+            if t.asset.is_btc() {
+                sign(&mut e, i as u32, 1);
+                let txid = e.as_("x.testnet", 0).get_btc_tx(o(), i as u32).unwrap().txid;
+                e.as_("exec.testnet", 0).report_broadcast(o(), i as u32, txid.clone());
+                e.as_("exec.testnet", 0).report_confirmed(o(), i as u32, txid);
+            }
+        }
+        let p = e.plan().proposal.unwrap();
+        assert!(p.transfers.iter().filter(|t| t.asset.is_btc()).all(|t| t.state == TransferState::Confirmed));
+    }
+
+    #[test]
+    fn owner_withdraws_btc_with_change_to_vault() {
+        let mut e = with_vault();
+        let _ = e.as_("owner.testnet", 0).withdraw_btc(vec![utxo(COIN, 1, 100_000)], U64(20_000), AMARA_BTC.into());
+        let w = e.as_("x.testnet", 0).get_btc_tx(o(), VAULT_WITHDRAWAL).unwrap();
+        assert_eq!(w.outputs[0].value.0, 20_000);
+        assert_eq!(w.outputs[1].script, "001479b000887626b294a914501a4cd226b58b235983");
+        e.callback(vec![mpc_ok(BIG_R, S, 0)]).on_btc_signed(o(), VAULT_WITHDRAWAL, 1);
+        assert!(e.as_("x.testnet", 0).get_btc_tx(o(), VAULT_WITHDRAWAL).unwrap().raw.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "E_PROPOSAL_OPEN")]
+    fn destinations_frozen_while_release_open() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![]);
+    }
+
+    #[test]
+    fn mode_override_by_bitcoin_group() {
+        assert!(AssetGroup::Bitcoin.contains(&Asset::Btc));
+        assert!(!AssetGroup::Near.contains(&Asset::Btc));
+        assert!(!AssetGroup::Ethereum.contains(&Asset::Btc));
+    }
 }

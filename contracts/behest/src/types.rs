@@ -1,4 +1,4 @@
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use near_sdk::{near, AccountId};
 
 /// Owner-supplied plan. See docs/stage0/04-policy-schema.md.
@@ -71,6 +71,8 @@ pub enum Asset {
     Erc20(String),
     /// Allowlisted NEP-141 token on NEAR, held in this contract's escrow.
     Nep141(AccountId),
+    /// BTC from the plan's Bitcoin testnet vault (D20).
+    Btc,
 }
 
 impl Asset {
@@ -78,6 +80,98 @@ impl Asset {
     pub fn is_evm(&self) -> bool {
         matches!(self, Asset::Eth | Asset::Erc20(_))
     }
+    pub fn is_btc(&self) -> bool {
+        matches!(self, Asset::Btc)
+    }
+    /// Paid by an external-chain transaction the MPC network signs and an
+    /// executor broadcasts (ETH, ERC-20, BTC), rather than by a NEAR promise.
+    pub fn is_external(&self) -> bool {
+        self.is_evm() || self.is_btc()
+    }
+}
+
+/// A coin the plan's Bitcoin vault holds (reported by a guardian or the owner,
+/// like `eth_balance`). `txid` is in display order (as explorers show it).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcUtxo {
+    pub txid: String,
+    pub vout: u32,
+    pub value: U64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcOutput {
+    /// Output script, hex.
+    pub script: String,
+    pub value: U64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcSig {
+    pub big_r: String,
+    pub s: String,
+}
+
+/// The Bitcoin transaction of one transfer (or the owner's withdrawal). Its
+/// txid is fixed before signing (SegWit), so the next payout can spend its
+/// change. A re-sign keeps the inputs and the heir's output and only lowers
+/// the change, so at most one version can ever be mined.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcTx {
+    pub inputs: Vec<BtcUtxo>,
+    pub outputs: Vec<BtcOutput>,
+    /// sat/vB of this version.
+    pub fee_rate: u64,
+    pub fee: U64,
+    /// Order among the proposal's Bitcoin payouts (0 spends the snapshot).
+    pub seq: u32,
+    pub txid: String,
+    pub sighashes: Vec<String>,
+    pub signatures: Vec<BtcSig>,
+    /// Fully signed transaction, hex, once every input is signed.
+    pub raw: Option<String>,
+}
+
+/// Bitcoin side of the open proposal: the coins the next payout spends.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcRelease {
+    pub proposal_id: u64,
+    pub snapshot: Vec<BtcUtxo>,
+    pub reserve: U64,
+    pub head: Vec<BtcUtxo>,
+    /// Payouts signed so far, and the index of the latest (whose change is `head`).
+    pub signed: u32,
+    pub last: Option<u32>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcConfig {
+    /// sat/vB used when signing; bumped on retry up to `max_fee_rate`, which
+    /// also sizes the fee reserve.
+    pub fee_rate: u64,
+    pub max_fee_rate: u64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcDestination {
+    pub account_id: AccountId,
+    /// Testnet SegWit address (tb1q… or tb1p…).
+    pub address: String,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtcVaultView {
+    pub path: String,
+    pub pubkey: String,
+    pub address: String,
 }
 
 /// Admin-allowlisted token. Only tokens that revert on a failed `transfer`
@@ -183,14 +277,17 @@ pub enum AssetGroup {
     Near,
     /// ETH and ERC-20 tokens from the vault.
     Ethereum,
+    /// BTC from the Bitcoin vault.
+    Bitcoin,
 }
 
 impl AssetGroup {
     pub fn contains(&self, a: &Asset) -> bool {
         match self {
             AssetGroup::All => true,
-            AssetGroup::Near => !a.is_evm(),
+            AssetGroup::Near => matches!(a, Asset::Near | Asset::Nep141(_)),
             AssetGroup::Ethereum => a.is_evm(),
+            AssetGroup::Bitcoin => a.is_btc(),
         }
     }
 }

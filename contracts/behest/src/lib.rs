@@ -4,6 +4,7 @@
 //! 01-state-machine.md (P1..P10, T1..T6).
 
 mod errors;
+pub mod btc;
 pub mod eth;
 mod legacy;
 mod policy;
@@ -12,7 +13,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{U128, U64};
 use near_sdk::store::{IterableSet, LookupMap};
 use near_sdk::{env, ext_contract, log, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue};
 
@@ -52,6 +53,11 @@ const PENDING_WITHDRAWALS_KEY: &[u8] = b"vw_pending";
 const NEP141_TOKENS_KEY: &[u8] = b"nep141_tokens";
 const MAX_NEP141_TOKENS: usize = 4;
 const FT_GAS: Gas = Gas::from_tgas(15);
+/// Bitcoin (D20). Each input needs its own MPC signature, so a payout spends
+/// at most this many coins (gas). State lives under raw keys: `btc_config`,
+/// `btcd:` destinations, `btcpk:` vault key, `btcp:` release, `btx:` txs.
+const MAX_BTC_INPUTS: usize = 2;
+const BTC_CONFIG_KEY: &[u8] = b"btc_config";
 
 /// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
 #[near(serializers = [json])]
@@ -87,6 +93,12 @@ pub struct Scalar {
 #[ext_contract(mpc)]
 trait Mpc {
     fn sign(&mut self, request: SignRequestArgs);
+    fn derived_public_key(&self, path: String, predecessor: Option<AccountId>, domain_id: Option<u32>) -> String;
+}
+
+/// Derivation path of a plan's Bitcoin vault key (D20); predecessor: this contract.
+pub fn btc_vault_path(owner: &AccountId) -> String {
+    format!("behest/v1/{owner}/btc")
 }
 
 /// Derivation path of a plan's Sepolia vault; the predecessor is this contract.
@@ -136,6 +148,7 @@ pub struct ConfigView {
     pub eth_gas_limit: u64,
     pub erc20_tokens: Vec<Erc20Token>,
     pub nep141_tokens: Vec<Nep141Token>,
+    pub btc: BtcConfig,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -220,7 +233,7 @@ impl Contract {
         let policy = policy::validate(&owner, plan);
         // Existing release rules and options must still fit the new heirs and guardians.
         if let Some(r) = read_rules(&owner) {
-            policy::validate_rules(&owner, &policy, r);
+            policy::validate_rules(&owner, &policy, r, |a| btc_dest(&owner, a).is_some());
         }
         if let Some(o) = read_options(&owner) {
             policy::validate_options(&owner, &policy, o);
@@ -321,7 +334,7 @@ impl Contract {
         let storage_before = env::storage_usage();
         match rules {
             Some(r) => {
-                let r = policy::validate_rules(&owner, &plan.policy, r);
+                let r = policy::validate_rules(&owner, &plan.policy, r, |a| btc_dest(&owner, a).is_some());
                 env::storage_write(&rules_key(&owner), &near_sdk::borsh::to_vec(&r).expect("borsh"));
                 emit("release_rules_set", near_sdk::serde_json::json!({"owner": owner, "rules": r}));
             }
@@ -386,7 +399,7 @@ impl Contract {
         if tr.state != TransferState::Pending {
             fail(Error::NotReassignable);
         }
-        let receives = |r: &&Recipient| dest_for(r, &tr.asset).is_some();
+        let receives = |r: &&Recipient| dest_for(&owner, r, &tr.asset).is_some();
         let fallback = rules.fallback.as_ref().filter(receives);
         let (stage, next) = if is_heir(&tr.heir) {
             (1, rules.alternates.iter().find(|a| a.heir == tr.heir).map(|a| &a.recipient).filter(receives).or(fallback))
@@ -399,7 +412,7 @@ impl Contract {
         if t < start + stage * rules.claim_window_ms {
             fail(Error::NotReassignable);
         }
-        let dest = dest_for(&next, &tr.asset).expect("filtered");
+        let dest = dest_for(&owner, &next, &tr.asset).expect("filtered");
         let from = tr.heir.clone();
         let tr = self.transfer_mut(&owner, index);
         tr.heir = next.account_id.clone();
@@ -477,7 +490,7 @@ impl Contract {
             fail(Error::ProposalOpen);
         }
         let asset = match asset {
-            Asset::Near | Asset::Nep141(_) => fail(Error::BadAsset),
+            Asset::Near | Asset::Nep141(_) | Asset::Btc => fail(Error::BadAsset),
             Asset::Eth => Asset::Eth,
             Asset::Erc20(token) => {
                 let token = token.to_ascii_lowercase();
@@ -506,7 +519,7 @@ impl Contract {
     /// nonce as a 0-ETH transfer to the same destination, so later vault nonces
     /// (heir transfers) are never blocked. Same nonce, so at most one of the
     /// versions can land. The owner or an executor may call it.
-    pub fn cancel_vault_withdrawal(&mut self, owner: AccountId) -> Promise {
+    pub fn cancel_vault_withdrawal(&mut self, owner: AccountId) -> PromiseOrValue<()> {
         let who = caller();
         if who != owner && !self.executors.contains(&who) {
             fail(Error::Unauthorized);
@@ -517,12 +530,237 @@ impl Contract {
         if w.state != TransferState::Failed || w.failure.as_deref() == Some("Reverted") || w.tx_hash.is_some() {
             fail(Error::InvalidTransferState);
         }
+        // Bitcoin has no nonce to fill: a never-broadcast withdrawal is simply
+        // closed. (If its inputs were real, broadcasting it later only pays the
+        // owner's own address.)
+        if w.asset.is_btc() {
+            w.failure = Some("Cancelled".into());
+            write_withdrawal(&owner, &w);
+            emit("vault_withdrawal_cancelled", near_sdk::serde_json::json!({"owner": owner, "asset": "Btc"}));
+            return PromiseOrValue::Value(());
+        }
         w.asset = Asset::Eth;
         w.amount = U128(0);
         w.signed_versions.clear();
         write_withdrawal(&owner, &w);
         emit("vault_withdrawal_cancelled", near_sdk::serde_json::json!({"owner": owner, "nonce": w.eth_tx.as_ref().map(|t| t.nonce)}));
-        self.sign_eth(&owner, VAULT_WITHDRAWAL as usize)
+        PromiseOrValue::Promise(self.sign_eth(&owner, VAULT_WITHDRAWAL as usize))
+    }
+
+    // -------------------------------------------------------------- bitcoin
+
+    /// D20. Looks up the plan's Bitcoin vault key from the MPC contract (once)
+    /// and stores it: the contract needs the key hash to build the sighashes.
+    /// Anyone may call it; the key is whatever MPC derives for this contract.
+    pub fn register_btc_vault(&mut self, owner: AccountId) -> Promise {
+        self.plan_ref(&owner);
+        if btc_pubkey(&owner).is_some() {
+            fail(Error::InvalidTransferState);
+        }
+        mpc::ext(self.mpc_contract.clone())
+            .with_static_gas(Gas::from_tgas(10))
+            .derived_public_key(btc_vault_path(&owner), Some(env::current_account_id()), Some(MPC_DOMAIN_SECP256K1))
+            .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_btc_vault_key(owner))
+    }
+
+    #[private]
+    pub fn on_btc_vault_key(&mut self, owner: AccountId) -> bool {
+        let key = env::promise_result_checked(0, 512).ok().and_then(|b| near_sdk::serde_json::from_slice::<String>(&b).ok());
+        let pk = key
+            .as_deref()
+            .and_then(|k| k.strip_prefix("secp256k1:"))
+            .and_then(base58_decode)
+            .and_then(|xy| btc::compress(&xy));
+        match pk {
+            Some(pk) => {
+                env::storage_write(&btc_pubkey_key(&owner), &pk);
+                emit("btc_vault_registered", near_sdk::serde_json::json!({"owner": owner, "address": btc::p2wpkh_address(&btc::hash160(&pk))}));
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn get_btc_vault(&self, owner: AccountId) -> Option<BtcVaultView> {
+        let pk = btc_pubkey(&owner)?;
+        Some(BtcVaultView { path: btc_vault_path(&owner), pubkey: eth::hex_encode(&pk), address: btc::p2wpkh_address(&btc::hash160(&pk)) })
+    }
+
+    /// The owner sets Bitcoin destinations for heirs and for named alternates
+    /// or the fallback (testnet SegWit addresses). Frozen while a release is open.
+    #[payable]
+    pub fn set_btc_destinations(&mut self, destinations: Vec<BtcDestination>) {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let rules = read_rules(&owner).unwrap_or_default();
+        let known = |a: &AccountId| {
+            plan.policy.heirs.iter().any(|h| &h.account_id == a)
+                || rules.alternates.iter().any(|x| &x.recipient.account_id == a)
+                || rules.fallback.as_ref().is_some_and(|f| &f.account_id == a)
+        };
+        if destinations.len() > policy::MAX_HEIRS * 2 + 1 {
+            fail(Error::InvalidHeirs);
+        }
+        for (i, d) in destinations.iter().enumerate() {
+            if btc::address_script(&d.address).is_none() {
+                fail(Error::InvalidBtcAddress);
+            }
+            if !known(&d.account_id) || destinations[..i].iter().any(|x| x.account_id == d.account_id) {
+                fail(Error::InvalidHeirs);
+            }
+        }
+        let before = env::storage_usage();
+        env::storage_write(&btc_dests_key(&owner), &near_sdk::borsh::to_vec(&destinations).expect("borsh"));
+        emit("btc_destinations_set", near_sdk::serde_json::json!({"owner": owner, "destinations": destinations}));
+        self.charge_storage(before, &owner);
+    }
+
+    pub fn get_btc_destinations(&self, owner: AccountId) -> Vec<BtcDestination> {
+        btc_dests(&owner)
+    }
+
+    pub fn set_btc_config(&mut self, config: BtcConfig) {
+        self.assert_admin();
+        if config.fee_rate == 0 || config.fee_rate > config.max_fee_rate || config.max_fee_rate > 1_000 {
+            fail(Error::InvalidOptions);
+        }
+        env::storage_write(BTC_CONFIG_KEY, &near_sdk::borsh::to_vec(&config).expect("borsh"));
+        emit("btc_config_set", near_sdk::serde_json::json!({"config": config}));
+    }
+
+    /// The Bitcoin transaction of transfer `index` (or the owner's withdrawal).
+    pub fn get_btc_tx(&self, owner: AccountId, index: u32) -> Option<BtcTx> {
+        let pid = if index == VAULT_WITHDRAWAL { None } else { Some(self.read_plan(&owner)?.proposal?.id) };
+        read_btx(&owner, index, pid)
+    }
+
+    pub fn get_btc_release(&self, owner: AccountId) -> Option<BtcRelease> {
+        let id = self.read_plan(&owner)?.proposal?.id;
+        read_btc_release(&owner).filter(|r| r.proposal_id == id)
+    }
+
+    /// D20, like topping up the ETH vault after an over-report: a guardian
+    /// replaces the reported coins the next payouts spend, while nothing has
+    /// reached the Bitcoin network. Every new payout then conflicts with any
+    /// earlier signed one (the new set must reuse one of the old coins, unless
+    /// nothing was signed), so no heir can be paid twice. Amounts don't change.
+    pub fn rebase_btc(&mut self, owner: AccountId, utxos: Vec<BtcUtxo>) {
+        let g = caller();
+        let mut rel = read_btc_release(&owner).unwrap_or_else(|| fail(Error::NoProposal));
+        let plan = self.plan_ref(&owner);
+        if !plan.policy.guardians.contains(&g) {
+            fail(Error::NotGuardian);
+        }
+        let p = plan.proposal.as_ref().filter(|p| p.id == rel.proposal_id).unwrap_or_else(|| fail(Error::NoProposal));
+        let btc_idx: Vec<usize> = p.transfers.iter().enumerate().filter(|(_, t)| t.asset.is_btc()).map(|(i, _)| i).collect();
+        if btc_idx.iter().any(|i| matches!(p.transfers[*i].state, TransferState::Signing | TransferState::Broadcast | TransferState::Confirmed)) {
+            fail(Error::InvalidTransferState);
+        }
+        let (_, total) = check_utxos(&utxos);
+        let shares: u64 = btc_idx.iter().map(|i| p.transfers[*i].amount.0 as u64).sum();
+        if total < shares + rel.reserve.0 {
+            fail(Error::InsufficientFeeReserve);
+        }
+        let same = |a: &BtcUtxo, b: &BtcUtxo| a.txid == b.txid && a.vout == b.vout;
+        if rel.signed > 0 && !utxos.iter().any(|u| rel.snapshot.iter().any(|o| same(o, u))) {
+            fail(Error::InvalidUtxos);
+        }
+        let id = rel.proposal_id;
+        rel.snapshot = utxos.clone();
+        rel.head = utxos;
+        rel.signed = 0;
+        rel.last = None;
+        write_btc_release(&owner, &rel);
+        for i in btc_idx {
+            remove_btx(&owner, i as u32, Some(id));
+            let mut tr = self.tr_get(&owner, i as u32);
+            tr.state = TransferState::Pending;
+            tr.failure = None;
+            tr.tx_hash = None;
+            self.tr_put(&owner, i as u32, tr);
+        }
+        emit("btc_rebased", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id, "by": g}));
+    }
+
+    /// D20/D7 for Bitcoin: the owner spends reported vault coins to `to`
+    /// (change back to the vault), only with no release open.
+    pub fn withdraw_btc(&mut self, utxos: Vec<BtcUtxo>, amount: U64, to: String) -> Promise {
+        let owner = caller();
+        if self.paused {
+            fail(Error::Paused);
+        }
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        if btc_pubkey(&owner).is_none() {
+            fail(Error::BtcVaultUnknown);
+        }
+        if btc::address_script(&to).is_none() {
+            fail(Error::InvalidBtcAddress);
+        }
+        let (_, total) = check_utxos(&utxos);
+        if amount.0 < btc::DUST || amount.0 >= total {
+            fail(Error::NothingToDistribute);
+        }
+        if withdrawal_busy(&read_withdrawal(&owner)) {
+            fail(Error::VaultBusy);
+        }
+        write_withdrawal(&owner, &new_transfer(&owner, Asset::Btc, to.clone(), amount.0 as u128));
+        write_btx(&owner, VAULT_WITHDRAWAL, None, &BtcTx { inputs: utxos, outputs: vec![], fee_rate: 0, fee: U64(0), seq: 0, txid: String::new(), sighashes: vec![], signatures: vec![], raw: None });
+        emit("vault_withdrawal", near_sdk::serde_json::json!({"owner": owner, "asset": "Btc", "amount": amount, "to": to}));
+        self.sign_btc(&owner, VAULT_WITHDRAWAL as usize)
+    }
+
+    #[private]
+    pub fn on_btc_signed(&mut self, owner: AccountId, index: u32, attempt: u32) {
+        let n = env::promise_results_count();
+        let sigs: Option<Vec<BtcSig>> = (0..n)
+            .map(|i| {
+                env::promise_result_checked(i, MAX_MPC_RESPONSE_BYTES)
+                    .ok()
+                    .and_then(|b| near_sdk::serde_json::from_slice::<SignatureResponse>(&b).ok())
+                    .and_then(|r| match r {
+                        SignatureResponse::Secp256k1 { big_r, s, .. } if big_r.affine_point.len() == 66 && s.scalar.len() == 64 => {
+                            Some(BtcSig { big_r: big_r.affine_point.to_ascii_lowercase(), s: s.scalar.to_ascii_lowercase() })
+                        }
+                        _ => None,
+                    })
+            })
+            .collect();
+        let mut tr = self.tr_get(&owner, index);
+        if tr.attempts != attempt || tr.state != TransferState::Signing {
+            return;
+        }
+        let pid = self.btx_pid(&owner, index);
+        let mut b = read_btx(&owner, index, pid).expect("signing implies a tx");
+        let pubkey = btc_pubkey(&owner).expect("registered");
+        match sigs.filter(|v| v.len() == b.inputs.len()) {
+            Some(v) => {
+                let der: Vec<Vec<u8>> = v
+                    .iter()
+                    .map(|x| {
+                        let r: [u8; 32] = eth::hex_decode(&x.big_r[2..]).and_then(|r| r.try_into().ok()).expect("checked");
+                        let s: [u8; 32] = eth::hex_decode(&x.s).and_then(|r| r.try_into().ok()).expect("checked");
+                        btc::der_sig(&r, &s)
+                    })
+                    .collect();
+                b.raw = Some(eth::hex_encode(&to_tx(&b).signed(&pubkey, &der)));
+                b.signatures = v;
+                tr.state = TransferState::Signed;
+            }
+            None => {
+                tr.state = TransferState::Failed;
+                tr.failure = Some("SignFailed".into());
+            }
+        }
+        write_btx(&owner, index, pid, &b);
+        let state = tr.state;
+        self.tr_put(&owner, index, tr);
+        emit_transfer(&owner, index, state);
     }
 
     // ------------------------------------------------------------- guardian
@@ -530,7 +768,7 @@ impl Contract {
     /// P4. A guardian opens a release once the owner is overdue.
     /// `eth_balance` and `erc20_balances` are the vault balances observed by
     /// the proposer (D5). Guardians approve the resulting transfer list.
-    pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>, erc20_balances: Option<Vec<TokenBalance>>) -> u64 {
+    pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>, erc20_balances: Option<Vec<TokenBalance>>, btc_utxos: Option<Vec<BtcUtxo>>) -> u64 {
         let g = caller();
         let fts = nep141_tokens();
         let allowed = erc20_tokens();
@@ -571,6 +809,27 @@ impl Contract {
         let pol = plan.policy.clone();
         let near_ok = |i: usize| pol.heirs[i].near_destination.is_some();
         let eth_ok = |i: usize| pol.heirs[i].eth_destination.is_some();
+        let btc_map = btc_dests(&owner);
+        let btc_ok = |i: usize| btc_map.iter().any(|d| d.account_id == pol.heirs[i].account_id);
+        // Bitcoin (D20): one payout per heir, chained through the vault's
+        // change. The reserve covers each at the fee-rate cap: the first spends
+        // the reported coins, the rest one change output each.
+        let btc_utxos = btc_utxos.unwrap_or_default();
+        let btc_heirs = (0..pol.heirs.len()).filter(|i| btc_ok(*i)).count() as u64;
+        let (btc_total, btc_reserve) = if btc_heirs > 0 && !btc_utxos.is_empty() {
+            if btc_pubkey(&owner).is_none() {
+                fail(Error::BtcVaultUnknown);
+            }
+            let (n, total) = check_utxos(&btc_utxos);
+            let rate = btc_config().max_fee_rate;
+            let reserve = (btc::vsize(n, &[34, 22]) + (btc_heirs - 1) * btc::vsize(1, &[34, 22])) * rate;
+            if total <= reserve {
+                fail(Error::InsufficientFeeReserve);
+            }
+            (total - reserve, reserve)
+        } else {
+            (0, 0)
+        };
         let mut ft_snap: Vec<(AccountId, u128)> = vec![];
         let mut ft_reserve = 0u128;
         for t in &fts {
@@ -613,6 +872,11 @@ impl Contract {
         let ft_splits: Vec<Vec<u128>> = ft_snap.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Nep141(t.clone()), near_ok)).collect();
         let eth_split = policy::split(eth_total, &pol, &rules, &Asset::Eth, eth_ok);
         let erc_splits: Vec<Vec<u128>> = tokens.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Erc20(t.clone()), eth_ok)).collect();
+        // Outputs below the dust limit aren't relayed: such a share stays in the vault.
+        let btc_split: Vec<u128> = policy::split(btc_total as u128, &pol, &rules, &Asset::Btc, btc_ok)
+            .into_iter()
+            .map(|a| if a < btc::DUST as u128 { 0 } else { a })
+            .collect();
         let mut transfers = Vec::new();
         let near_reserved: u128 = near_split.iter().sum();
         for (i, h) in pol.heirs.iter().enumerate() {
@@ -636,6 +900,10 @@ impl Contract {
                     }
                 }
             }
+            if btc_split[i] > 0 {
+                let dest = btc_map.iter().find(|d| d.account_id == h.account_id).expect("btc_ok").address.clone();
+                transfers.push(new_transfer(&h.account_id, Asset::Btc, dest, btc_split[i]));
+            }
         }
         if transfers.is_empty() {
             fail(Error::NothingToDistribute);
@@ -649,6 +917,14 @@ impl Contract {
             set_ft_escrow(token, &owner, bal - reserved);
         }
         set_ft_reserve(&owner, ft_reserve);
+        if transfers.iter().any(|x| x.asset.is_btc()) {
+            write_btc_release(
+                &owner,
+                &BtcRelease { proposal_id: id, snapshot: btc_utxos.clone(), reserve: U64(btc_reserve), head: btc_utxos, signed: 0, last: None },
+            );
+        } else {
+            env::storage_remove(&btc_release_key(&owner));
+        }
         plan.proposal = Some(Proposal {
             id,
             plan_version: plan.version,
@@ -705,7 +981,7 @@ impl Contract {
             _ => fail(Error::NotEligible),
         }
 
-        let mine: Vec<(usize, bool)> = p
+        let mine: Vec<(usize, Asset)> = p
             .transfers
             .iter()
             .enumerate()
@@ -714,20 +990,30 @@ impl Contract {
                 // NEAR: start or retry. ETH: first attempt only; ETH retries
                 // go through `retry_transfer` so the fee bump is explicit.
                 Asset::Near | Asset::Nep141(_) => matches!(tr.state, TransferState::Pending | TransferState::Failed),
-                Asset::Eth | Asset::Erc20(_) => tr.state == TransferState::Pending,
+                Asset::Eth | Asset::Erc20(_) | Asset::Btc => tr.state == TransferState::Pending,
             })
-            .map(|(i, tr)| (i, tr.asset.is_evm()))
+            .map(|(i, tr)| (i, tr.asset.clone()))
             .collect();
 
         self.start(&owner, mine)
     }
 
-    fn start(&mut self, owner: &AccountId, which: Vec<(usize, bool)>) -> u32 {
+    fn start(&mut self, owner: &AccountId, which: Vec<(usize, Asset)>) -> u32 {
         let started = which.len() as u32;
-        for (i, evm) in which {
-            if evm { self.sign_eth(owner, i) } else { self.send_near(owner, i) }.detach();
+        for (i, asset) in which {
+            self.send(owner, i, &asset).detach();
         }
         started
+    }
+
+    fn send(&mut self, owner: &AccountId, i: usize, asset: &Asset) -> Promise {
+        if asset.is_evm() {
+            self.sign_eth(owner, i)
+        } else if asset.is_btc() {
+            self.sign_btc(owner, i)
+        } else {
+            self.send_near(owner, i)
+        }
     }
 
     /// D19. Starts `heir`'s pending transfers without them: anyone may call it
@@ -756,10 +1042,10 @@ impl Contract {
         if !mine.iter().any(|(_, tr)| open(tr)) {
             fail(Error::NotReleasable);
         }
-        let which: Vec<(usize, bool)> = mine
+        let which: Vec<(usize, Asset)> = mine
             .into_iter()
             .filter(|(_, tr)| tr.state == TransferState::Pending && open(tr))
-            .map(|(i, tr)| (i, tr.asset.is_evm()))
+            .map(|(i, tr)| (i, tr.asset.clone()))
             .collect();
         emit("released", near_sdk::serde_json::json!({"owner": owner, "heir": heir, "by": caller(), "transfers": which.len()}));
         self.start(&owner, which)
@@ -850,11 +1136,8 @@ impl Contract {
         if tr.state != TransferState::Failed {
             fail(Error::InvalidTransferState);
         }
-        if tr.asset.is_evm() {
-            self.sign_eth(&owner, index as usize)
-        } else {
-            self.send_near(&owner, index as usize)
-        }
+        let asset = tr.asset.clone();
+        self.send(&owner, index as usize, &asset)
     }
 
     /// T1a callback.
@@ -919,7 +1202,7 @@ impl Contract {
     pub fn report_broadcast(&mut self, owner: AccountId, index: u32, tx_hash: String) {
         self.assert_executor();
         let mut tr = self.tr_get(&owner, index);
-        if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+        if !tr.asset.is_external() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.tx_hash = Some(tx_hash);
@@ -950,7 +1233,7 @@ impl Contract {
     pub fn report_failed(&mut self, owner: AccountId, index: u32, reason: String) {
         self.assert_executor();
         let mut tr = self.tr_get(&owner, index);
-        if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+        if !tr.asset.is_external() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.state = TransferState::Failed;
@@ -1141,6 +1424,7 @@ impl Contract {
             eth_gas_limit: self.eth_gas_limit,
             erc20_tokens: erc20_tokens(),
             nep141_tokens: nep141_tokens(),
+            btc: btc_config(),
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
@@ -1194,7 +1478,7 @@ fn read_withdrawal(owner: &AccountId) -> Option<Transfer> {
 
 /// Unresolved: not yet confirmed, and not a mined revert (whose nonce is used).
 fn withdrawal_busy(w: &Option<Transfer>) -> bool {
-    w.as_ref().is_some_and(|t| t.state != TransferState::Confirmed && !(t.state == TransferState::Failed && t.failure.as_deref() == Some("Reverted")))
+    w.as_ref().is_some_and(|t| t.state != TransferState::Confirmed && !(t.state == TransferState::Failed && matches!(t.failure.as_deref(), Some("Reverted") | Some("Cancelled"))))
 }
 
 fn pending_withdrawals() -> Vec<AccountId> {
@@ -1246,6 +1530,110 @@ fn read_extension(owner: &AccountId) -> Option<ExtensionState> {
     env::storage_read(&extension_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
 }
 
+fn btc_config() -> BtcConfig {
+    env::storage_read(BTC_CONFIG_KEY).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or(BtcConfig { fee_rate: 2, max_fee_rate: 5 })
+}
+
+fn btc_dests_key(owner: &AccountId) -> Vec<u8> {
+    [b"btcd:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn btc_dests(owner: &AccountId) -> Vec<BtcDestination> {
+    env::storage_read(&btc_dests_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn btc_dest(owner: &AccountId, account: &AccountId) -> Option<String> {
+    btc_dests(owner).into_iter().find(|d| &d.account_id == account).map(|d| d.address)
+}
+
+fn btc_pubkey_key(owner: &AccountId) -> Vec<u8> {
+    [b"btcpk:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn btc_pubkey(owner: &AccountId) -> Option<[u8; 33]> {
+    env::storage_read(&btc_pubkey_key(owner)).and_then(|b| b.try_into().ok())
+}
+
+fn btc_release_key(owner: &AccountId) -> Vec<u8> {
+    [b"btcp:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn read_btc_release(owner: &AccountId) -> Option<BtcRelease> {
+    env::storage_read(&btc_release_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+}
+
+fn write_btc_release(owner: &AccountId, r: &BtcRelease) {
+    env::storage_write(&btc_release_key(owner), &near_sdk::borsh::to_vec(r).expect("borsh"));
+}
+
+fn btx_key(owner: &AccountId, index: u32, pid: Option<u64>) -> Vec<u8> {
+    match pid {
+        Some(id) => format!("btx:{owner}:{id}:{index}").into_bytes(),
+        None => format!("btx:{owner}:w").into_bytes(),
+    }
+}
+
+fn read_btx(owner: &AccountId, index: u32, pid: Option<u64>) -> Option<BtcTx> {
+    env::storage_read(&btx_key(owner, index, pid)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+}
+
+fn write_btx(owner: &AccountId, index: u32, pid: Option<u64>, b: &BtcTx) {
+    env::storage_write(&btx_key(owner, index, pid), &near_sdk::borsh::to_vec(b).expect("borsh"));
+}
+
+fn remove_btx(owner: &AccountId, index: u32, pid: Option<u64>) {
+    env::storage_remove(&btx_key(owner, index, pid));
+}
+
+/// Validates reported coins: 1..=MAX_BTC_INPUTS distinct outpoints with a
+/// 64-hex txid and a non-zero value. Returns (count, total sats).
+fn check_utxos(u: &[BtcUtxo]) -> (usize, u64) {
+    if u.is_empty() || u.len() > MAX_BTC_INPUTS {
+        fail(Error::InvalidUtxos);
+    }
+    let mut total = 0u64;
+    for (i, x) in u.iter().enumerate() {
+        let ok = x.txid.len() == 64 && eth::hex_decode(&x.txid).is_some() && x.value.0 > 0 && !u[..i].iter().any(|y| y.txid == x.txid && y.vout == x.vout);
+        if !ok {
+            fail(Error::InvalidUtxos);
+        }
+        total = total.checked_add(x.value.0).unwrap_or_else(|| fail(Error::InvalidUtxos));
+    }
+    (u.len(), total)
+}
+
+fn to_tx(b: &BtcTx) -> btc::Tx {
+    btc::Tx {
+        inputs: b
+            .inputs
+            .iter()
+            .map(|u| btc::Input { txid: eth::hex_decode(&u.txid.to_ascii_lowercase()).and_then(|v| v.try_into().ok()).expect("checked"), vout: u.vout, value: u.value.0 })
+            .collect(),
+        outputs: b.outputs.iter().map(|o| btc::Output { script: eth::hex_decode(&o.script).expect("own"), value: o.value.0 }).collect(),
+    }
+}
+
+fn base58_decode(s: &str) -> Option<Vec<u8>> {
+    const A: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut out: Vec<u8> = vec![];
+    for c in s.bytes() {
+        let mut carry = A.iter().position(|x| *x == c)? as u32;
+        for b in out.iter_mut().rev() {
+            carry += (*b as u32) * 58;
+            *b = carry as u8;
+            carry >>= 8;
+        }
+        while carry > 0 {
+            out.insert(0, carry as u8);
+            carry >>= 8;
+        }
+    }
+    let zeros = s.bytes().take_while(|c| *c == b'1').count();
+    let mut v = vec![0u8; zeros];
+    v.extend(out);
+    Some(v)
+}
+
 fn rules_key(owner: &AccountId) -> Vec<u8> {
     [b"rules:".as_slice(), owner.as_bytes()].concat()
 }
@@ -1255,9 +1643,11 @@ fn read_rules(owner: &AccountId) -> Option<ReleaseRules> {
 }
 
 /// Where `r` receives `asset`: its NEAR account or its Ethereum address.
-fn dest_for(r: &Recipient, asset: &Asset) -> Option<String> {
+fn dest_for(owner: &AccountId, r: &Recipient, asset: &Asset) -> Option<String> {
     if asset.is_evm() {
         r.eth_destination.clone()
+    } else if asset.is_btc() {
+        btc_dest(owner, &r.account_id)
     } else {
         r.near_destination.as_ref().map(|a| a.to_string())
     }
@@ -1324,7 +1714,7 @@ fn evm_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
     match &tr.asset {
         Asset::Eth => Some((dest, tr.amount.0, vec![])),
         Asset::Erc20(token) => Some((eth::parse_address(token)?, 0, eth::erc20_transfer_data(&dest, tr.amount.0))),
-        Asset::Near | Asset::Nep141(_) => None,
+        Asset::Near | Asset::Nep141(_) | Asset::Btc => None,
     }
 }
 
@@ -1503,6 +1893,130 @@ impl Contract {
     /// T1b / T6: build the exact transaction from the snapshot and ask the MPC
     /// network to sign its hash. The nonce is assigned once and never changes;
     /// only the fees move on retry, bounded by the cap.
+    fn btx_pid(&self, owner: &AccountId, index: u32) -> Option<u64> {
+        if index == VAULT_WITHDRAWAL {
+            None
+        } else {
+            Some(self.plan_ref(owner).proposal.unwrap_or_else(|| fail(Error::NoProposal)).id)
+        }
+    }
+
+    /// T2 for Bitcoin (D20). A first signing spends the release's current
+    /// head (the reported coins, or the previous payout's change) and moves
+    /// the head to this payout's change. A re-sign keeps the inputs and the
+    /// heir's output: after a signing failure it is identical (same txid, so
+    /// later payouts stay valid); after a network failure it bumps the fee out
+    /// of the change, allowed only for the latest payout (nothing spends its
+    /// change yet).
+    fn sign_btc(&mut self, owner: &AccountId, index: usize) -> Promise {
+        let idx = index as u32;
+        let cfg = btc_config();
+        let pubkey = btc_pubkey(owner).unwrap_or_else(|| fail(Error::BtcVaultUnknown));
+        let pkh = btc::hash160(&pubkey);
+        let mut tr = self.tr_get(owner, idx);
+        let pid = self.btx_pid(owner, idx);
+        let existing = read_btx(owner, idx, pid);
+        let dest = btc::address_script(&tr.destination).unwrap_or_else(|| fail(Error::InvalidBtcAddress));
+        let amount = tr.amount.0 as u64;
+        let mut rel = pid.map(|_| read_btc_release(owner).unwrap_or_else(|| fail(Error::NoProposal)));
+        // later payouts that still need this one's change
+        let waiting = match pid {
+            Some(id) => self
+                .plan_ref(owner)
+                .proposal
+                .map(|p| p.transfers.iter().enumerate().filter(|(i, t)| t.asset.is_btc() && *i != index && read_btx(owner, *i as u32, Some(id)).is_none()).count())
+                .unwrap_or(0),
+            None => 0,
+        };
+        let (inputs, seq, rate, fresh) = match &existing {
+            // already built: same tx again after a signing failure
+            Some(b) if b.raw.is_none() && !b.outputs.is_empty() => (b.inputs.clone(), b.seq, b.fee_rate, false),
+            // signed before and failed on the network: bump, latest payout only
+            Some(b) if b.raw.is_some() => {
+                if let Some(r) = &rel {
+                    if r.last != Some(idx) {
+                        fail(Error::BtcNotHead);
+                    }
+                }
+                let bumped = (b.fee_rate + 1).max(b.fee_rate * 5 / 4).min(cfg.max_fee_rate);
+                if bumped <= b.fee_rate {
+                    fail(Error::FeeAtCap);
+                }
+                (b.inputs.clone(), b.seq, bumped, false)
+            }
+            // owner withdrawal draft
+            Some(b) => (b.inputs.clone(), 0, cfg.fee_rate, false),
+            None => {
+                let r = rel.as_ref().expect("release payout");
+                if r.head.is_empty() {
+                    fail(Error::InvalidUtxos);
+                }
+                (r.head.clone(), r.signed, cfg.fee_rate, true)
+            }
+        };
+        let (n, total) = check_utxos(&inputs);
+        let parsed = to_tx(&BtcTx { inputs: inputs.clone(), outputs: vec![], fee_rate: 0, fee: U64(0), seq: 0, txid: String::new(), sighashes: vec![], signatures: vec![], raw: None }).inputs;
+        let change_script = btc::p2wpkh_script(&pkh);
+        let with = btc::vsize(n, &[dest.len(), change_script.len()]) * rate;
+        let without = btc::vsize(n, &[dest.len()]) * rate;
+        let mut outputs = vec![btc::Output { script: dest, value: amount }];
+        let (fee, change) = if total >= amount + with + btc::DUST {
+            let change = total - amount - with;
+            outputs.push(btc::Output { script: change_script, value: change });
+            (with, change)
+        } else if waiting == 0 && total >= amount + without {
+            (total - amount, 0)
+        } else {
+            fail(Error::InsufficientFeeReserve)
+        };
+        let tx = btc::Tx { inputs: parsed, outputs };
+        let txid = eth::hex_encode(&tx.txid());
+        let sighashes: Vec<String> = (0..n).map(|i| eth::hex_encode(&tx.sighash(i, &pkh))).collect();
+        let b = BtcTx {
+            inputs,
+            outputs: tx.outputs.iter().map(|o| BtcOutput { script: eth::hex_encode(&o.script), value: U64(o.value) }).collect(),
+            fee_rate: rate,
+            fee: U64(fee),
+            seq,
+            txid: txid.clone(),
+            sighashes: sighashes.clone(),
+            signatures: vec![],
+            raw: None,
+        };
+        write_btx(owner, idx, pid, &b);
+        if let Some(r) = rel.as_mut() {
+            if fresh {
+                r.signed += 1;
+            }
+            if fresh || r.last == Some(idx) {
+                r.last = Some(idx);
+                r.head = if change > 0 { vec![BtcUtxo { txid, vout: 1, value: U64(change) }] } else { vec![] };
+            }
+            write_btc_release(owner, r);
+        }
+        tr.state = TransferState::Signing;
+        tr.failure = None;
+        tr.tx_hash = None;
+        tr.attempts += 1;
+        let attempt = tr.attempts;
+        self.tr_put(owner, idx, tr);
+
+        let path = btc_vault_path(owner);
+        let mut all: Option<Promise> = None;
+        for h in sighashes {
+            let p = mpc::ext(self.mpc_contract.clone())
+                .with_attached_deposit(NearToken::from_yoctonear(1))
+                .with_static_gas(MPC_SIGN_GAS)
+                .sign(SignRequestArgs { payload_v2: SignPayload::Ecdsa(h), path: path.clone(), domain_id: MPC_DOMAIN_SECP256K1 });
+            all = Some(match all {
+                None => p,
+                Some(q) => q.and(p),
+            });
+        }
+        all.expect("at least one input")
+            .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_btc_signed(owner.clone(), idx, attempt))
+    }
+
     fn sign_eth(&mut self, owner: &AccountId, index: usize) -> Promise {
         let chain_id = self.eth_chain_id;
         let configured_gas = self.eth_gas_limit;
@@ -1621,6 +2135,7 @@ impl Contract {
         plan.escrow = U128(plan.escrow.0 + reserved + ft_reserve(owner));
         plan.proposal = None;
         set_ft_reserve(owner, 0);
+        env::storage_remove(&btc_release_key(owner));
         for (token, amount) in tokens {
             set_ft_escrow(&token, owner, ft_escrow(&token, owner) + amount);
         }
