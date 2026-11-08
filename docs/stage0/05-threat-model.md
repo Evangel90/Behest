@@ -1,0 +1,24 @@
+# 05 · Threat model (MVP, testnet)
+
+Severity is for a mainnet deployment of the same design. Status says what the MVP does about it.
+
+| # | Threat | Impact | Mitigation | Status |
+|---|---|---|---|---|
+| 1 | Owner key compromised | Attacker edits heirs and withdraws | Out of protocol scope for MVP. Stage 3: high-impact edit notice and cooling-off | **Accepted (MVP)** |
+| 2 | Guardian collusion (≥ quorum) while owner is alive | Premature release | Release requires `Overdue` first (owner must miss check-ins), then a waiting period during which one owner check-in cancels it. Funds can only go to the owner's chosen heirs | Mitigated |
+| 3 | Guardians disappear (quorum unreachable) | Funds stuck | Never auto-lower quorum. Owner can replace guardians while active. Stage 3: standby guardians | Partly; documented |
+| 4 | Guardian under-reports ETH balance in the snapshot | Heirs receive less; remainder stays in vault | Approving guardians see the explorer link. Nothing is redirected | Accepted; Stage 2 fixes with recount |
+| 5 | Malicious / compromised executor | False status reports, refusing to broadcast | Executor cannot alter payloads; signed tx is public in contract state so anyone can broadcast; executors are replaceable by admin | Mitigated |
+| 6 | Replay / duplicate execution | Double payment | One fixed nonce per ETH transfer; NEAR transfers move to in-flight before the promise; callbacks are private | Mitigated (tested) |
+| 7 | Signature before cancellation window ends | Irreversible early release | Contract checks `now >= waiting_ends_at` before every `sign`; `check_in`/`cancel` rejected from that instant | Mitigated (tested) |
+| 8 | Payload substitution (recipient/amount/chain) | Funds redirected | Payload built inside contract from snapshot; no caller-supplied fields except a fee bump bounded by the cap | Mitigated (tested) |
+| 9 | Proposal snapshot stale vs policy edit | Release to old heirs | Edits rejected while a proposal is open; proposal pins `plan_version` | Mitigated |
+| 10 | Fee spike / fee exhaustion | Transfer stalls | Fee reserve at proposal; `FeeAboveCap` → retry later; funds stay in vault | Mitigated |
+| 11 | Sepolia reorg | Status says Confirmed for a dropped tx | Executor waits N confirmations (default 6); retry reuses the same nonce | Mitigated |
+| 12 | MPC timeout / failure | Transfer stuck in `Signing` | Callback failure → `Failed(SignFailed)`, retryable with the same nonce | Mitigated |
+| 13 | Contract upgrade key compromised | Total loss | MVP uses a single testnet full-access key. Stage 4: time-locked multi-party upgrades, or lock the contract | **Accepted (testnet only)** |
+| 14 | Admin abuse | Pause griefing | Admin can pause but has no fund-moving or plan-editing method | Mitigated |
+| 15 | Frontend compromised | User signs a malicious `set_plan` | Plain-language and rule view show the exact plan; wallet shows the call. Stage 3: signed builds | Partly |
+| 16 | Demo timers in production | Releases in minutes | Timer bounds compiled in by feature flag; production build rejects demo durations (tested) | Mitigated |
+| 17 | Heir loses destination key | Share unrecoverable | Destination fixed by owner; Stage 2 alternates/fallback | **Accepted (MVP)** |
+| 18 | Unbounded storage growth / spam | Storage DoS | Caps on heirs/guardians; owner pays storage deposit at plan creation | Mitigated |
