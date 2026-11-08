@@ -33,7 +33,7 @@ export function ButtonLink({ variant = "ink", className, ...p }: ComponentProps<
 
 /** Outlined card (24px). `dark` is the fixed dark surface used for the pulse. */
 export function Card({ dark, className, ...p }: ComponentProps<"section"> & { dark?: boolean }) {
-  return <section className={cx("rounded-card p-5 sm:p-6", dark ? "bg-void text-white" : "border border-line bg-card", className)} {...p} />;
+  return <section className={cx("min-w-0 rounded-card p-5 sm:p-6", dark ? "bg-void text-white" : "border border-line bg-card", className)} {...p} />;
 }
 
 /** Section label ("Balances", "Lifecycle"). */
@@ -71,7 +71,7 @@ export function TransferPill({ state }: { state: TransferState; plain?: boolean 
 /** "You can / You can't" rows on status cards. */
 export function CanAct({ actions, plain }: { actions: Actions; plain?: boolean }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       <div className="flex flex-col gap-1 rounded-row bg-ok-bg p-4 text-ok">
         <span className="text-[13px] font-semibold">{plain ? "You can" : "Can act now"}</span>
         <span className="text-sm text-ink">{actions.can.length ? actions.can.join(" · ") : "Nothing right now."}</span>

@@ -93,7 +93,7 @@ export function LandingDemo() {
                   ))}
                 </ul>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="flex items-center gap-4 rounded-row border border-[#E5E5E5] p-5">
                   <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
                     <circle cx="28" cy="28" r="23" fill="none" stroke="#EDEDED" strokeWidth="6" />

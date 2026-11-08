@@ -161,7 +161,7 @@ function Setup() {
 
       {step === "edit" && (
         <>
-          <Card className="grid gap-5 md:grid-cols-3">
+          <Card className="grid grid-cols-1 gap-5 md:grid-cols-3">
             {unitSelect(checkIn, setCheckIn, "Check in every", "Miss this and you count as unreachable.")}
             {unitSelect(grace, setGrace, "Then allow grace of", "Extra time before guardians can act.")}
             {unitSelect(waiting, setWaiting, "Waiting period", "After approval; you can still cancel.")}

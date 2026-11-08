@@ -11,7 +11,7 @@ const AVATAR_BG = ["#A9CCFF", "#FDBA8C", "#C7C8FA", "#A5F3FC", "#F5D0FE", "#BBF7
 /** Bordered list card: a title strip over a white inset list (design "Balances"/"Heirs"). */
 export function ListCard({ title, aside, children, className }: { title: React.ReactNode; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={cx("rounded-row border border-line bg-subtle px-1 pb-1", className)}>
+    <section className={cx("min-w-0 rounded-row border border-line bg-subtle px-1 pb-1", className)}>
       <div className="flex items-center justify-between gap-3 px-5 py-3 text-sm font-semibold">
         <span>{title}</span>
         {aside && <span className="font-medium text-muted">{aside}</span>}
@@ -172,7 +172,7 @@ export function Row({ k, v, mono }: { k: string; v: React.ReactNode; mono?: bool
   return (
     <div className="grid grid-cols-[minmax(0,180px)_minmax(0,1fr)] gap-3 border-t border-line py-2.5 text-sm">
       <span className="text-muted">{k}</span>
-      <span className={cx("min-w-0 break-words", mono && "font-mono text-xs")}>{v}</span>
+      <span className={cx("min-w-0 break-words", mono && "break-all font-mono text-xs")}>{v}</span>
     </div>
   );
 }

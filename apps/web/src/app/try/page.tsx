@@ -86,7 +86,7 @@ function CreateSandbox({ onCreated }: { onCreated: (s: Sandbox) => void }) {
 
   return (
     <Card className="flex flex-col gap-4">
-      <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {PERSONA_ROLES.map((r) => (
           <li key={r} className="rounded-tile border border-line p-3">
             <span className="font-semibold">{PERSONA_INFO[r].label}</span>
@@ -141,7 +141,7 @@ function SandboxView({ sandbox, onReset }: { sandbox: Sandbox; onReset: () => vo
         </Link>
       </Card>
 
-      <section aria-label="Personas" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <section aria-label="Personas" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {PERSONA_ROLES.map((r) => {
           const p = sandbox.personas[r];
           const current = session?.accountId === p.accountId;

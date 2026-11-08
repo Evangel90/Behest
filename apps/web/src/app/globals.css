@@ -112,7 +112,9 @@
   --ease-ledger: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-html { background: var(--paper); color: var(--ink); }
+html { background: var(--paper); color: var(--ink); overscroll-behavior: none; }
+html:has([data-app-shell]) { background: var(--frame); }
+body { min-width: 0; overflow-x: clip; }
 body { font-family: var(--font-sans); font-weight: 500; -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 

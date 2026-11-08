@@ -162,9 +162,9 @@ export function NavItem({ active, children, ...p }: { active?: boolean; children
 export function AppShell({ children, nav, mainClassName, narrow }: { children: ReactNode; nav?: ReactNode; mainClassName?: string; narrow?: boolean }) {
   const path = usePathname();
   return (
-    <div className="flex min-h-dvh flex-col bg-frame lg:h-dvh">
+    <div data-app-shell className="flex min-h-dvh flex-col bg-frame lg:h-dvh lg:overflow-hidden">
       <TestnetBar />
-      <div className="grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[232px_minmax(0,1fr)]">
+      <div className="grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[232px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
         <aside className="flex min-w-0 flex-col text-[#D4D4D4] lg:min-h-0 lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3 lg:px-6 lg:py-5">
             <Logo dark />
@@ -193,7 +193,7 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
             <AccountButton dark />
           </div>
         </aside>
-        <div className="min-w-0 rounded-tile bg-paper lg:my-2 lg:mr-2 lg:overflow-y-auto">
+        <div className="relative min-w-0 rounded-tile bg-paper lg:my-2 lg:mr-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
           <main className={cx("mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-8 sm:py-8", narrow ? "max-w-[560px]" : "max-w-[1040px]", mainClassName)}>{children}</main>
         </div>
       </div>

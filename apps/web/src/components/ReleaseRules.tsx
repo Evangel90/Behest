@@ -160,7 +160,7 @@ function RulesEditor({ view, initial, busy, onCancel, onSave }: { view: PlanView
   }
 
   const recipientFields = (d: RecipientDraft, set: (d: RecipientDraft) => void, label: string) => (
-    <div className="grid gap-2 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
       <Field label={`${label}: account`}>
         <input className={inputClass} value={d.account_id} placeholder="name.testnet" onChange={(e) => set({ ...d, account_id: e.target.value, near_destination: d.near_destination || "" })} />
       </Field>

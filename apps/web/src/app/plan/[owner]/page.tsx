@@ -237,7 +237,7 @@ function OwnerView({ view, now, refresh }: Props) {
       </div>
       <Result result={result} />
 
-      <div className="grid gap-4 lg:grid-cols-[400px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[400px_minmax(0,1fr)]">
         <Card dark className="flex flex-col items-center gap-4">
           <span className="self-start">
             <Bracket dark>Pulse</Bracket>
@@ -274,7 +274,7 @@ function OwnerView({ view, now, refresh }: Props) {
         </Card>
       </div>
 
-      <section aria-label="Assets" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <section aria-label="Assets" className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <Card className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <AssetHead ticker="NEAR" name="NEAR" />
@@ -319,7 +319,7 @@ function OwnerView({ view, now, refresh }: Props) {
         <BtcOwnerCard view={view} btc={btc} locked={!!view.plan.proposal && s !== "Settled"} />
       </section>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <HeirList view={view} />
         <GuardianList view={view} />
       </div>
@@ -733,7 +733,7 @@ function PublicView({ view, now, refresh }: Props) {
         <p className="text-xl leading-snug tracking-[-0.01em]">{describePlan(p, shortName(view.plan.owner))}</p>
         <Lifecycle status={view.status} />
       </Card>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card className="flex flex-col">
           <Bracket>Rules as stored on-chain</Bracket>
           <div className="mt-3">
