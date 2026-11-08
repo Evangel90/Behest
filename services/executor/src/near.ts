@@ -1,7 +1,7 @@
 import { Account, JsonRpcProvider, baseDecode, teraToGas, type KeyPairString } from "near-api-js";
 import { bytesToHex } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
-import type { ContractConfig, NearPort, PlanView } from "./types.js";
+import type { ContractConfig, NearPort, PlanView, Transfer } from "./types.js";
 
 export interface NearOptions {
   rpcUrl: string;
@@ -63,5 +63,8 @@ export function createNearPort(o: NearOptions): NearPort {
     reportFailed: (owner, index, reason) => call("report_failed", { owner, index, reason }),
     // MPC sign (50 Tgas) + callback (10 Tgas) + headroom.
     retryTransfer: (owner, index) => call("retry_transfer", { owner, index }, 150),
+    listVaultWithdrawals: () => view<string[]>("list_vault_withdrawals"),
+    getVaultWithdrawal: (owner) => view<Transfer | null>("get_vault_withdrawal", { owner }),
+    cancelVaultWithdrawal: (owner) => call("cancel_vault_withdrawal", { owner }, 150),
   };
 }

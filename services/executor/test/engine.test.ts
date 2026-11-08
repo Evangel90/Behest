@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Engine, type Outcome } from "../src/engine.js";
 import { ethAddressFromMpcKey } from "../src/near.js";
 import { memoryStore } from "../src/store.js";
-import type { EthPort, NearPort, PlanView, Receipt, Store, Transfer } from "../src/types.js";
+import { VAULT_WITHDRAWAL, type EthPort, type NearPort, type PlanView, type Receipt, type Store, type Transfer } from "../src/types.js";
 
 const vaultKey = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 const strangerKey = privateKeyToAccount("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
@@ -59,6 +59,10 @@ class FakeNear implements NearPort {
   reportConfirmed = async (_o: string, i: number, h: string) => void this.calls.push(`confirmed:${i}:${h}`);
   reportFailed = async (_o: string, i: number, r: string) => void this.calls.push(`failed:${i}:${r}`);
   retryTransfer = async (_o: string, i: number) => void this.calls.push(`retry:${i}`);
+  withdrawal: Transfer | null = null;
+  listVaultWithdrawals = async () => (this.withdrawal ? [OWNER] : []);
+  getVaultWithdrawal = async () => this.withdrawal;
+  cancelVaultWithdrawal = async () => void this.calls.push("cancel-withdrawal");
 }
 
 class FakeEth implements EthPort {
@@ -329,5 +333,39 @@ describe("MPC key to address", () => {
   it("derives the Ethereum address from a NEAR secp256k1 public key", () => {
     const uncompressed = hexToBytes(vaultKey.publicKey).slice(1); // drop 0x04
     expect(ethAddressFromMpcKey(`secp256k1:${baseEncode(uncompressed)}`)).toBe(vaultKey.address);
+  });
+});
+
+describe("Owner vault withdrawals (D7)", () => {
+  const W = VAULT_WITHDRAWAL;
+  const runW = async (nonce = 0) => (await engine.tick()).get(`${OWNER}#withdrawal#${nonce}`);
+  const withdrawal = (state: Transfer["state"], extra: Partial<Transfer> = {}): Transfer =>
+    transfer(state, { heir: OWNER, eth_tx: { chain_id: 11155111, nonce: 0, max_fee_per_gas: "1", max_priority_fee_per_gas: "1", payload_hash: "", gas_limit: 21000 }, ...extra });
+
+  beforeEach(() => {
+    near.transfers = [];
+  });
+
+  it("broadcasts a signed withdrawal through the same checks", async () => {
+    near.raw = await signed();
+    near.withdrawal = withdrawal("Signed");
+    expect(await runW()).toBe("broadcast");
+    expect(near.calls).toEqual([`broadcast:${W}:${keccak256(near.raw)}`]);
+  });
+
+  it("burns the nonce of a withdrawal that would revert, so heirs are never blocked", async () => {
+    near.withdrawal = withdrawal("Failed", { failure: "WouldRevert" });
+    expect(await runW()).toBe("retried");
+    expect(near.calls).toEqual(["cancel-withdrawal"]);
+  });
+
+  it("retries fee problems normally and leaves broadcast or mined failures alone", async () => {
+    near.withdrawal = withdrawal("Failed", { failure: "FeeAboveCap" });
+    expect(await runW()).toBe("retried");
+    expect(near.calls).toEqual([`retry:${W}`]);
+    near.calls = [];
+    near.withdrawal = withdrawal("Failed", { failure: "Reverted", tx_hash: "0x01" });
+    expect(await runW()).toBe("needs-human");
+    expect(near.calls).toEqual([]);
   });
 });

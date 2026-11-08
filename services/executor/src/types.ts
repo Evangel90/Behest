@@ -43,6 +43,9 @@ export function expectedCall(t: Pick<Transfer, "asset" | "destination" | "amount
   return { to: t.asset.Erc20.toLowerCase(), value: 0n, data };
 }
 
+/** Transfer index that addresses the owner's vault withdrawal (contract D7). */
+export const VAULT_WITHDRAWAL = 4294967295;
+
 export interface PlanView {
   plan: {
     owner: string;
@@ -71,6 +74,11 @@ export interface NearPort {
   reportConfirmed(owner: string, index: number, txHash: string): Promise<void>;
   reportFailed(owner: string, index: number, reason: string): Promise<void>;
   retryTransfer(owner: string, index: number): Promise<void>;
+  /** Owners whose vault withdrawal is unresolved. */
+  listVaultWithdrawals(): Promise<string[]>;
+  getVaultWithdrawal(owner: string): Promise<Transfer | null>;
+  /** Re-sign a failed, never-broadcast withdrawal's nonce as a 0-ETH transfer. */
+  cancelVaultWithdrawal(owner: string): Promise<void>;
 }
 
 export interface Receipt {

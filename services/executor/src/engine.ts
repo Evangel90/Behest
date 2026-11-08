@@ -4,7 +4,7 @@
 // Spec: docs/stage0/01-state-machine.md (T3–T6), 03-signing-boundary.md.
 
 import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
-import { expectedCall, isEvm, type EthPort, type NearPort, type Store, type Transfer } from "./types.js";
+import { VAULT_WITHDRAWAL, expectedCall, isEvm, type EthPort, type NearPort, type Store, type Transfer } from "./types.js";
 
 export interface EngineOptions {
   confirmations: number;
@@ -50,6 +50,19 @@ export class Engine {
         } catch (e) {
           this.opts.log("transfer error", { key, error: String(e) });
         }
+      }
+    }
+    // Owner vault withdrawals (D7) go through the same path. Resolving them
+    // promptly matters: a release can't be proposed while one is unresolved.
+    for (const owner of await this.near.listVaultWithdrawals()) {
+      const t = await this.near.getVaultWithdrawal(owner);
+      if (!t || !isEvm(t.asset)) continue;
+      const key = `${owner}#withdrawal#${t.eth_tx?.nonce ?? "unsigned"}`;
+      try {
+        const vault = await this.near.vaultAddress(owner);
+        out.set(key, await this.handle(owner, VAULT_WITHDRAWAL, t, vault, BigInt(config.eth_max_fee_cap), config.eth_chain_id, key));
+      } catch (e) {
+        this.opts.log("withdrawal error", { key, error: String(e) });
       }
     }
     return out;
@@ -221,6 +234,14 @@ export class Engine {
   }
 
   private async maybeRetry(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
+    // A withdrawal that can't go through (e.g. WouldRevert: the owner asked
+    // for more than the vault holds) would block the vault's later nonces, so
+    // burn its nonce with a 0-ETH transfer instead of waiting for the owner.
+    if (index === VAULT_WITHDRAWAL && t.failure && !AUTO_RETRY.has(t.failure) && t.failure !== "Reverted" && !t.tx_hash) {
+      await this.near.cancelVaultWithdrawal(owner);
+      this.opts.log("withdrawal cancelled to free its nonce", { key, reason: t.failure });
+      return "retried";
+    }
     if (!t.failure || !AUTO_RETRY.has(t.failure)) return "needs-human";
     const mem = this.store.get(key);
     if (mem.lastRetryAt && this.opts.now() - mem.lastRetryAt < this.opts.retryBackoffMs) return "noop";
