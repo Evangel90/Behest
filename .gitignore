@@ -4,3 +4,8 @@ vision.md
 
 .DS_Store
 CLAUDE.md
+target/
+node_modules/
+.env
+.env.*
+.executor-state.json*
