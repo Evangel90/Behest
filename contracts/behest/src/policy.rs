@@ -2,7 +2,7 @@ use near_sdk::AccountId;
 use std::collections::HashSet;
 
 use crate::errors::{fail, Error};
-use crate::types::{Asset, PlanInput, Recipient, ReleaseRules};
+use crate::types::{Asset, PlanInput, Recipient, ReleaseMode, ReleaseOptions, ReleaseRules};
 
 pub const MAX_HEIRS: usize = 10;
 pub const MAX_GUARDIANS: usize = 10;
@@ -150,6 +150,48 @@ pub fn validate_rules(owner: &AccountId, p: &PlanInput, mut r: ReleaseRules) -> 
         fail(Error::DurationOutOfBounds);
     }
     r
+}
+
+#[cfg(feature = "demo-timers")]
+pub const HYBRID_GRACE: (u64, u64) = (MINUTE, 180 * DAY);
+#[cfg(not(feature = "demo-timers"))]
+pub const HYBRID_GRACE: (u64, u64) = (DAY, 180 * DAY);
+#[cfg(feature = "demo-timers")]
+pub const EXTENSION: (u64, u64) = (MINUTE, 90 * DAY);
+#[cfg(not(feature = "demo-timers"))]
+pub const EXTENSION: (u64, u64) = (DAY, 90 * DAY);
+pub const MAX_TOTAL_EXTENSION: u64 = 365 * DAY;
+pub const MAX_DELAY_SIGNERS: usize = 10;
+
+/// Validates release options against the plan. Delay signers may overlap with
+/// guardians (disclosed in the UI) but are never the owner or a heir, who have
+/// their own interests in the timing.
+pub fn validate_options(owner: &AccountId, p: &PlanInput, o: ReleaseOptions) -> ReleaseOptions {
+    if o.mode == ReleaseMode::Hybrid {
+        if !in_bounds(o.hybrid_grace_ms, HYBRID_GRACE) {
+            fail(Error::DurationOutOfBounds);
+        }
+    } else if o.hybrid_grace_ms != 0 {
+        fail(Error::InvalidOptions);
+    }
+    let s = &o.delay_signers;
+    let unique: HashSet<_> = s.iter().collect();
+    if s.len() > MAX_DELAY_SIGNERS || unique.len() != s.len() || s.iter().any(|a| a == owner || p.heirs.iter().any(|h| &h.account_id == a)) {
+        fail(Error::InvalidOptions);
+    }
+    if s.is_empty() {
+        if o.delay_quorum != 0 || o.max_extension_ms != 0 || o.max_total_extension_ms != 0 {
+            fail(Error::InvalidOptions);
+        }
+    } else {
+        if o.delay_quorum == 0 || o.delay_quorum as usize > s.len() {
+            fail(Error::InvalidQuorum);
+        }
+        if !in_bounds(o.max_extension_ms, EXTENSION) || o.max_total_extension_ms < o.max_extension_ms || o.max_total_extension_ms > MAX_TOTAL_EXTENSION {
+            fail(Error::DurationOutOfBounds);
+        }
+    }
+    o
 }
 
 /// Splits `total` of one asset: fixed amounts first (in rule order, capped by

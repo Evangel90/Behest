@@ -134,6 +134,50 @@ pub struct ReleaseRules {
     pub claim_window_ms: u64,
 }
 
+/// How transfers start once a plan is claimable (D19). Heirs can always claim
+/// themselves; `Automatic` lets anyone (in practice the executor) start them
+/// at once, `Hybrid` only after `hybrid_grace_ms`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum ReleaseMode {
+    #[default]
+    Claim,
+    Automatic,
+    Hybrid,
+}
+
+/// Optional per-plan release options (D18, D19), stored beside the plan.
+/// Delay signers can only extend an approved release's waiting period, by at
+/// most `max_extension_ms` per extension and `max_total_extension_ms` overall.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ReleaseOptions {
+    pub mode: ReleaseMode,
+    pub hybrid_grace_ms: u64,
+    pub delay_signers: Vec<AccountId>,
+    pub delay_quorum: u8,
+    pub max_extension_ms: u64,
+    pub max_total_extension_ms: u64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingExtension {
+    pub extension_ms: u64,
+    pub reason: Option<String>,
+    pub votes: Vec<AccountId>,
+}
+
+/// Extensions of the current proposal's waiting period.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionState {
+    pub proposal_id: u64,
+    pub total_ms: u64,
+    pub count: u32,
+    pub pending: Option<PendingExtension>,
+}
+
 /// Admin-allowlisted NEP-141 token. `storage_deposit` is what registering one
 /// account with it costs (its NEP-145 `storage_balance_bounds().min`).
 #[near(serializers = [borsh, json])]

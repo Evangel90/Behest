@@ -218,9 +218,12 @@ impl Contract {
     pub fn set_plan(&mut self, plan: PlanInput) {
         let owner = caller();
         let policy = policy::validate(&owner, plan);
-        // Existing release rules must still fit the new heirs and guardians.
+        // Existing release rules and options must still fit the new heirs and guardians.
         if let Some(r) = read_rules(&owner) {
             policy::validate_rules(&owner, &policy, r);
+        }
+        if let Some(o) = read_options(&owner) {
+            policy::validate_options(&owner, &policy, o);
         }
         self.migrate_plan(&owner);
         let storage_before = env::storage_usage();
@@ -328,6 +331,33 @@ impl Contract {
             }
         }
         self.charge_storage(storage_before, &owner);
+    }
+
+    /// D18/D19. The owner sets (or clears) release mode and delay signers.
+    #[payable]
+    pub fn set_release_options(&mut self, options: Option<ReleaseOptions>) {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let storage_before = env::storage_usage();
+        match options {
+            Some(o) => {
+                let o = policy::validate_options(&owner, &plan.policy, o);
+                env::storage_write(&options_key(&owner), &near_sdk::borsh::to_vec(&o).expect("borsh"));
+                emit("release_options_set", near_sdk::serde_json::json!({"owner": owner, "options": o}));
+            }
+            None => {
+                env::storage_remove(&options_key(&owner));
+                emit("release_options_cleared", near_sdk::serde_json::json!({"owner": owner}));
+            }
+        }
+        self.charge_storage(storage_before, &owner);
+    }
+
+    pub fn get_release_options(&self, owner: AccountId) -> Option<ReleaseOptions> {
+        read_options(&owner)
     }
 
     pub fn get_release_rules(&self, owner: AccountId) -> Option<ReleaseRules> {
@@ -689,11 +719,120 @@ impl Contract {
             .map(|(i, tr)| (i, tr.asset.is_evm()))
             .collect();
 
-        let started = mine.len() as u32;
-        for (i, evm) in mine {
-            if evm { self.sign_eth(&owner, i) } else { self.send_near(&owner, i) }.detach();
+        self.start(&owner, mine)
+    }
+
+    fn start(&mut self, owner: &AccountId, which: Vec<(usize, bool)>) -> u32 {
+        let started = which.len() as u32;
+        for (i, evm) in which {
+            if evm { self.sign_eth(owner, i) } else { self.send_near(owner, i) }.detach();
         }
         started
+    }
+
+    /// D19. Starts `heir`'s pending transfers without them: anyone may call it
+    /// (the executor does) once the plan is claimable in `Automatic` mode, or
+    /// after the grace period in `Hybrid`. Destinations and amounts are the
+    /// approved ones; failed transfers are retried by the heir or an executor.
+    pub fn release(&mut self, owner: AccountId, heir: AccountId) -> u32 {
+        if self.paused {
+            fail(Error::Paused);
+        }
+        let opts = read_options(&owner).unwrap_or_default();
+        let t = now();
+        let plan = self.plan_ref(&owner);
+        let p = plan.proposal.as_ref().unwrap_or_else(|| fail(Error::NotEligible));
+        let end = match p.waiting_ends_at_ms {
+            Some(end) if t >= end => end,
+            _ => fail(Error::NotEligible),
+        };
+        let from = match opts.mode {
+            ReleaseMode::Claim => fail(Error::NotReleasable),
+            ReleaseMode::Automatic => end,
+            ReleaseMode::Hybrid => end + opts.hybrid_grace_ms,
+        };
+        if t < from {
+            fail(Error::NotReleasable);
+        }
+        let which: Vec<(usize, bool)> = p
+            .transfers
+            .iter()
+            .enumerate()
+            .filter(|(_, tr)| tr.heir == heir && tr.state == TransferState::Pending)
+            .map(|(i, tr)| (i, tr.asset.is_evm()))
+            .collect();
+        emit("released", near_sdk::serde_json::json!({"owner": owner, "heir": heir, "by": caller(), "transfers": which.len()}));
+        self.start(&owner, which)
+    }
+
+    // ----------------------------------------------------------- delay signers
+
+    /// D18. A delay signer asks to extend an approved release's waiting period
+    /// (and with it the owner's cancel window and the signing cutoff). Counts
+    /// as their vote; it applies once `delay_quorum` signers agree. Only one
+    /// request at a time; `reason` is a short code, never evidence.
+    pub fn request_extension(&mut self, owner: AccountId, proposal_id: u64, extension_ms: u64, reason: Option<String>) {
+        let (opts, mut ext) = self.extension_context(&owner, proposal_id);
+        if ext.pending.is_some() {
+            fail(Error::ExtensionPending);
+        }
+        if extension_ms == 0 || extension_ms > opts.max_extension_ms || ext.total_ms + extension_ms > opts.max_total_extension_ms {
+            fail(Error::ExtensionTooLong);
+        }
+        let reason = reason.map(|r| r.chars().take(64).collect::<String>()).filter(|r| !r.is_empty());
+        ext.pending = Some(PendingExtension { extension_ms, reason: reason.clone(), votes: vec![] });
+        emit("extension_requested", near_sdk::serde_json::json!({"owner": owner, "proposal_id": proposal_id, "by": caller(), "extension_ms": extension_ms, "reason": reason}));
+        self.vote_extension(&owner, ext, &opts);
+    }
+
+    pub fn approve_extension(&mut self, owner: AccountId, proposal_id: u64) {
+        let (opts, ext) = self.extension_context(&owner, proposal_id);
+        if ext.pending.is_none() {
+            fail(Error::NoProposal);
+        }
+        self.vote_extension(&owner, ext, &opts);
+    }
+
+    pub fn get_extension(&self, owner: AccountId) -> Option<ExtensionState> {
+        let id = self.read_plan(&owner)?.proposal?.id;
+        read_extension(&owner).filter(|e| e.proposal_id == id)
+    }
+
+    /// The caller is a delay signer and the release is approved and still waiting.
+    fn extension_context(&self, owner: &AccountId, proposal_id: u64) -> (ReleaseOptions, ExtensionState) {
+        let opts = read_options(owner).unwrap_or_default();
+        if !opts.delay_signers.contains(&caller()) {
+            fail(Error::NotDelaySigner);
+        }
+        let plan = self.plan_ref(owner);
+        let p = plan.proposal.as_ref().filter(|p| p.id == proposal_id).unwrap_or_else(|| fail(Error::NoProposal));
+        match p.waiting_ends_at_ms {
+            Some(end) if now() < end => {}
+            _ => fail(Error::NotEligible),
+        }
+        let ext = read_extension(owner).filter(|e| e.proposal_id == proposal_id).unwrap_or(ExtensionState { proposal_id, total_ms: 0, count: 0, pending: None });
+        (opts, ext)
+    }
+
+    fn vote_extension(&mut self, owner: &AccountId, mut ext: ExtensionState, opts: &ReleaseOptions) {
+        let who = caller();
+        let pending = ext.pending.as_mut().expect("checked");
+        if pending.votes.contains(&who) {
+            fail(Error::AlreadyVoted);
+        }
+        pending.votes.push(who);
+        if pending.votes.len() >= opts.delay_quorum as usize {
+            let ms = pending.extension_ms;
+            ext.pending = None;
+            ext.total_ms += ms;
+            ext.count += 1;
+            let plan = self.plan_mut(owner);
+            let p = plan.proposal.as_mut().expect("checked");
+            let end = p.waiting_ends_at_ms.expect("checked") + ms;
+            p.waiting_ends_at_ms = Some(end);
+            emit("waiting_extended", near_sdk::serde_json::json!({"owner": owner, "proposal_id": ext.proposal_id, "extension_ms": ms, "waiting_ends_at_ms": end, "total_ms": ext.total_ms}));
+        }
+        env::storage_write(&extension_key(owner), &near_sdk::borsh::to_vec(&ext).expect("borsh"));
     }
 
     /// T6. Retry a `Failed` transfer. ETH re-signs the same nonce, recipient
@@ -1076,6 +1215,22 @@ fn write_withdrawal(owner: &AccountId, tr: &Transfer) {
         }
         env::storage_write(PENDING_WITHDRAWALS_KEY, &near_sdk::borsh::to_vec(&pending).expect("borsh"));
     }
+}
+
+fn options_key(owner: &AccountId) -> Vec<u8> {
+    [b"opts:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn read_options(owner: &AccountId) -> Option<ReleaseOptions> {
+    env::storage_read(&options_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+}
+
+fn extension_key(owner: &AccountId) -> Vec<u8> {
+    [b"ext:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn read_extension(owner: &AccountId) -> Option<ExtensionState> {
+    env::storage_read(&extension_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
 }
 
 fn rules_key(owner: &AccountId) -> Vec<u8> {

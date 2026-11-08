@@ -1618,3 +1618,233 @@ fn rules_can_be_cleared() {
     e.as_("owner.testnet", 0).set_release_rules(None);
     assert!(e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).is_none());
 }
+
+// ------------------------------------------------ release modes, delay signers
+
+fn opts(mode: ReleaseMode) -> ReleaseOptions {
+    ReleaseOptions {
+        mode,
+        hybrid_grace_ms: if mode == ReleaseMode::Hybrid { 7 * DAY } else { 0 },
+        delay_signers: vec![acc("d1.testnet"), acc("d2.testnet"), acc("g1.testnet")],
+        delay_quorum: 2,
+        max_extension_ms: 14 * DAY,
+        max_total_extension_ms: 30 * DAY,
+    }
+}
+
+/// Funded plan with options `o`, approved (waiting ends 30 days later).
+fn with_options(o: ReleaseOptions) -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(o));
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e
+}
+
+fn states(e: &mut Env, heir: &str) -> Vec<TransferState> {
+    e.plan().proposal.unwrap().transfers.iter().filter(|t| t.heir.as_str() == heir).map(|t| t.state).collect()
+}
+
+fn ends(e: &mut Env) -> u64 {
+    e.plan().proposal.unwrap().waiting_ends_at_ms.unwrap()
+}
+
+#[test]
+fn automatic_mode_lets_anyone_start_a_heirs_transfers_once_claimable() {
+    let mut e = with_options(opts(ReleaseMode::Automatic));
+    e.advance(30 * DAY);
+    assert_eq!(e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet")), 2);
+    assert_eq!(states(&mut e, "amara.testnet"), vec![TransferState::Sending, TransferState::Signing]);
+    assert_eq!(states(&mut e, "tobi.testnet"), vec![TransferState::Pending], "only the named heir");
+    // already started: a second call starts nothing
+    assert_eq!(e.as_("x.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet")), 0);
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_ELIGIBLE")]
+fn automatic_release_still_waits_for_the_owner_window() {
+    let mut e = with_options(opts(ReleaseMode::Automatic));
+    e.advance(30 * DAY - 1);
+    e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_RELEASABLE")]
+fn claim_mode_has_no_third_party_release() {
+    let mut e = approved();
+    e.advance(30 * DAY);
+    e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet"));
+}
+
+#[test]
+fn hybrid_mode_gives_heirs_a_grace_period_first() {
+    let mut e = with_options(opts(ReleaseMode::Hybrid));
+    e.advance(30 * DAY);
+    let early = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("x.testnet", 0).release(acc("owner.testnet"), acc("tobi.testnet"))));
+    assert!(early.is_err(), "not during the grace period");
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet")); // heirs can always claim
+    e.advance(7 * DAY);
+    assert_eq!(e.as_("x.testnet", 0).release(acc("owner.testnet"), acc("tobi.testnet")), 1);
+}
+
+#[test]
+fn delay_signers_extend_the_waiting_period_and_the_owner_can_still_cancel() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    let end = ends(&mut e);
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, 10 * DAY, Some("owner-in-hospital".into()));
+    assert_eq!(ends(&mut e), end, "one vote is not quorum");
+    e.as_("g1.testnet", 0).approve_extension(acc("owner.testnet"), id);
+    assert_eq!(ends(&mut e), end + 10 * DAY);
+    let x = e.as_("x.testnet", 0).get_extension(acc("owner.testnet")).unwrap();
+    assert_eq!((x.total_ms, x.count, x.pending), (10 * DAY, 1, None));
+    // past the original end the owner can still cancel; heirs can't claim
+    e.advance(35 * DAY);
+    assert_eq!(e.status(), PlanStatus::Waiting);
+    e.as_("owner.testnet", 0).cancel_release();
+    assert!(e.plan().proposal.is_none());
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_ELIGIBLE")]
+fn heirs_cannot_claim_during_an_extension() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, 10 * DAY, None);
+    e.as_("d2.testnet", 0).approve_extension(acc("owner.testnet"), id);
+    e.advance(35 * DAY);
+    e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_EXTENSION_TOO_LONG")]
+fn one_extension_is_capped() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, 14 * DAY + 1, None);
+}
+
+#[test]
+#[should_panic(expected = "E_EXTENSION_TOO_LONG")]
+fn total_extension_is_capped() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    for _ in 0..2 {
+        e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, 14 * DAY, None);
+        e.as_("d2.testnet", 0).approve_extension(acc("owner.testnet"), id);
+    }
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, 2 * DAY + 1, None); // 28 + 2d+1 > 30
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_DELAY_SIGNER")]
+fn only_delay_signers_extend() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("g2.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+}
+
+#[test]
+#[should_panic(expected = "E_EXTENSION_PENDING")]
+fn one_extension_request_at_a_time() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+    e.as_("d2.testnet", 0).request_extension(acc("owner.testnet"), id, 2 * DAY, None);
+}
+
+#[test]
+#[should_panic(expected = "E_ALREADY_VOTED")]
+fn a_signer_votes_once() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+    e.as_("d1.testnet", 0).approve_extension(acc("owner.testnet"), id);
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_ELIGIBLE")]
+fn no_extension_after_the_waiting_period_ends() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.advance(30 * DAY);
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_ELIGIBLE")]
+fn no_extension_before_approval() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Claim)));
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+}
+
+#[test]
+fn extension_state_does_not_carry_into_a_new_proposal() {
+    let mut e = with_options(opts(ReleaseMode::Claim));
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("d1.testnet", 0).request_extension(acc("owner.testnet"), id, DAY, None);
+    e.as_("owner.testnet", 0).cancel_release();
+    e.advance(97 * DAY);
+    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    assert!(e.as_("x.testnet", 0).get_extension(acc("owner.testnet")).is_none());
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id2);
+    e.as_("d2.testnet", 0).request_extension(acc("owner.testnet"), id2, DAY, None); // not blocked by the old request
+}
+
+fn expect_bad_options(mutate: impl FnOnce(&mut ReleaseOptions)) {
+    let mut o = opts(ReleaseMode::Hybrid);
+    mutate(&mut o);
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(o));
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_OPTIONS")]
+fn heir_cannot_be_a_delay_signer() {
+    expect_bad_options(|o| o.delay_signers[0] = acc("amara.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_QUORUM")]
+fn delay_quorum_within_signers() {
+    expect_bad_options(|o| o.delay_quorum = 4);
+}
+
+#[test]
+#[should_panic(expected = "E_DURATION_OUT_OF_BOUNDS")]
+fn total_cap_at_least_one_extension() {
+    expect_bad_options(|o| o.max_total_extension_ms = DAY);
+}
+
+#[test]
+#[should_panic(expected = "E_DURATION_OUT_OF_BOUNDS")]
+fn hybrid_grace_is_bounded() {
+    expect_bad_options(|o| o.hybrid_grace_ms = 1);
+}
+
+#[test]
+#[should_panic(expected = "E_PROPOSAL_OPEN")]
+fn options_frozen_while_a_release_is_open() {
+    let mut e = approved();
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Automatic)));
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_OPTIONS")]
+fn making_a_delay_signer_a_heir_is_refused() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Claim)));
+    let mut p = plan_input();
+    p.heirs[1].account_id = acc("d1.testnet");
+    e.as_("owner.testnet", 0).set_plan(p);
+}

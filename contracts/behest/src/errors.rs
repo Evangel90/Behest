@@ -40,6 +40,11 @@ pub enum Error {
     InsufficientTokenEscrow,
     InvalidRules,
     NotReassignable,
+    InvalidOptions,
+    NotDelaySigner,
+    ExtensionTooLong,
+    ExtensionPending,
+    NotReleasable,
 }
 
 impl Error {
@@ -82,6 +87,11 @@ impl Error {
             Error::InsufficientTokenEscrow => "E_INSUFFICIENT_TOKEN_ESCROW",
             Error::InvalidRules => "E_INVALID_RULES",
             Error::NotReassignable => "E_NOT_REASSIGNABLE",
+            Error::InvalidOptions => "E_INVALID_OPTIONS",
+            Error::NotDelaySigner => "E_NOT_DELAY_SIGNER",
+            Error::ExtensionTooLong => "E_EXTENSION_TOO_LONG",
+            Error::ExtensionPending => "E_EXTENSION_PENDING",
+            Error::NotReleasable => "E_NOT_RELEASABLE",
         }
     }
 }
