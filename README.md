@@ -11,6 +11,8 @@ Non-custodial inheritance for digital assets, enforced by a NEAR contract and NE
 | `docs/stage0/` | Spec: state machine, permissions, signing boundary, schema, threat model, decisions |
 | `contracts/behest/` | Rust NEAR contract (near-sdk 5.x) |
 | `services/executor/` | TypeScript executor: broadcasts contract-signed Sepolia transfers, tracks confirmations, retries |
+| `tools/testnet/` | Testnet deploy script and live end-to-end scenarios |
+| `deployments/testnet.json` | Current testnet deployment (public account IDs, wasm hash) |
 
 Planned (decision D1): `apps/web` (Next.js + the Open Ledger design system).
 
@@ -35,6 +37,29 @@ pnpm --filter @behest/executor start
 ```
 
 The executor holds no authority. It verifies that each signed transaction was signed by the plan's vault and matches the snapshot transfer, then broadcasts it and reports status. Anyone can run one; the admin registers executors with `add_executor`.
+
+## Testnet deployment and live e2e
+
+Current deployment: see `deployments/testnet.json` (contract `behest-ekkr6.testnet`, demo timers).
+
+```sh
+cp .env.example .env    # fill SEPOLIA_FUNDER_KEY (test-only private key) and SEPOLIA_RPC_URL
+# accounts behest-<suffix>[-admin|-exec|-owner|-g1|-g2|-g3|-amara|-tobi].testnet, via the faucet:
+near account create-account sponsor-by-faucet-service behest-<suffix>-owner.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
+(cd contracts/behest && cargo near build non-reproducible-wasm --features demo-timers --out-dir ../../target/near-demo)
+pnpm --filter @behest/testnet deploy-contract <suffix>   # deploy + init + register executor; writes .env NEAR fields
+pnpm --filter @behest/testnet e2e                        # NEAR-side scenarios (≈ 8 min, demo timers)
+pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → executor → Sepolia (needs funded key)
+```
+
+| Scenario | Shows |
+|---|---|
+| `happy-near` | Plan → owner unreachable → 2-of-3 guardians → wait → heirs claim NEAR → Settled |
+| `owner-cancel` | One owner check-in during the waiting period cancels the release and restores escrow |
+| `missing-guardian` | 3-of-3 quorum with a guardian absent: release stays paused; threshold never lowered |
+| `insufficient-fee-reserve` | Proposal refused when the ETH vault can't cover the network-fee reserve |
+| `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
+| `e2e-eth` | MPC-signed Sepolia transfer, 60 s executor outage with nothing lost, then broadcast and confirmation |
 
 ## MVP delivery progress
 
