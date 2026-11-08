@@ -1,6 +1,6 @@
 // Pure plan logic for the UI: plain-language summaries, roles, what each person
 // can do right now, and display formatting. No I/O, so it's unit-tested.
-import type { PlanInput, PlanStatus, PlanView, Recipient, ReleaseRules, Transfer, TransferState, Asset, Erc20Token, Nep141Token } from "./types";
+import type { PlanInput, PlanStatus, PlanView, Recipient, ReleaseOptions, ReleaseRules, Transfer, TransferState, Asset, Erc20Token, Nep141Token } from "./types";
 
 export type Role = "owner" | "guardian" | "heir";
 
@@ -250,5 +250,18 @@ export function describeRules(rules: ReleaseRules | null): string[] {
   if (rules.remainder_to) out.push(`Rounding leftovers go to ${shortName(rules.remainder_to)}.`);
   for (const a of rules.alternates) out.push(`If ${shortName(a.heir)} doesn't claim within ${duration(rules.claim_window_ms)}, their share goes to ${a.recipient.account_id}.`);
   if (rules.fallback) out.push(`Anything still unclaimed after that goes to ${rules.fallback.account_id}.`);
+  return out;
+}
+
+/** Plain-language lines for release mode and delay signers. */
+export function describeOptions(o: ReleaseOptions | null): string[] {
+  const out: string[] = [];
+  if (!o || o.mode === "Claim") out.push("Each heir starts their own transfers by claiming.");
+  else if (o.mode === "Automatic") out.push("Transfers start automatically as soon as the waiting period ends. Heirs don't need to do anything.");
+  else out.push(`Heirs have ${duration(o.hybrid_grace_ms)} after the waiting period to claim; after that, transfers start automatically.`);
+  if (o && o.delay_signers.length)
+    out.push(
+      `${o.delay_quorum} of ${o.delay_signers.length} delay signers can extend an approved release's waiting period by up to ${duration(o.max_extension_ms)} at a time, ${duration(o.max_total_extension_ms)} in total. They can't approve, cancel or move anything.`,
+    );
   return out;
 }

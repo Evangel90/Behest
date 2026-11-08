@@ -113,3 +113,20 @@ export interface ReleaseRules {
   fallback: Recipient | null;
   claim_window_ms: number;
 }
+
+/** Release mode and delay signers (contract D18, D19). */
+export interface ReleaseOptions {
+  mode: "Claim" | "Automatic" | "Hybrid";
+  hybrid_grace_ms: number;
+  delay_signers: string[];
+  delay_quorum: number;
+  max_extension_ms: number;
+  max_total_extension_ms: number;
+}
+
+export interface ExtensionState {
+  proposal_id: number;
+  total_ms: number;
+  count: number;
+  pending: { extension_ms: number; reason: string | null; votes: string[] } | null;
+}

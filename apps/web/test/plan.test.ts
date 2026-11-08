@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, assetLabel, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import { actionsFor, assetLabel, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView, Transfer } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -145,5 +145,16 @@ describe("release rules", () => {
   });
   it("never moves a claimed transfer", () => {
     expect(nextHolder(view, rules, tr("amara.testnet", "Near", "Sending"))).toBeNull();
+  });
+});
+
+describe("release options", () => {
+  it("explains the mode and the delay signers' limits", () => {
+    expect(describeOptions(null)).toEqual(["Each heir starts their own transfers by claiming."]);
+    const o = { mode: "Hybrid" as const, hybrid_grace_ms: 7 * 86_400_000, delay_signers: ["a.testnet", "b.testnet"], delay_quorum: 2, max_extension_ms: 86_400_000, max_total_extension_ms: 3 * 86_400_000 };
+    expect(describeOptions(o)).toEqual([
+      "Heirs have 7 days after the waiting period to claim; after that, transfers start automatically.",
+      "2 of 2 delay signers can extend an approved release's waiting period by up to 1 day at a time, 3 days in total. They can't approve, cancel or move anything.",
+    ]);
   });
 });

@@ -6,6 +6,7 @@ import { parseUnits, type Hex } from "viem";
 import { AppHeader, TestnetBar } from "@/components/chrome";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
+import { OptionsCard } from "@/components/ReleaseOptions";
 import { RulesCard, useRules } from "@/components/ReleaseRules";
 import { Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
@@ -332,6 +333,7 @@ function OwnerView({ view, now, refresh }: Props) {
         busy={!!busy}
         signedIn
       />
+      <OptionsCard view={view} now={now} me={session?.accountId ?? null} editable={!view.plan.proposal || s === "Settled"} act={act} busy={!!busy} />
       {view.plan.proposal && (
         <Card className="flex flex-col gap-3">
           <Bracket>Proposed transfers</Bracket>
@@ -540,6 +542,7 @@ function GuardianView({ view, now, refresh }: Props) {
         </Card>
       )}
       <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
+      <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} />
       <GuardianList view={view} />
     </>
   );
@@ -672,6 +675,7 @@ function HeirView({ view, now, refresh }: Props) {
         busy={!!busy}
         signedIn
       />
+      <OptionsCard view={view} now={now} me={me} editable={false} act={() => undefined} busy={!!busy} />
       <details className="rounded-card border-[1.5px] border-line p-4">
         <summary className="min-h-11 cursor-pointer content-center font-semibold">Technical details</summary>
         <div className="flex flex-col gap-1 pt-2">
@@ -751,6 +755,20 @@ function PublicView({ view, now, refresh }: Props) {
         }
         busy={!!busy}
         signedIn={!!session}
+      />
+      <OptionsCard
+        view={view}
+        now={now}
+        me={session?.accountId ?? null}
+        editable={false}
+        act={(l, m, a) =>
+          run(l, async () => {
+            const r = await session!.call(m, a, { tgas: 50 });
+            await refresh?.();
+            return r;
+          })
+        }
+        busy={!!busy}
       />
       <Result result={result} />
       {prop && (
