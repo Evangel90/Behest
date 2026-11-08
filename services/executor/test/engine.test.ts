@@ -14,10 +14,10 @@ const GWEI = 1_000_000_000n;
 const CAP = 50n * GWEI;
 const OWNER = "owner.testnet";
 
-async function signed(opts: { nonce?: number; to?: Hex; value?: bigint; maxFee?: bigint; signer?: typeof vaultKey } = {}) {
+async function signed(opts: { nonce?: number; to?: Hex; value?: bigint; maxFee?: bigint; chainId?: number; signer?: typeof vaultKey } = {}) {
   return (opts.signer ?? vaultKey).signTransaction({
     type: "eip1559",
-    chainId: 11155111,
+    chainId: opts.chainId ?? 11155111,
     nonce: opts.nonce ?? 0,
     to: opts.to ?? HEIR,
     value: opts.value ?? 1000n,
@@ -125,6 +125,16 @@ describe("Signed transfers", () => {
     expect(await run()).toBe("needs-human");
     expect(eth.sent).toEqual([]);
     expect(near.calls).toEqual([]);
+  });
+
+  it.each([
+    ["recipient", { to: "0x000000000000000000000000000000000000dEaD" as Hex }],
+    ["chain", { chainId: 1 }],
+  ])("refuses a signed tx whose %s differs from the snapshot", async (_k, opts) => {
+    near.raw = await signed(opts);
+    near.transfers = [transfer("Signed")];
+    expect(await run()).toBe("needs-human");
+    expect(eth.sent).toEqual([]);
   });
 
   it("refuses to broadcast when the signed gas limit is below the estimate", async () => {

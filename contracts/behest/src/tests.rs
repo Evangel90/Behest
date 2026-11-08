@@ -865,3 +865,57 @@ fn retry_after_gas_limit_too_low_keeps_nonce_and_raises_gas() {
     assert_eq!((p.nonce, p.gas_limit), (0, 300_000));
     assert_eq!(e.plan().eth_next_nonce, 1);
 }
+
+// ------------------------------------------------- substitution and replay
+
+#[test]
+#[should_panic(expected = "E_NOT_PROPOSED")]
+fn approval_for_a_cancelled_proposal_cannot_be_replayed_on_the_next() {
+    let mut e = funded_overdue();
+    let old = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    e.as_("owner.testnet", 0).cancel_release();
+    e.advance(97 * DAY);
+    let new = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    assert_ne!(old, new);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), old);
+}
+
+#[test]
+fn edited_destinations_need_a_fresh_proposal_and_fresh_votes() {
+    let mut e = funded_overdue();
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    e.as_("owner.testnet", 0).cancel_release();
+    let mut edited = plan_input();
+    edited.heirs[0].eth_destination = Some("0x000000000000000000000000000000000000dead".into());
+    e.as_("owner.testnet", NEAR).set_plan(edited);
+    e.advance(97 * DAY);
+    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let p = e.plan().proposal.unwrap();
+    // votes don't carry over (only the proposer's own), and the snapshot pins the version
+    assert!(id2 > id);
+    assert_eq!((p.approvals.clone(), p.plan_version), (vec![acc("g1.testnet")], 2));
+    assert!(p.transfers.iter().any(|t| t.destination == "0x000000000000000000000000000000000000dead"));
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_PROPOSED")]
+fn no_votes_after_quorum() {
+    let mut e = approved();
+    let id = e.plan().proposal.unwrap().id;
+    e.as_("g3.testnet", 0).approve_release(acc("owner.testnet"), id);
+}
+
+#[test]
+fn claim_ignores_any_extra_destination_or_amount_arguments() {
+    // `claim` takes only `owner`; the transfer is the snapshot, whatever the
+    // caller sends. Unknown JSON fields are dropped by the ABI, so the only
+    // inputs are the caller (must be the heir) and the owner.
+    let mut e = approved();
+    e.advance(30 * DAY);
+    let before = e.plan().proposal.unwrap().transfers;
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let after = e.plan().proposal.unwrap().transfers;
+    for (b, a) in before.iter().zip(after.iter()) {
+        assert_eq!((&b.heir, &b.destination, b.amount, b.asset), (&a.heir, &a.destination, a.amount, a.asset));
+    }
+}
