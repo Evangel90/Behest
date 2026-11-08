@@ -1,5 +1,7 @@
 // Deploys the demo-timers build and initialises it in one transaction, then
-// registers the executor. Usage: pnpm --filter @behest/testnet deploy-contract <suffix>
+// registers the executor. Usage: pnpm --filter @behest/testnet deploy-contract <suffix> [--upgrade]
+// --upgrade replaces the code of an existing deployment without re-initialising;
+// only use it when the stored state layout is unchanged.
 // Accounts behest-<suffix>[-admin|-exec|-owner|-g1..3|-amara|-tobi].testnet
 // must already exist in the legacy keychain (created via the faucet).
 import { createHash } from "node:crypto";
@@ -9,6 +11,7 @@ import { actions, teraToGas } from "near-api-js";
 import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
 
 const suffix = process.argv[2];
+const upgrade = process.argv.includes("--upgrade");
 if (!suffix) throw new Error("usage: deploy <suffix>");
 const id = (n?: string) => `behest-${suffix}${n ? `-${n}` : ""}.testnet`;
 
@@ -29,8 +32,11 @@ const init = {
 
 const state = await account(contract).getState().catch(() => null);
 const hasCode = state && state.codeHash !== "11111111111111111111111111111111";
-if (hasCode) {
-  log("contract already deployed; skipping deploy", { contract });
+if (hasCode && upgrade) {
+  log("upgrading code (state kept)", { contract, bytes: wasm.length, sha256: sha });
+  await account(contract).deployContract(wasm);
+} else if (hasCode) {
+  log("contract already deployed; skipping deploy (pass --upgrade to replace code)", { contract });
 } else {
   log("deploying", { contract, bytes: wasm.length, sha256: sha });
   await account(contract).signAndSendTransaction({

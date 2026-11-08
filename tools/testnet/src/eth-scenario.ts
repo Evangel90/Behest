@@ -2,6 +2,8 @@
 // delayed executor. Usage: pnpm --filter @behest/testnet e2e-eth
 //
 // Amara's ETH destination is the funder wallet itself, so test ETH returns home.
+// E2E_RESUME_OWNER=<owner> resumes an earlier run that is already Eligible
+// (reuses its funded vault instead of creating and funding a new plan).
 import { Engine } from "@behest/executor/engine";
 import { createEthPort } from "@behest/executor/eth";
 import { createNearPort, ethAddressFromMpcKey } from "@behest/executor/near";
@@ -57,6 +59,7 @@ log("funder", { address: funder.address, balanceEth: formatEther(funderBal) });
 assert(funderBal > FUND + parseEther("0.002"), `funder needs > ${formatEther(FUND)} ETH plus gas`);
 
 // --- 1. fresh owner and plan with an ETH heir
+async function setup(): Promise<{ owner: string; vault: Hex; vaultBal: bigint }> {
 const kp = KeyPair.fromRandom("ed25519");
 const sub = `eth${Date.now().toString(36)}`;
 const owner = `${sub}.${d.owner}`;
@@ -99,6 +102,25 @@ await call(G1, C, "propose_release", { owner, eth_balance: vaultBal.toString() }
 await call(G2, C, "approve_release", { owner, proposal_id: (await plan(owner)).plan.proposal!.id });
 await waitChain(owner, (await plan(owner)).plan.proposal!.waiting_ends_at_ms!);
 log("eligible");
+return { owner, vault, vaultBal };
+}
+
+async function resume(owner: string): Promise<{ owner: string; vault: Hex; vaultBal: bigint }> {
+  const key = (await provider.callFunction({
+    contractId: process.env.MPC_CONTRACT_ID || "v1.signer-prod.testnet",
+    method: "derived_public_key",
+    args: { path: await view<string>(C, "get_eth_vault_path", { owner }), predecessor: C, domain_id: 0 },
+  })) as string;
+  const vault = ethAddressFromMpcKey(key);
+  const p = await plan(owner);
+  assert(p.status === "Eligible", `resume needs an Eligible plan, got ${p.status}`);
+  const vaultBal = await pub.getBalance({ address: vault });
+  log("resuming", { owner, vault, vaultEth: formatEther(vaultBal) });
+  return { owner, vault, vaultBal };
+}
+
+const resumeOwner = process.env.E2E_RESUME_OWNER?.trim();
+const { owner, vault, vaultBal } = resumeOwner ? await resume(resumeOwner) : await setup();
 
 // --- 4. heir claims: contract requests an MPC signature for the exact transfer
 const before = await pub.getBalance({ address: funder.address });
