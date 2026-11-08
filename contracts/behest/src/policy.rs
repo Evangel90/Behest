@@ -2,7 +2,7 @@ use near_sdk::AccountId;
 use std::collections::HashSet;
 
 use crate::errors::{fail, Error};
-use crate::types::PlanInput;
+use crate::types::{Asset, PlanInput, Recipient, ReleaseRules};
 
 pub const MAX_HEIRS: usize = 10;
 pub const MAX_GUARDIANS: usize = 10;
@@ -52,9 +52,8 @@ pub fn validate(owner: &AccountId, mut p: PlanInput) -> PlanInput {
         if !heir_ids.insert(h.account_id.clone()) {
             fail(Error::DuplicateHeir);
         }
-        if h.share_bps == 0 {
-            fail(Error::InvalidShares);
-        }
+        // 0 is allowed: such a heir receives only a fixed amount or the
+        // remainder (release rules, D17).
         total += h.share_bps as u32;
         if h.near_destination.is_none() && h.eth_destination.is_none() {
             fail(Error::NoDestination);
@@ -88,6 +87,98 @@ pub fn validate(owner: &AccountId, mut p: PlanInput) -> PlanInput {
         fail(Error::DurationOutOfBounds);
     }
     p
+}
+
+pub const MAX_FIXED: usize = 20;
+
+#[cfg(feature = "demo-timers")]
+pub const CLAIM_WINDOW: (u64, u64) = (MINUTE, 3 * 365 * DAY);
+#[cfg(not(feature = "demo-timers"))]
+pub const CLAIM_WINDOW: (u64, u64) = (30 * DAY, 3 * 365 * DAY);
+
+fn check_recipient(r: &mut Recipient) {
+    if r.near_destination.is_none() && r.eth_destination.is_none() {
+        fail(Error::InvalidRules);
+    }
+    if let Some(a) = &r.eth_destination {
+        if !is_eth_address(a) {
+            fail(Error::InvalidEthAddress);
+        }
+        r.eth_destination = Some(a.to_ascii_lowercase());
+    }
+}
+
+/// Validates release rules against the current plan. Alternates and the
+/// fallback must be outsiders (not the owner, a heir or a guardian) so a
+/// transfer's current holder always says which step of the chain it is at.
+pub fn validate_rules(owner: &AccountId, p: &PlanInput, mut r: ReleaseRules) -> ReleaseRules {
+    let heir = |a: &AccountId| p.heirs.iter().find(|h| &h.account_id == a);
+    let insider = |a: &AccountId| a == owner || heir(a).is_some() || p.guardians.contains(a);
+    if r.fixed.len() > MAX_FIXED || r.alternates.len() > MAX_HEIRS {
+        fail(Error::InvalidRules);
+    }
+    for f in r.fixed.iter_mut() {
+        if let Asset::Erc20(t) = &f.asset {
+            f.asset = Asset::Erc20(t.to_ascii_lowercase());
+        }
+    }
+    for f in &r.fixed {
+        let h = heir(&f.heir).unwrap_or_else(|| fail(Error::InvalidRules));
+        let has_dest = if f.asset.is_evm() { h.eth_destination.is_some() } else { h.near_destination.is_some() };
+        if f.amount.0 == 0 || !has_dest || r.fixed.iter().filter(|g| g.heir == f.heir && g.asset == f.asset).count() > 1 {
+            fail(Error::InvalidRules);
+        }
+    }
+    if r.remainder_to.as_ref().is_some_and(|a| heir(a).is_none()) {
+        fail(Error::InvalidRules);
+    }
+    let mut seen = HashSet::new();
+    for a in r.alternates.iter_mut() {
+        if heir(&a.heir).is_none() || !seen.insert(a.heir.clone()) || insider(&a.recipient.account_id) {
+            fail(Error::InvalidRules);
+        }
+        check_recipient(&mut a.recipient);
+    }
+    if let Some(f) = r.fallback.as_mut() {
+        if insider(&f.account_id) || r.alternates.iter().any(|a| a.recipient.account_id == f.account_id) {
+            fail(Error::InvalidRules);
+        }
+        check_recipient(f);
+    }
+    let reassigns = !r.alternates.is_empty() || r.fallback.is_some();
+    if reassigns && !in_bounds(r.claim_window_ms, CLAIM_WINDOW) {
+        fail(Error::DurationOutOfBounds);
+    }
+    r
+}
+
+/// Splits `total` of one asset: fixed amounts first (in rule order, capped by
+/// what is left), then `share_bps` of the rest, then the rounding remainder to
+/// `remainder_to`. Only heirs with a destination for the asset's chain
+/// (`eligible`) receive; the shares of the others stay undistributed.
+/// Returns one amount per heir, in plan order.
+pub fn split(total: u128, p: &PlanInput, rules: &ReleaseRules, asset: &Asset, eligible: impl Fn(usize) -> bool) -> Vec<u128> {
+    let mut out = vec![0u128; p.heirs.len()];
+    let mut left = total;
+    for f in rules.fixed.iter().filter(|f| &f.asset == asset) {
+        if let Some(i) = p.heirs.iter().position(|h| h.account_id == f.heir).filter(|i| eligible(*i)) {
+            let paid = f.amount.0.min(left);
+            out[i] += paid;
+            left -= paid;
+        }
+    }
+    let mut shared = 0u128;
+    for (i, h) in p.heirs.iter().enumerate() {
+        let s = share_of(left, h.share_bps);
+        shared += s;
+        if eligible(i) {
+            out[i] += s;
+        }
+    }
+    if let Some(i) = rules.remainder_to.as_ref().and_then(|a| p.heirs.iter().position(|h| &h.account_id == a)).filter(|i| eligible(*i)) {
+        out[i] += left - shared;
+    }
+    out
 }
 
 /// `floor(total * bps / 10_000)`; the remainder stays undistributed (D12).

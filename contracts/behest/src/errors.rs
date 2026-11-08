@@ -38,6 +38,8 @@ pub enum Error {
     NoWithdrawal,
     BadAsset,
     InsufficientTokenEscrow,
+    InvalidRules,
+    NotReassignable,
 }
 
 impl Error {
@@ -78,6 +80,8 @@ impl Error {
             Error::NoWithdrawal => "E_NO_WITHDRAWAL",
             Error::BadAsset => "E_BAD_ASSET",
             Error::InsufficientTokenEscrow => "E_INSUFFICIENT_TOKEN_ESCROW",
+            Error::InvalidRules => "E_INVALID_RULES",
+            Error::NotReassignable => "E_NOT_REASSIGNABLE",
         }
     }
 }

@@ -91,6 +91,49 @@ pub struct Erc20Token {
     pub decimals: u8,
 }
 
+/// Someone who can receive in place of a heir (a named alternate or the plan's
+/// fallback). Destinations are per chain, as for heirs.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recipient {
+    pub account_id: AccountId,
+    pub near_destination: Option<AccountId>,
+    pub eth_destination: Option<String>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FixedAmount {
+    pub heir: AccountId,
+    pub asset: Asset,
+    pub amount: U128,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Alternate {
+    pub heir: AccountId,
+    pub recipient: Recipient,
+}
+
+/// Optional per-plan release rules (D17), stored beside the plan.
+///  * `fixed`: paid first, in order, each capped by what is left of that asset;
+///    the rest is split by `share_bps`.
+///  * `remainder_to`: the heir who receives the rounding remainder of every
+///    asset (otherwise it stays undistributed, D12).
+///  * Unclaimed shares: a transfer still `Pending` `claim_window_ms` after the
+///    plan became claimable can be reassigned by anyone to that heir's
+///    alternate, and one window later to the plan's `fallback`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ReleaseRules {
+    pub fixed: Vec<FixedAmount>,
+    pub remainder_to: Option<AccountId>,
+    pub alternates: Vec<Alternate>,
+    pub fallback: Option<Recipient>,
+    pub claim_window_ms: u64,
+}
+
 /// Admin-allowlisted NEP-141 token. `storage_deposit` is what registering one
 /// account with it costs (its NEP-145 `storage_balance_bounds().min`).
 #[near(serializers = [borsh, json])]

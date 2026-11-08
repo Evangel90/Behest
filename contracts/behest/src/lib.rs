@@ -218,6 +218,10 @@ impl Contract {
     pub fn set_plan(&mut self, plan: PlanInput) {
         let owner = caller();
         let policy = policy::validate(&owner, plan);
+        // Existing release rules must still fit the new heirs and guardians.
+        if let Some(r) = read_rules(&owner) {
+            policy::validate_rules(&owner, &policy, r);
+        }
         self.migrate_plan(&owner);
         let storage_before = env::storage_usage();
 
@@ -300,6 +304,77 @@ impl Contract {
         plan.escrow = U128(plan.escrow.0 - amount.0);
         emit("withdraw", near_sdk::serde_json::json!({"owner": owner, "amount": amount}));
         Promise::new(owner).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    /// D17. The owner sets (or with `None` clears) the plan's release rules.
+    /// Frozen while a release is open, so guardians approve what is applied.
+    #[payable]
+    pub fn set_release_rules(&mut self, rules: Option<ReleaseRules>) {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let storage_before = env::storage_usage();
+        match rules {
+            Some(r) => {
+                let r = policy::validate_rules(&owner, &plan.policy, r);
+                env::storage_write(&rules_key(&owner), &near_sdk::borsh::to_vec(&r).expect("borsh"));
+                emit("release_rules_set", near_sdk::serde_json::json!({"owner": owner, "rules": r}));
+            }
+            None => {
+                env::storage_remove(&rules_key(&owner));
+                emit("release_rules_cleared", near_sdk::serde_json::json!({"owner": owner}));
+            }
+        }
+        self.charge_storage(storage_before, &owner);
+    }
+
+    pub fn get_release_rules(&self, owner: AccountId) -> Option<ReleaseRules> {
+        read_rules(&owner)
+    }
+
+    /// D17. Anyone may move a share nobody claimed in time: still `Pending`
+    /// one claim window after the plan became claimable, a heir's transfer
+    /// goes to their alternate (or the fallback if none can receive this
+    /// asset); one more window later, an alternate's goes to the fallback.
+    /// Never-signed transfers only, so no ETH nonce or signature exists yet.
+    pub fn reassign_unclaimed(&mut self, owner: AccountId, index: u32) {
+        if self.paused {
+            fail(Error::Paused);
+        }
+        let rules = read_rules(&owner).unwrap_or_default();
+        let t = now();
+        let plan = self.plan_mut(&owner);
+        let is_heir = |a: &AccountId| plan.policy.heirs.iter().any(|h| &h.account_id == a);
+        let p = plan.proposal.as_ref().unwrap_or_else(|| fail(Error::NotEligible));
+        let start = match p.waiting_ends_at_ms {
+            Some(end) if t >= end => end,
+            _ => fail(Error::NotEligible),
+        };
+        let tr = p.transfers.get(index as usize).unwrap_or_else(|| fail(Error::BadIndex));
+        if tr.state != TransferState::Pending {
+            fail(Error::NotReassignable);
+        }
+        let receives = |r: &&Recipient| dest_for(r, &tr.asset).is_some();
+        let fallback = rules.fallback.as_ref().filter(receives);
+        let (stage, next) = if is_heir(&tr.heir) {
+            (1, rules.alternates.iter().find(|a| a.heir == tr.heir).map(|a| &a.recipient).filter(receives).or(fallback))
+        } else if rules.alternates.iter().any(|a| a.recipient.account_id == tr.heir) {
+            (2, fallback)
+        } else {
+            fail(Error::NotReassignable)
+        };
+        let next = next.unwrap_or_else(|| fail(Error::NotReassignable)).clone();
+        if t < start + stage * rules.claim_window_ms {
+            fail(Error::NotReassignable);
+        }
+        let dest = dest_for(&next, &tr.asset).expect("filtered");
+        let from = tr.heir.clone();
+        let tr = self.transfer_mut(&owner, index);
+        tr.heir = next.account_id.clone();
+        tr.destination = dest;
+        emit("transfer_reassigned", near_sdk::serde_json::json!({"owner": owner, "index": index, "from": from, "to": next.account_id}));
     }
 
     /// NEP-141 deposit hook (`ft_transfer_call` to this contract). `msg` is the
@@ -462,6 +537,10 @@ impl Contract {
         // NEP-141: each token's escrow is split like NEAR among heirs with a
         // NEAR destination. Registering a heir with a token (NEP-145) costs
         // NEAR, reserved here from the plan's escrow so heirs need none.
+        let rules = read_rules(&owner).unwrap_or_default();
+        let pol = plan.policy.clone();
+        let near_ok = |i: usize| pol.heirs[i].near_destination.is_some();
+        let eth_ok = |i: usize| pol.heirs[i].eth_destination.is_some();
         let mut ft_snap: Vec<(AccountId, u128)> = vec![];
         let mut ft_reserve = 0u128;
         for t in &fts {
@@ -469,8 +548,8 @@ impl Contract {
             if bal == 0 {
                 continue;
             }
-            let payees = plan.policy.heirs.iter().filter(|h| h.near_destination.is_some() && policy::share_of(bal, h.share_bps) > 0).count();
-            ft_reserve += payees as u128 * t.storage_deposit.0;
+            let shares = policy::split(bal, &pol, &rules, &Asset::Nep141(t.account_id.clone()), near_ok);
+            ft_reserve += shares.iter().filter(|a| **a > 0).count() as u128 * t.storage_deposit.0;
             ft_snap.push((t.account_id.clone(), bal));
         }
         if plan.escrow.0 < ft_reserve {
@@ -499,31 +578,31 @@ impl Contract {
             (0, token_reserve)
         };
 
+        // One transfer per heir per asset: fixed amount + share (+ remainder).
+        let near_split = policy::split(near_total, &pol, &rules, &Asset::Near, near_ok);
+        let ft_splits: Vec<Vec<u128>> = ft_snap.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Nep141(t.clone()), near_ok)).collect();
+        let eth_split = policy::split(eth_total, &pol, &rules, &Asset::Eth, eth_ok);
+        let erc_splits: Vec<Vec<u128>> = tokens.iter().map(|(t, b)| policy::split(*b, &pol, &rules, &Asset::Erc20(t.clone()), eth_ok)).collect();
         let mut transfers = Vec::new();
-        let mut near_reserved = 0u128;
-        for h in &plan.policy.heirs {
+        let near_reserved: u128 = near_split.iter().sum();
+        for (i, h) in pol.heirs.iter().enumerate() {
             if let Some(dest) = &h.near_destination {
-                let amount = policy::share_of(near_total, h.share_bps);
-                if amount > 0 {
-                    near_reserved += amount;
-                    transfers.push(new_transfer(&h.account_id, Asset::Near, dest.to_string(), amount));
+                if near_split[i] > 0 {
+                    transfers.push(new_transfer(&h.account_id, Asset::Near, dest.to_string(), near_split[i]));
                 }
-                for (token, bal) in &ft_snap {
-                    let amount = policy::share_of(*bal, h.share_bps);
-                    if amount > 0 {
-                        transfers.push(new_transfer(&h.account_id, Asset::Nep141(token.clone()), dest.to_string(), amount));
+                for ((token, _), sp) in ft_snap.iter().zip(&ft_splits) {
+                    if sp[i] > 0 {
+                        transfers.push(new_transfer(&h.account_id, Asset::Nep141(token.clone()), dest.to_string(), sp[i]));
                     }
                 }
             }
             if let Some(dest) = &h.eth_destination {
-                let amount = policy::share_of(eth_total, h.share_bps);
-                if amount > 0 {
-                    transfers.push(new_transfer(&h.account_id, Asset::Eth, dest.clone(), amount));
+                if eth_split[i] > 0 {
+                    transfers.push(new_transfer(&h.account_id, Asset::Eth, dest.clone(), eth_split[i]));
                 }
-                for (token, balance) in &tokens {
-                    let amount = policy::share_of(*balance, h.share_bps);
-                    if amount > 0 {
-                        transfers.push(new_transfer(&h.account_id, Asset::Erc20(token.clone()), dest.clone(), amount));
+                for ((token, _), sp) in tokens.iter().zip(&erc_splits) {
+                    if sp[i] > 0 {
+                        transfers.push(new_transfer(&h.account_id, Asset::Erc20(token.clone()), dest.clone(), sp[i]));
                     }
                 }
             }
@@ -585,7 +664,9 @@ impl Contract {
             fail(Error::Paused);
         }
         let plan = self.plan_mut(&owner);
-        if !plan.policy.heirs.iter().any(|h| h.account_id == heir) {
+        // Heirs, plus an alternate or fallback once a transfer was reassigned to them.
+        let holds = plan.proposal.as_ref().is_some_and(|p| p.transfers.iter().any(|t| t.heir == heir));
+        if !holds && !plan.policy.heirs.iter().any(|h| h.account_id == heir) {
             fail(Error::NotHeir);
         }
         let p = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NotEligible));
@@ -994,6 +1075,23 @@ fn write_withdrawal(owner: &AccountId, tr: &Transfer) {
             pending.retain(|o| o != owner);
         }
         env::storage_write(PENDING_WITHDRAWALS_KEY, &near_sdk::borsh::to_vec(&pending).expect("borsh"));
+    }
+}
+
+fn rules_key(owner: &AccountId) -> Vec<u8> {
+    [b"rules:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn read_rules(owner: &AccountId) -> Option<ReleaseRules> {
+    env::storage_read(&rules_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+}
+
+/// Where `r` receives `asset`: its NEAR account or its Ethereum address.
+fn dest_for(r: &Recipient, asset: &Asset) -> Option<String> {
+    if asset.is_evm() {
+        r.eth_destination.clone()
+    } else {
+        r.near_destination.as_ref().map(|a| a.to_string())
     }
 }
 

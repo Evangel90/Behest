@@ -1379,3 +1379,242 @@ fn listing_a_token_pays_for_registering_the_contract_with_it() {
     let mut e = Env::new();
     e.as_("admin.testnet", REG - 1).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
 }
+
+// ------------------------------------------------------------ release rules
+
+const WINDOW: u64 = 60 * DAY;
+
+fn outsider(id: &str, near: Option<&str>, eth: Option<&str>) -> Recipient {
+    Recipient { account_id: acc(id), near_destination: near.map(acc), eth_destination: eth.map(String::from) }
+}
+
+fn rules() -> ReleaseRules {
+    ReleaseRules {
+        fixed: vec![FixedAmount { heir: acc("tobi.testnet"), asset: Asset::Near, amount: U128(3 * NEAR) }],
+        remainder_to: Some(acc("amara.testnet")),
+        alternates: vec![Alternate { heir: acc("amara.testnet"), recipient: outsider("kemi.testnet", Some("kemi.testnet"), Some("0x00000000000000000000000000000000000000bb")) }],
+        fallback: Some(outsider("charity.testnet", Some("charity.testnet"), None)),
+        claim_window_ms: WINDOW,
+    }
+}
+
+/// Plan with `r`, 10 NEAR escrow, approved; `eth` is the reported vault balance.
+fn ruled(r: ReleaseRules, eth: u128) -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(r));
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(eth)), None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e
+}
+
+fn near_of(e: &mut Env) -> Vec<(String, u128)> {
+    e.plan().proposal.unwrap().transfers.iter().filter(|t| t.asset == Asset::Near).map(|t| (t.heir.to_string(), t.amount.0)).collect()
+}
+
+fn idx(e: &mut Env, heir: &str, asset: Asset) -> u32 {
+    e.plan().proposal.unwrap().transfers.iter().position(|t| t.heir.as_str() == heir && t.asset == asset).unwrap() as u32
+}
+
+#[test]
+fn fixed_amount_is_paid_first_and_the_rest_split_by_share() {
+    let mut e = ruled(rules(), 0);
+    // tobi: 3 fixed + 40% of 7; amara: 60% of 7
+    assert_eq!(near_of(&mut e), vec![("amara.testnet".into(), 42 * NEAR / 10), ("tobi.testnet".into(), 3 * NEAR + 28 * NEAR / 10)]);
+}
+
+#[test]
+fn fixed_amount_is_capped_by_what_is_there() {
+    let mut r = rules();
+    r.fixed[0].amount = U128(50 * NEAR);
+    let mut e = ruled(r, 0);
+    assert_eq!(near_of(&mut e), vec![("tobi.testnet".into(), 10 * NEAR)]);
+}
+
+#[test]
+fn remainder_goes_to_the_named_heir() {
+    let mut r = rules();
+    r.fixed[0].amount = U128(3 * NEAR + 1); // leaves 7 NEAR - 1: not divisible
+    let mut e = ruled(r, 0);
+    let n = near_of(&mut e);
+    assert_eq!(n.iter().map(|x| x.1).sum::<u128>(), 10 * NEAR, "every yocto distributed");
+    let left = 7 * NEAR - 1;
+    assert_eq!(n[0].1, left - policy::share_of(left, 4000), "amara: share plus remainder");
+}
+
+#[test]
+fn without_rules_rounding_remainder_stays() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", 10 * NEAR + 3).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    assert_eq!(e.plan().escrow.0, 1);
+}
+
+#[test]
+fn zero_share_heir_receives_only_a_fixed_amount() {
+    let mut e = Env::new();
+    let mut p = plan_input();
+    p.heirs[0].share_bps = 10_000;
+    p.heirs[1].share_bps = 0;
+    e.as_("owner.testnet", NEAR).set_plan(p);
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { fixed: rules().fixed, ..Default::default() }));
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+    assert_eq!(near_of(&mut e), vec![("amara.testnet".into(), 7 * NEAR), ("tobi.testnet".into(), 3 * NEAR)]);
+}
+
+#[test]
+fn fixed_eth_comes_out_of_the_amount_after_the_fee_reserve() {
+    let mut r = rules();
+    r.fixed = vec![FixedAmount { heir: acc("amara.testnet"), asset: Asset::Eth, amount: U128(NEAR / 10) }];
+    let mut e = ruled(r, NEAR);
+    let i = idx(&mut e, "amara.testnet", Asset::Eth);
+    let reserve = 21_000 * 50 * GWEI;
+    let left = NEAR - reserve - NEAR / 10;
+    // amara is the only ETH heir: fixed + 60% + the remainder (she is remainder_to);
+    // tobi's 40% stays (no ETH destination)
+    assert_eq!(e.plan().proposal.unwrap().transfers[i as usize].amount.0, NEAR / 10 + policy::share_of(left, 6000) + (left - policy::share_of(left, 6000) - policy::share_of(left, 4000)));
+}
+
+#[test]
+fn unclaimed_share_goes_to_the_alternate_then_the_fallback() {
+    let mut e = ruled(rules(), 0);
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    e.advance(30 * DAY + WINDOW);
+    e.as_("anyone.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+    let t = e.plan().proposal.unwrap().transfers[i as usize].clone();
+    assert_eq!((t.heir.as_str(), t.destination.as_str(), t.state), ("kemi.testnet", "kemi.testnet", TransferState::Pending));
+    e.advance(WINDOW);
+    e.as_("anyone.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+    let t = e.plan().proposal.unwrap().transfers[i as usize].clone();
+    assert_eq!((t.heir.as_str(), t.destination.as_str()), ("charity.testnet", "charity.testnet"));
+    // the fallback, not a heir, can now claim it
+    assert_eq!(e.as_("charity.testnet", 0).claim(acc("owner.testnet")), 1);
+}
+
+#[test]
+fn alternate_can_claim_once_reassigned() {
+    let mut e = ruled(rules(), 0);
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    e.advance(30 * DAY + WINDOW);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+    assert_eq!(e.as_("kemi.testnet", 0).claim(acc("owner.testnet")), 1);
+    assert_eq!(e.plan().proposal.unwrap().transfers[i as usize].state, TransferState::Sending);
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_REASSIGNABLE")]
+fn cannot_reassign_before_the_claim_window_ends() {
+    let mut e = ruled(rules(), 0);
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    e.advance(30 * DAY + WINDOW - 1);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_REASSIGNABLE")]
+fn claimed_transfers_are_never_reassigned() {
+    let mut e = ruled(rules(), 0);
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    e.advance(30 * DAY);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    e.advance(WINDOW);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+}
+
+#[test]
+fn heir_without_alternate_goes_straight_to_the_fallback() {
+    let mut e = ruled(rules(), 0);
+    let i = idx(&mut e, "tobi.testnet", Asset::Near);
+    e.advance(30 * DAY + WINDOW);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+    assert_eq!(e.plan().proposal.unwrap().transfers[i as usize].heir.as_str(), "charity.testnet");
+}
+
+#[test]
+fn eth_share_skips_a_fallback_without_an_eth_address() {
+    // amara's ETH: alternate kemi has an address, so it moves; from kemi the
+    // fallback has none, so it stops there
+    let mut e = ruled(rules(), NEAR);
+    let i = idx(&mut e, "amara.testnet", Asset::Eth);
+    e.advance(30 * DAY + WINDOW);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i);
+    let t = e.plan().proposal.unwrap().transfers[i as usize].clone();
+    assert_eq!((t.heir.as_str(), t.destination.as_str(), t.eth_tx.is_none()), ("kemi.testnet", "0x00000000000000000000000000000000000000bb", true));
+    e.advance(WINDOW);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), i)));
+    assert!(r.is_err());
+}
+
+#[test]
+#[should_panic(expected = "E_NOT_REASSIGNABLE")]
+fn no_rules_means_nothing_is_reassigned() {
+    let mut e = approved();
+    e.advance(30 * DAY + 3 * 365 * DAY);
+    e.as_("x.testnet", 0).reassign_unclaimed(acc("owner.testnet"), 0);
+}
+
+#[test]
+#[should_panic(expected = "E_PROPOSAL_OPEN")]
+fn rules_frozen_while_a_release_is_open() {
+    let mut e = approved();
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+}
+
+fn expect_bad_rules(mutate: impl FnOnce(&mut ReleaseRules)) {
+    let mut r = rules();
+    mutate(&mut r);
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(r));
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_RULES")]
+fn alternate_must_be_an_outsider() {
+    expect_bad_rules(|r| r.alternates[0].recipient.account_id = acc("g1.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_RULES")]
+fn fixed_amount_needs_a_destination_on_that_chain() {
+    expect_bad_rules(|r| r.fixed[0].asset = Asset::Eth); // tobi has no ETH address
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_RULES")]
+fn fallback_cannot_also_be_an_alternate() {
+    expect_bad_rules(|r| r.fallback.as_mut().unwrap().account_id = acc("kemi.testnet"));
+}
+
+#[test]
+#[should_panic(expected = "E_DURATION_OUT_OF_BOUNDS")]
+fn claim_window_is_bounded() {
+    expect_bad_rules(|r| r.claim_window_ms = DAY);
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_RULES")]
+fn changing_heirs_cannot_orphan_the_rules() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    let mut p = plan_input();
+    p.heirs[1].account_id = acc("kemi.testnet"); // the alternate becomes a heir
+    e.as_("owner.testnet", 0).set_plan(p);
+}
+
+#[test]
+fn rules_can_be_cleared() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    assert!(e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).is_some());
+    e.as_("owner.testnet", 0).set_release_rules(None);
+    assert!(e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).is_none());
+}
