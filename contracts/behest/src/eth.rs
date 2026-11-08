@@ -1,10 +1,10 @@
-//! Minimal EIP-1559 transaction encoding for plain ETH transfers.
+//! Minimal EIP-1559 transaction encoding for ETH and ERC-20 transfers.
 //! See docs/stage0/03-signing-boundary.md. Kept dependency-free so every
 //! byte the MPC network signs is visible in this file.
 
 use near_sdk::env;
 
-/// Fields of a type-2 transaction with empty `data` and `access_list`.
+/// Fields of a type-2 transaction with an empty `access_list`.
 pub struct EthTransfer<'a> {
     pub chain_id: u64,
     pub nonce: u64,
@@ -13,6 +13,8 @@ pub struct EthTransfer<'a> {
     pub gas_limit: u64,
     pub to: &'a [u8; 20],
     pub value: u128,
+    /// Empty for ETH; `transfer(to, amount)` calldata for ERC-20.
+    pub data: &'a [u8],
 }
 
 pub struct RsvSignature {
@@ -31,7 +33,7 @@ impl EthTransfer<'_> {
             rlp_uint(self.gas_limit as u128),
             rlp_bytes(self.to),
             rlp_uint(self.value),
-            rlp_bytes(&[]),  // data
+            rlp_bytes(self.data),
             rlp_list(&[]),   // access_list
         ]
     }
@@ -123,4 +125,14 @@ pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
 pub fn bump(fee: u128, cap: u128) -> u128 {
     let bumped = fee + (fee + 7) / 8;
     bumped.max(fee + 1).min(cap)
+}
+
+/// Calldata of ERC-20 `transfer(address to, uint256 amount)`.
+pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
+    let mut d = vec![0xa9, 0x05, 0x9c, 0xbb];
+    d.extend([0u8; 12]);
+    d.extend_from_slice(to);
+    d.extend([0u8; 16]);
+    d.extend(amount.to_be_bytes());
+    d
 }

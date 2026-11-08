@@ -33,6 +33,7 @@ pub enum Error {
     InvalidTransferState,
     BadIndex,
     BadDestination,
+    UnknownToken,
 }
 
 impl Error {
@@ -68,6 +69,7 @@ impl Error {
             Error::InvalidTransferState => "E_INVALID_TRANSFER_STATE",
             Error::BadIndex => "E_BAD_INDEX",
             Error::BadDestination => "E_BAD_DESTINATION",
+            Error::UnknownToken => "E_UNKNOWN_TOKEN",
         }
     }
 }

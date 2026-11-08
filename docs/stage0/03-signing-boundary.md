@@ -1,4 +1,4 @@
-# 03 · Signing boundary (Sepolia ETH via Chain Signatures)
+# 03 · Signing boundary (Sepolia ETH and ERC-20 via Chain Signatures)
 
 ## Who controls the ETH vault
 
@@ -29,9 +29,9 @@ An EIP-1559 (type 2) transaction, built inside the contract by `contracts/behest
 |---|---|---|
 | `chain_id` | global config: `11155111` (Sepolia) | no |
 | `nonce` | assigned once from the plan's `eth_next_nonce` when the transfer first starts | no |
-| `to` | heir's ETH destination from the proposal snapshot | no |
-| `value` | heir's ETH amount from the proposal snapshot | no |
-| `data` | empty | no |
+| `to` | ETH: heir's ETH destination from the proposal snapshot. ERC-20: the token contract from the snapshot | no |
+| `value` | ETH: heir's amount from the snapshot. ERC-20: `0` | no |
+| `data` | ETH: empty. ERC-20: `transfer(heir destination, heir amount)` (`0xa9059cbb` + two 32-byte words) | no |
 | `gas_limit` | the proposal's `eth_gas_limit`, snapshotted from admin config `eth_gas_limit` (testnet: 250 000) when the proposal opens | only upward, on a same-nonce re-sign |
 | `max_priority_fee_per_gas`, `max_fee_per_gas` | first attempt: admin-set `eth_priority_fee` and `eth_initial_max_fee` (clamped to the cap); each retry bumps both by ≥ 12.5% (replacement rule), never above the global `eth_max_fee_cap` | yes, bounded |
 | `access_list` | empty | no |
@@ -41,6 +41,14 @@ The contract computes `keccak256(0x02 || rlp(fields))` and sends it as `payload_
 Every signed version of a transfer is kept in contract state (`get_signed_tx_versions`, at most 32). Any executor, including a freshly started one with no local state, can therefore find which version was mined.
 
 Because the nonce is fixed per transfer, a retry can only replace the same transfer.
+
+### ERC-20 tokens (Stage 2)
+
+Tokens move from the same vault address, so they share its nonce sequence with ETH transfers; claim order fixes the nonces.
+- **Allowlist only.** The admin sets the allowed tokens (`set_erc20_tokens`, at most 4; testnet: WETH `0xfff99767…6b14`). The proposer reports each token's vault balance with `erc20_balances`, just as it reports `eth_balance` (D5). An unlisted or repeated token fails with `E_UNKNOWN_TOKEN`. A proposal snapshots the token address in each transfer (`Asset::Erc20`), so changing the allowlist later doesn't alter an open proposal.
+- **Reverting tokens only.** The executor treats a successful receipt as a delivered transfer. Tokens that return `false` instead of reverting must not be allowlisted.
+- **Executor check.** Before broadcasting, the executor recomputes the expected call (`to`, `value`, `data`) from the snapshot and refuses any signed transaction that differs. That includes a different recipient or amount inside the calldata, or ETH attached to a token call.
+- **Over-reported balance.** If a guardian over-reports a token balance, the token's `transfer` reverts and the vault pays that transaction's fee from the reserve. The admin can re-issue once the real balance is there (same as ETH, threat 20). Under-reported tokens stay in the vault (D12/D5 residual).
 
 ### Gas limit
 
@@ -53,8 +61,10 @@ Callbacks carry an attempt number, so a late MPC response for a superseded attem
 
 ## Fee sponsorship (MVP)
 
-- Destination-chain fees come from the ETH vault itself. At proposal time the contract reserves `eth_heir_count × eth_gas_limit × max_fee_cap` from the reported ETH balance before computing shares, so heirs never need ETH for gas.
-- If the reported balance is below that reserve, `propose_release` fails with `InsufficientFeeReserve` (one of the required failure demos).
+- Destination-chain fees come from the ETH vault itself, for token transfers too. At proposal time the contract reserves `eth_gas_limit × max_fee_cap` for every vault transaction before computing shares, so heirs never need ETH for gas.
+  - Token transfers come first: `eth_heir_count × tokens_held` transactions.
+  - ETH is split only if what's left also covers the `eth_heir_count` ETH transfers; otherwise the remaining ETH stays in the vault.
+- If the reported ETH can't cover the token transfers, or there are no tokens and it doesn't exceed the ETH reserve, `propose_release` fails with `InsufficientFeeReserve` (one of the required failure demos).
 - If network fees exceed `max_fee_cap`, the executor reports `Failed(FeeAboveCap)` and retries later; funds stay in the vault.
 - NEAR gas for heirs and guardians is sponsored by the NEP-366 relayer (`services/relayer`, D14). Calling directly still works if the relayer is down.
 

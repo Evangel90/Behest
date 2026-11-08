@@ -62,10 +62,39 @@ pub struct Proposal {
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asset {
     Near,
     Eth,
+    /// Allowlisted ERC-20 on the ETH chain, by lowercase `0x` token address.
+    /// Appended last so stored plans keep their borsh encoding.
+    Erc20(String),
+}
+
+impl Asset {
+    /// Paid from the plan's Ethereum vault through Chain Signatures.
+    pub fn is_evm(&self) -> bool {
+        matches!(self, Asset::Eth | Asset::Erc20(_))
+    }
+}
+
+/// Admin-allowlisted token. Only tokens that revert on a failed `transfer`
+/// (rather than returning false) belong here: the executor treats a successful
+/// receipt as a completed transfer.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Erc20Token {
+    pub address: String,
+    pub symbol: String,
+    pub decimals: u8,
+}
+
+/// Token balance of a plan's vault as observed by the proposer (like `eth_balance`).
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TokenBalance {
+    pub token: String,
+    pub amount: U128,
 }
 
 #[near(serializers = [borsh, json])]

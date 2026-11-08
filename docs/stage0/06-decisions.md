@@ -15,8 +15,9 @@
 | D11 | **Notifications:** console/email from the executor; never affect contract state | Roadmap Stage 1 scope | Stage 2 workflows |
 | D12 | **Rounding remainder stays in the vault/escrow** | No implicit recipient | Stage 2 explicit remainder rule |
 | D13 | **Proposal rejection:** a proposal dies once enough guardians reject that quorum is impossible | Prevents a deadlocked proposal from blocking new ones | — |
+| D15 | **ERC-20 adapter (Stage 2):** admin allowlist (≤ 4 reverting tokens; testnet WETH) stored outside the contract struct; transfers snapshot the token address; one fee reserve per vault transaction; same vault, nonce sequence, executor and recovery path as ETH | Reuses the proven ETH signing path. A second asset is needed for the partial-failure demo. No state migration needed | Per-plan token opt-in; balance proofs instead of reported balances |
 | D14 | **NEAR gas for heirs and guardians** is sponsored by a NEP-366 relayer in the MVP (revised; originally heirs paid) | People inheriting or vouching shouldn't need to buy NEAR first. The relayer only pays gas: it sponsors one allowlisted, non-payable Behest call per meta-transaction, only for the sender's actual role in that plan, with per-sender and global rate limits. The contract still authorizes every call. | Direct calls still work if the relayer is down |
 
 ## Deferred (explicitly)
 
-Production timer values, attestations, delay signers, guardian replacement while inactive, automatic and hybrid claims, NEP-141 tokens, Bitcoin, privacy modes, and legal review. See the roadmap stages.
+Production timer values, attestations, delay signers, guardian replacement while inactive, automatic and hybrid claims, NEP-141 tokens, Bitcoin, privacy modes, and legal review. (ERC-20 moved into Stage 2 work: D15.) See the roadmap stages.

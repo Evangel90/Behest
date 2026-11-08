@@ -35,6 +35,10 @@ const MPC_DOMAIN_SECP256K1: u32 = 0;
 const MAX_MPC_RESPONSE_BYTES: usize = 1024;
 /// Fee bumps stop at the cap, so distinct versions are few; the oldest is dropped beyond this.
 const MAX_SIGNED_VERSIONS: usize = 32;
+/// The ERC-20 allowlist lives under its own storage key rather than in the
+/// contract struct, so adding it needed no state migration.
+const ERC20_TOKENS_KEY: &[u8] = b"erc20_tokens";
+const MAX_ERC20_TOKENS: usize = 4;
 
 /// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
 #[near(serializers = [json])]
@@ -117,6 +121,7 @@ pub struct ConfigView {
     pub eth_initial_max_fee: U128,
     pub eth_priority_fee: U128,
     pub eth_gas_limit: u64,
+    pub erc20_tokens: Vec<Erc20Token>,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -286,9 +291,21 @@ impl Contract {
     // ------------------------------------------------------------- guardian
 
     /// P4. A guardian opens a release once the owner is overdue.
-    /// `eth_balance` is the vault balance observed by the proposer (D5).
-    pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>) -> u64 {
+    /// `eth_balance` and `erc20_balances` are the vault balances observed by
+    /// the proposer (D5). Guardians approve the resulting transfer list.
+    pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>, erc20_balances: Option<Vec<TokenBalance>>) -> u64 {
         let g = caller();
+        let allowed = erc20_tokens();
+        let mut tokens: Vec<(String, u128)> = vec![];
+        for b in erc20_balances.unwrap_or_default() {
+            let token = b.token.to_ascii_lowercase();
+            if !allowed.iter().any(|t| t.address == token) || tokens.iter().any(|(t, _)| *t == token) {
+                fail(Error::UnknownToken);
+            }
+            if b.amount.0 > 0 {
+                tokens.push((token, b.amount.0));
+            }
+        }
         let fee_cap = self.eth_max_fee_cap.0;
         let gas_limit = self.eth_gas_limit;
         let t = now();
@@ -306,11 +323,25 @@ impl Contract {
         let near_total = plan.escrow.0;
         let eth_heirs = plan.policy.heirs.iter().filter(|h| h.eth_destination.is_some()).count() as u128;
         let eth_balance = eth_balance.map(|b| b.0).unwrap_or(0);
-        let fee_reserve = eth_heirs * gas_limit as u128 * fee_cap;
-        if eth_heirs > 0 && eth_balance > 0 && eth_balance <= fee_reserve {
+        // Every vault transaction (ETH or token) is paid from the vault's ETH,
+        // so the reserve covers one max-fee transaction per transfer. Token
+        // transfers are funded first; ETH is distributed only if what is left
+        // also covers the ETH transfers themselves.
+        let per_tx = gas_limit as u128 * fee_cap;
+        let token_txs = if eth_heirs > 0 { eth_heirs * tokens.len() as u128 } else { 0 };
+        let token_reserve = token_txs * per_tx;
+        if eth_balance < token_reserve {
             fail(Error::InsufficientFeeReserve);
         }
-        let eth_total = eth_balance.saturating_sub(fee_reserve);
+        let after_tokens = eth_balance - token_reserve;
+        let eth_reserve = eth_heirs * per_tx;
+        let (eth_total, fee_reserve) = if eth_heirs > 0 && after_tokens > eth_reserve {
+            (after_tokens - eth_reserve, token_reserve + eth_reserve)
+        } else if eth_heirs > 0 && eth_balance > 0 && token_txs == 0 {
+            fail(Error::InsufficientFeeReserve)
+        } else {
+            (0, token_reserve)
+        };
 
         let mut transfers = Vec::new();
         let mut near_reserved = 0u128;
@@ -326,6 +357,12 @@ impl Contract {
                 let amount = policy::share_of(eth_total, h.share_bps);
                 if amount > 0 {
                     transfers.push(new_transfer(&h.account_id, Asset::Eth, dest.clone(), amount));
+                }
+                for (token, balance) in &tokens {
+                    let amount = policy::share_of(*balance, h.share_bps);
+                    if amount > 0 {
+                        transfers.push(new_transfer(&h.account_id, Asset::Erc20(token.clone()), dest.clone(), amount));
+                    }
                 }
             }
         }
@@ -347,7 +384,7 @@ impl Contract {
             waiting_ends_at_ms: None,
             near_snapshot: U128(near_total),
             eth_snapshot: U128(eth_balance),
-            eth_fee_reserve: U128(if eth_balance > 0 { fee_reserve } else { 0 }),
+            eth_fee_reserve: U128(fee_reserve),
             transfers,
             eth_gas_limit: gas_limit,
         });
@@ -390,7 +427,7 @@ impl Contract {
             _ => fail(Error::NotEligible),
         }
 
-        let mine: Vec<(usize, Asset)> = p
+        let mine: Vec<(usize, bool)> = p
             .transfers
             .iter()
             .enumerate()
@@ -399,18 +436,14 @@ impl Contract {
                 // NEAR: start or retry. ETH: first attempt only; ETH retries
                 // go through `retry_transfer` so the fee bump is explicit.
                 Asset::Near => matches!(tr.state, TransferState::Pending | TransferState::Failed),
-                Asset::Eth => tr.state == TransferState::Pending,
+                Asset::Eth | Asset::Erc20(_) => tr.state == TransferState::Pending,
             })
-            .map(|(i, tr)| (i, tr.asset))
+            .map(|(i, tr)| (i, tr.asset.is_evm()))
             .collect();
 
         let started = mine.len() as u32;
-        for (i, asset) in mine {
-            match asset {
-                Asset::Near => self.send_near(&owner, i),
-                Asset::Eth => self.sign_eth(&owner, i),
-            }
-            .detach();
+        for (i, evm) in mine {
+            if evm { self.sign_eth(&owner, i) } else { self.send_near(&owner, i) }.detach();
         }
         started
     }
@@ -430,9 +463,10 @@ impl Contract {
         if tr.state != TransferState::Failed {
             fail(Error::InvalidTransferState);
         }
-        match tr.asset {
-            Asset::Near => self.send_near(&owner, index as usize),
-            Asset::Eth => self.sign_eth(&owner, index as usize),
+        if tr.asset.is_evm() {
+            self.sign_eth(&owner, index as usize)
+        } else {
+            self.send_near(&owner, index as usize)
         }
     }
 
@@ -496,7 +530,7 @@ impl Contract {
     pub fn report_broadcast(&mut self, owner: AccountId, index: u32, tx_hash: String) {
         self.assert_executor();
         let tr = self.transfer_mut(&owner, index);
-        if tr.asset != Asset::Eth || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+        if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.tx_hash = Some(tx_hash);
@@ -523,7 +557,7 @@ impl Contract {
     pub fn report_failed(&mut self, owner: AccountId, index: u32, reason: String) {
         self.assert_executor();
         let tr = self.transfer_mut(&owner, index);
-        if tr.asset != Asset::Eth || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+        if !tr.asset.is_evm() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
         tr.state = TransferState::Failed;
@@ -568,7 +602,7 @@ impl Contract {
         let next_nonce = plan.eth_next_nonce;
         let p = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
         let tr = p.transfers.get_mut(index as usize).unwrap_or_else(|| fail(Error::BadIndex));
-        if tr.asset != Asset::Eth || tr.state != TransferState::Failed || tr.failure.as_deref() != Some("Reverted") {
+        if !tr.asset.is_evm() || tr.state != TransferState::Failed || tr.failure.as_deref() != Some("Reverted") {
             fail(Error::InvalidTransferState);
         }
         let old_nonce = tr.eth_tx.as_ref().map(|t| t.nonce);
@@ -579,6 +613,29 @@ impl Contract {
             near_sdk::serde_json::json!({"owner": owner, "index": index, "old_nonce": old_nonce, "new_nonce": next_nonce}),
         );
         self.sign_eth(&owner, index as usize)
+    }
+
+    /// Replaces the ERC-20 allowlist. Open proposals keep the token addresses
+    /// they snapshotted; this only affects proposals opened afterwards.
+    pub fn set_erc20_tokens(&mut self, tokens: Vec<Erc20Token>) {
+        self.assert_admin();
+        if tokens.len() > MAX_ERC20_TOKENS {
+            fail(Error::UnknownToken);
+        }
+        let mut clean: Vec<Erc20Token> = vec![];
+        for t in tokens {
+            let address = t.address.to_ascii_lowercase();
+            if eth::parse_address(&address).is_none() || clean.iter().any(|c| c.address == address) {
+                fail(Error::InvalidEthAddress);
+            }
+            clean.push(Erc20Token { address, symbol: t.symbol.chars().take(12).collect(), decimals: t.decimals });
+        }
+        env::storage_write(ERC20_TOKENS_KEY, &near_sdk::borsh::to_vec(&clean).expect("borsh"));
+        emit("erc20_tokens_set", near_sdk::serde_json::json!({"tokens": clean}));
+    }
+
+    pub fn get_erc20_tokens(&self) -> Vec<Erc20Token> {
+        erc20_tokens()
     }
 
     pub fn set_eth_fees(&mut self, max_fee_cap: U128, initial_max_fee: U128, priority_fee: U128) {
@@ -638,6 +695,7 @@ impl Contract {
             mpc_contract: self.mpc_contract.clone(),
             eth_chain_id: self.eth_chain_id,
             eth_gas_limit: self.eth_gas_limit,
+            erc20_tokens: erc20_tokens(),
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
@@ -675,8 +733,25 @@ pub fn status_of(plan: &Plan, t: u64) -> PlanStatus {
     }
 }
 
+fn erc20_tokens() -> Vec<Erc20Token> {
+    env::storage_read(ERC20_TOKENS_KEY)
+        .and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// The (to, value, data) a vault transaction carries for an EVM transfer:
+/// ETH goes straight to the heir; a token transfer calls the token contract.
+fn evm_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
+    let dest = eth::parse_address(&tr.destination)?;
+    match &tr.asset {
+        Asset::Eth => Some((dest, tr.amount.0, vec![])),
+        Asset::Erc20(token) => Some((eth::parse_address(token)?, 0, eth::erc20_transfer_data(&dest, tr.amount.0))),
+        Asset::Near => None,
+    }
+}
+
 fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Option<String> {
-    let to = eth::parse_address(&tr.destination)?;
+    let (to, value, data) = evm_call(tr)?;
     let big_r = eth::hex_decode(&sig.big_r)?;
     let tx = eth::EthTransfer {
         chain_id: params.chain_id,
@@ -685,7 +760,8 @@ fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Opt
         max_fee_per_gas: params.max_fee_per_gas.0,
         gas_limit: params.gas_limit,
         to: &to,
-        value: tr.amount.0,
+        value,
+        data: &data,
     };
     let rsv = eth::RsvSignature {
         r: big_r.get(1..33)?.try_into().ok()?,
@@ -811,7 +887,7 @@ impl Contract {
                 (prev.nonce, max_fee, eth::bump(prev.max_priority_fee_per_gas.0, max_fee), gas, false)
             }
         };
-        let to = eth::parse_address(&tr.destination).unwrap_or_else(|| fail(Error::BadDestination));
+        let (to, value, data) = evm_call(tr).unwrap_or_else(|| fail(Error::BadDestination));
         let hash = eth::EthTransfer {
             chain_id,
             nonce,
@@ -819,7 +895,8 @@ impl Contract {
             max_fee_per_gas: max_fee,
             gas_limit,
             to: &to,
-            value: tr.amount.0,
+            value,
+            data: &data,
         }
         .signing_hash();
         let payload_hash = eth::hex_encode(&hash);

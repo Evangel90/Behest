@@ -80,7 +80,7 @@ fn funded_overdue() -> Env {
 
 fn approved() -> Env {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     e
 }
@@ -99,7 +99,7 @@ fn lifecycle_active_to_eligible() {
     e.advance(1);
     assert_eq!(e.status(), PlanStatus::Overdue);
 
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     assert_eq!(e.status(), PlanStatus::Proposed);
     e.as_("g3.testnet", 0).approve_release(acc("owner.testnet"), id);
     assert_eq!(e.status(), PlanStatus::Waiting);
@@ -161,7 +161,7 @@ fn owner_check_in_cancels_waiting_proposal_and_restores_escrow() {
 #[test]
 fn owner_cancels_proposed_release() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     e.as_("owner.testnet", 0).cancel_release();
     assert_eq!(e.status(), PlanStatus::Active);
 }
@@ -204,28 +204,28 @@ fn cannot_propose_while_owner_current() {
     let mut e = Env::new();
     e.as_("owner.testnet", NEAR).set_plan(plan_input());
     e.as_("owner.testnet", NEAR).deposit(acc("owner.testnet"));
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
 }
 
 #[test]
 #[should_panic(expected = "E_NOT_GUARDIAN")]
 fn non_guardian_cannot_propose() {
     let mut e = funded_overdue();
-    e.as_("amara.testnet", 0).propose_release(acc("owner.testnet"), None);
+    e.as_("amara.testnet", 0).propose_release(acc("owner.testnet"), None, None);
 }
 
 #[test]
 #[should_panic(expected = "E_ALREADY_VOTED")]
 fn guardian_cannot_vote_twice() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     e.as_("g1.testnet", 0).approve_release(acc("owner.testnet"), id);
 }
 
 #[test]
 fn insufficient_quorum_stays_proposed() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     e.advance(365 * DAY);
     assert_eq!(e.status(), PlanStatus::Proposed);
 }
@@ -233,7 +233,7 @@ fn insufficient_quorum_stays_proposed() {
 #[test]
 fn rejections_that_make_quorum_impossible_kill_the_proposal() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     e.as_("g2.testnet", 0).reject_release(acc("owner.testnet"), id);
     assert_eq!(e.status(), PlanStatus::Proposed);
     e.as_("g3.testnet", 0).reject_release(acc("owner.testnet"), id);
@@ -292,7 +292,7 @@ fn pause_blocks_claims() {
 #[should_panic(expected = "E_INSUFFICIENT_FEE_RESERVE")]
 fn eth_balance_below_fee_reserve_is_rejected() {
     let mut e = funded_overdue();
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(21_000 * 50 * GWEI)));
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(21_000 * 50 * GWEI)), None);
 }
 
 // -------------------------------------------------------------- validation
@@ -413,6 +413,7 @@ fn eip1559_encoding_matches_viem() {
         gas_limit: 21_000,
         to: &to,
         value: 599_999_979_000_000_000,
+        data: &[],
     };
     testing_env!(VMContextBuilder::new().build());
     assert_eq!(
@@ -457,7 +458,7 @@ fn eth_claim_assigns_nonce_and_requests_exact_payload() {
 
     // The hash sent to the MPC is exactly the snapshot transfer.
     let to = eth::parse_address(&tr.destination).unwrap();
-    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &to, value: tr.amount.0 };
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &to, value: tr.amount.0, data: &[] };
     assert_eq!(p.payload_hash, eth::hex_encode(&expected.signing_hash()));
 
     let mpc = receipts.iter().find(|r| r.receiver_id == acc("v1.signer-prod.testnet")).expect("MPC receipt");
@@ -648,12 +649,12 @@ fn vault_path_is_per_owner() {
 #[test]
 fn open_release_index_tracks_proposals() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     assert_eq!(e.as_("x.testnet", 0).list_open_releases(None, None), vec![acc("owner.testnet")]);
     e.as_("g2.testnet", 0).reject_release(acc("owner.testnet"), id);
     e.as_("g3.testnet", 0).reject_release(acc("owner.testnet"), id);
     assert!(e.as_("x.testnet", 0).list_open_releases(None, None).is_empty());
-    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
     e.as_("owner.testnet", 0).cancel_release();
     assert!(e.as_("x.testnet", 0).list_open_releases(None, None).is_empty());
 }
@@ -694,7 +695,7 @@ fn claim_schedules_independent_chains_for_near_and_eth() {
 fn gas_limit_is_snapshotted_into_the_proposal() {
     let mut e = funded_overdue();
     e.as_("admin.testnet", 0).set_eth_gas_limit(250_000);
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
     // reserve = 1 ETH heir × 250k gas × 50 gwei cap
     let p = e.plan().proposal.unwrap();
@@ -708,7 +709,7 @@ fn gas_limit_is_snapshotted_into_the_proposal() {
     let params = tr.eth_tx.clone().unwrap();
     assert_eq!(params.gas_limit, 250_000);
     let to = eth::parse_address(&tr.destination).unwrap();
-    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 250_000, to: &to, value: tr.amount.0 };
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 0, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 250_000, to: &to, value: tr.amount.0, data: &[] };
     assert_eq!(params.payload_hash, eth::hex_encode(&expected.signing_hash()));
 }
 
@@ -872,10 +873,10 @@ fn retry_after_gas_limit_too_low_keeps_nonce_and_raises_gas() {
 #[should_panic(expected = "E_NOT_PROPOSED")]
 fn approval_for_a_cancelled_proposal_cannot_be_replayed_on_the_next() {
     let mut e = funded_overdue();
-    let old = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let old = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     e.as_("owner.testnet", 0).cancel_release();
     e.advance(97 * DAY);
-    let new = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let new = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     assert_ne!(old, new);
     e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), old);
 }
@@ -883,13 +884,13 @@ fn approval_for_a_cancelled_proposal_cannot_be_replayed_on_the_next() {
 #[test]
 fn edited_destinations_need_a_fresh_proposal_and_fresh_votes() {
     let mut e = funded_overdue();
-    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     e.as_("owner.testnet", 0).cancel_release();
     let mut edited = plan_input();
     edited.heirs[0].eth_destination = Some("0x000000000000000000000000000000000000dead".into());
     e.as_("owner.testnet", NEAR).set_plan(edited);
     e.advance(97 * DAY);
-    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)));
+    let id2 = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
     let p = e.plan().proposal.unwrap();
     // votes don't carry over (only the proposer's own), and the snapshot pins the version
     assert!(id2 > id);
@@ -916,6 +917,126 @@ fn claim_ignores_any_extra_destination_or_amount_arguments() {
     let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
     let after = e.plan().proposal.unwrap().transfers;
     for (b, a) in before.iter().zip(after.iter()) {
-        assert_eq!((&b.heir, &b.destination, b.amount, b.asset), (&a.heir, &a.destination, a.amount, a.asset));
+        assert_eq!((&b.heir, &b.destination, b.amount, &b.asset), (&a.heir, &a.destination, a.amount, &a.asset));
     }
+}
+
+// ------------------------------------------------------------------ ERC-20
+
+const WETH: &str = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
+const PER_TX: u128 = 21_000 * 50 * GWEI;
+
+fn weth() -> String {
+    WETH.to_ascii_lowercase()
+}
+
+fn with_weth() -> Env {
+    let mut e = funded_overdue();
+    e.as_("admin.testnet", 0).set_erc20_tokens(vec![Erc20Token { address: WETH.into(), symbol: "WETH".into(), decimals: 18 }]);
+    e
+}
+
+fn bal(token: &str, amount: u128) -> Option<Vec<TokenBalance>> {
+    Some(vec![TokenBalance { token: token.into(), amount: U128(amount) }])
+}
+
+#[test]
+fn erc20_encoding_matches_viem() {
+    // Reference from viem 2.57.16: encodeFunctionData(erc20Abi, "transfer") + serializeTransaction.
+    testing_env!(VMContextBuilder::new().build());
+    let token = eth::parse_address(&weth()).unwrap();
+    let data = eth::erc20_transfer_data(&eth::parse_address(AMARA_ETH).unwrap(), 3_000_000_000_000_000);
+    assert_eq!(
+        eth::hex_encode(&data),
+        "a9059cbb00000000000000000000000071c7656ec7ab88b098defb751b7401b5f6d8976f000000000000000000000000000000000000000000000000000aa87bee538000"
+    );
+    let tx = eth::EthTransfer { chain_id: 11155111, nonce: 1, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 250_000, to: &token, value: 0, data: &data };
+    assert_eq!(
+        eth::hex_encode(&tx.unsigned()),
+        "02f87183aa36a70184773594008504a817c8008303d09094fff9976782d46cc05630d1f6ebab18b2324d6b1480b844a9059cbb00000000000000000000000071c7656ec7ab88b098defb751b7401b5f6d8976f000000000000000000000000000000000000000000000000000aa87bee538000c0"
+    );
+    assert_eq!(eth::hex_encode(&tx.signing_hash()), "1bd0e4845d718fab15d89e53259dd16643157a89b41134e154d1b68749a2ed28");
+}
+
+#[test]
+fn token_snapshot_reserves_a_fee_for_every_vault_transaction() {
+    let mut e = with_weth();
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    let p = e.plan().proposal.unwrap();
+    // amara (the only ETH heir) gets one ETH and one WETH transfer: two reserved fees
+    assert_eq!(p.eth_fee_reserve.0, 2 * PER_TX);
+    let evm: Vec<_> = p.transfers.iter().filter(|t| t.asset.is_evm()).map(|t| (t.asset.clone(), t.amount.0)).collect();
+    assert_eq!(evm, vec![(Asset::Eth, policy::share_of(NEAR - 2 * PER_TX, 6000)), (Asset::Erc20(weth()), 600)]);
+}
+
+#[test]
+fn token_only_vault_needs_eth_for_gas_but_not_more() {
+    let mut e = with_weth();
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX)), bal(WETH, 1_000));
+    let p = e.plan().proposal.unwrap();
+    assert_eq!(p.eth_fee_reserve.0, PER_TX);
+    assert!(p.transfers.iter().all(|t| t.asset != Asset::Eth));
+    assert!(p.transfers.iter().any(|t| t.asset == Asset::Erc20(weth())));
+}
+
+#[test]
+#[should_panic(expected = "E_INSUFFICIENT_FEE_RESERVE")]
+fn token_transfers_without_gas_money_are_rejected() {
+    let mut e = with_weth();
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(PER_TX - 1)), bal(WETH, 1_000));
+}
+
+#[test]
+#[should_panic(expected = "E_UNKNOWN_TOKEN")]
+fn unlisted_token_is_rejected() {
+    let mut e = with_weth();
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal("0x000000000000000000000000000000000000dead", 5));
+}
+
+#[test]
+#[should_panic(expected = "E_UNKNOWN_TOKEN")]
+fn token_cannot_be_reported_twice() {
+    let mut e = with_weth();
+    let twice = Some(vec![TokenBalance { token: WETH.into(), amount: U128(1) }, TokenBalance { token: weth(), amount: U128(1) }]);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), twice);
+}
+
+#[test]
+#[should_panic(expected = "E_UNAUTHORIZED")]
+fn only_admin_sets_tokens() {
+    let mut e = Env::new();
+    e.as_("g1.testnet", 0).set_erc20_tokens(vec![]);
+}
+
+#[test]
+fn token_claim_signs_a_transfer_call_on_the_next_nonce() {
+    let mut e = with_weth();
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let p = e.plan().proposal.unwrap();
+    let ti = p.transfers.iter().position(|t| t.asset == Asset::Erc20(weth())).unwrap();
+    let tr = &p.transfers[ti];
+    let (eth_nonce, token_nonce) = (e.eth_transfer().eth_tx.unwrap().nonce, tr.eth_tx.as_ref().unwrap().nonce);
+    assert_eq!((eth_nonce, token_nonce), (0, 1));
+
+    // the signed payload is a call to the token contract with value 0
+    let token = eth::parse_address(&weth()).unwrap();
+    let data = eth::erc20_transfer_data(&eth::parse_address(AMARA_ETH).unwrap(), 600);
+    let expected = eth::EthTransfer { chain_id: 11155111, nonce: 1, max_priority_fee_per_gas: 2 * GWEI, max_fee_per_gas: 20 * GWEI, gas_limit: 21_000, to: &token, value: 0, data: &data };
+    assert_eq!(tr.eth_tx.as_ref().unwrap().payload_hash, eth::hex_encode(&expected.signing_hash()));
+
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), ti as u32, 1);
+    let raw = e.as_("anyone.testnet", 0).get_signed_tx(acc("owner.testnet"), ti as u32).unwrap();
+    assert!(raw.contains(&weth()[2..]) && raw.contains(&eth::hex_encode(&data)));
+}
+
+#[test]
+fn removing_a_token_from_the_allowlist_keeps_open_snapshots() {
+    let mut e = with_weth();
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), bal(WETH, 1_000));
+    e.as_("admin.testnet", 0).set_erc20_tokens(vec![]);
+    assert!(e.plan().proposal.unwrap().transfers.iter().any(|t| t.asset == Asset::Erc20(weth())));
+    assert!(e.as_("anyone.testnet", 0).get_config().erc20_tokens.is_empty());
 }
