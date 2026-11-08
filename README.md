@@ -112,6 +112,7 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | Two heirs, each receiving ETH and WETH, with freshly generated Sepolia wallets: MPC signs nonces 0–3 in claim order, a 60 s executor outage loses nothing, the executor holds each later nonce until the earlier one is mined, each heir receives exactly its ETH and WETH share, and test ETH and WETH are swept back to the funder |
+| `e2e-rules` | Release rules: 0.05 NEAR + 7 yocto with a 0.01 NEAR fixed amount for Tobi, the rest 60/40, the remainder to Amara (every yocto distributed). Nobody claims; after the 1-minute claim window Amara's share moves to her named alternate and Tobi's to the fallback, and both claim it |
 | `e2e-nep141` | NEP-141: the owner wraps NEAR and deposits wNEAR (a deposit for an unknown plan is refunded), withdraws part of it, then the release splits it 60/40 to two fresh accounts the contract registers with the token first; heirs hold exactly their shares and the registration reserve is spent exactly |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
 | `recover-vaults <owner>…` | Withdraws what earlier runs left in plan vaults back to the funder via D7 (re-creates deleted scenario owner accounts by name) |
@@ -124,6 +125,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 ### Partial failure and retry across two assets (Stage 2 exit criterion)
 
 `e2e-partial`, 2026-11-08: a guardian reported 0.002 WETH when the vault held 0.0005. Amara's [ETH](https://sepolia.etherscan.io/tx/0xad0c2294c6180e148d42cd35c79a7fd147c2b56eef2d3798cb3a0d8a7da706b3) confirmed at nonce 0. The executor's simulation caught her WETH transfer (`WouldRevert`) before broadcast, so no fee was spent and nonce 1 stayed free. After a top-up she retried, and the contract re-signed WETH at nonce 1, which [confirmed](https://sepolia.etherscan.io/tx/0xfa9b1e06413893fba3e6622521e60fc495c303c006b2228375b35a6e120a08ed). The ETH transfer was never re-signed. The vault sent exactly two transactions, and Amara ended with exactly 0.0018 ETH + 0.0012 WETH.
+
+### Release rules (Stage 2)
+
+`e2e-rules`, 2026-11-08. The escrow of 0.05 NEAR + 7 yocto snapshotted as 0.026000…002 for Tobi (0.01 fixed + 40%) and 0.024000…005 for Amara (60% + the 1-yocto remainder), with nothing left in the plan. Neither heir claimed. A minute after claiming opened, a guardian moved Amara's share to her alternate and Tobi's (no alternate) to the fallback; both claimed and received exactly those amounts. The relayer sponsors claims by alternates and the fallback, and lets any plan participant move an unclaimed share without gas.
 
 ### First NEP-141 release (Stage 2)
 
@@ -160,6 +165,6 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
 - [ ] Bitcoin testnet adapter
 - [ ] Delay-signer quorum; automatic and hybrid release modes
-- [ ] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback
+- [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)
