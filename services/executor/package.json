@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Replaceable Behest executor: broadcasts contract-signed Sepolia transfers and reports status.",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "tsx --env-file=../../.env src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "vault": "tsx src/vault.ts"
+    "vault": "tsx --env-file-if-exists=../../.env src/vault.ts"
   },
   "dependencies": {
     "near-api-js": "7.4.0",
@@ -19,5 +19,11 @@
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
+  },
+  "exports": {
+    "./engine": "./src/engine.ts",
+    "./near": "./src/near.ts",
+    "./eth": "./src/eth.ts",
+    "./store": "./src/store.ts"
   }
 }
