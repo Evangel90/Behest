@@ -1207,3 +1207,175 @@ fn signed_withdrawal_is_readable_as_a_raw_transaction() {
     assert!(raw.starts_with("0x02") && raw.contains(&OWNER_ETH[2..]));
     assert_eq!(e.as_("x.testnet", 0).get_signed_tx_versions(acc("owner.testnet"), W).len(), 1);
 }
+
+// ------------------------------------------------------------------ NEP-141
+
+const WNEAR: &str = "wrap.testnet";
+const REG: u128 = 1_250_000_000_000_000_000_000; // 0.00125 NEAR
+
+fn with_wnear() -> Env {
+    let mut e = Env::new().with_executor();
+    e.as_("admin.testnet", REG).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e
+}
+
+fn ft_deposit(e: &mut Env, token: &str, from: &str, amount: u128, msg: &str) -> u128 {
+    match e.as_(token, 0).ft_on_transfer(acc(from), U128(amount), msg.into()) {
+        PromiseOrValue::Value(v) => v.0,
+        PromiseOrValue::Promise(_) => panic!("unexpected promise"),
+    }
+}
+
+fn ft_escrow_of(e: &mut Env) -> u128 {
+    e.as_("x.testnet", 0).get_plan(acc("owner.testnet")).unwrap().ft_escrow.iter().find(|b| b.token == WNEAR).map(|b| b.amount.0).unwrap_or(0)
+}
+
+fn ft_approved() -> Env {
+    let mut e = with_wnear();
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 0);
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e
+}
+
+fn wnear_index(e: &mut Env, heir: &str) -> u32 {
+    e.plan().proposal.unwrap().transfers.iter().position(|t| t.asset == Asset::Nep141(acc(WNEAR)) && t.heir.as_str() == heir).unwrap() as u32
+}
+
+#[test]
+fn allowlisted_token_deposit_is_credited_to_the_plan_named_in_msg() {
+    let mut e = with_wnear();
+    assert_eq!(ft_deposit(&mut e, WNEAR, "friend.testnet", 700, "owner.testnet"), 0);
+    assert_eq!(ft_escrow_of(&mut e), 700);
+}
+
+#[test]
+fn deposits_that_cannot_be_accepted_are_refunded() {
+    let mut e = with_wnear();
+    assert_eq!(ft_deposit(&mut e, "evil.testnet", "owner.testnet", 5, ""), 5, "unlisted token");
+    assert_eq!(ft_deposit(&mut e, WNEAR, "nobody.testnet", 5, ""), 5, "no plan");
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 5, "not an account!"), 5, "bad msg");
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None);
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 5, ""), 5, "release open");
+    assert_eq!(ft_escrow_of(&mut e), 0);
+}
+
+#[test]
+fn release_splits_tokens_and_reserves_heir_registration_from_near() {
+    let mut e = ft_approved();
+    let p = e.plan().proposal.unwrap();
+    let ft: Vec<_> = p.transfers.iter().filter(|t| matches!(t.asset, Asset::Nep141(_))).map(|t| (t.heir.to_string(), t.destination.clone(), t.amount.0)).collect();
+    assert_eq!(ft, vec![("amara.testnet".into(), "amara.testnet".into(), 600), ("tobi.testnet".into(), "tobi-wallet.testnet".into(), 400)]);
+    // two registrations reserved before NEAR is split
+    let near: Vec<_> = p.transfers.iter().filter(|t| t.asset == Asset::Near).map(|t| t.amount.0).collect();
+    assert_eq!(near, vec![policy::share_of(10 * NEAR - 2 * REG, 6000), policy::share_of(10 * NEAR - 2 * REG, 4000)]);
+    assert_eq!(ft_escrow_of(&mut e), 0);
+}
+
+#[test]
+#[should_panic(expected = "E_INSUFFICIENT_FEE_RESERVE")]
+fn token_release_needs_near_for_registrations() {
+    let mut e = Env::new();
+    e.as_("admin.testnet", REG).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", REG).deposit(acc("owner.testnet"));
+    ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, "");
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None);
+}
+
+#[test]
+fn token_claim_registers_once_and_retries_without_a_second_registration() {
+    let mut e = ft_approved();
+    e.advance(30 * DAY);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let i = wnear_index(&mut e, "amara.testnet");
+    let tr = e.plan().proposal.unwrap().transfers[i as usize].clone();
+    assert_eq!((tr.state, tr.attempts), (TransferState::Sending, 1));
+    // one registration spent from the two reserved
+    e.callback(vec![PromiseResult::Failed]).on_near_transfer(acc("owner.testnet"), i);
+    assert_eq!(e.plan().proposal.unwrap().transfers[i as usize].state, TransferState::Failed);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let tr = e.plan().proposal.unwrap().transfers[i as usize].clone();
+    assert_eq!((tr.state, tr.attempts), (TransferState::Sending, 2));
+    e.callback(vec![PromiseResult::Successful(vec![])]).on_near_transfer(acc("owner.testnet"), i);
+    assert_eq!(e.plan().proposal.unwrap().transfers[i as usize].state, TransferState::Confirmed);
+}
+
+#[test]
+fn cancel_returns_tokens_and_the_registration_reserve() {
+    let mut e = ft_approved();
+    e.as_("owner.testnet", 0).cancel_release();
+    assert_eq!(ft_escrow_of(&mut e), 1_000);
+    assert_eq!(e.plan().escrow.0, 10 * NEAR);
+}
+
+#[test]
+fn settling_returns_unused_registration_reserve() {
+    let mut e = ft_approved();
+    e.advance(30 * DAY);
+    // admin raises the registration price after the proposal: the reserve no
+    // longer covers it, so no registration is attempted and it is returned
+    e.as_("admin.testnet", 0).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(10 * NEAR) }]);
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let _ = e.as_("tobi.testnet", 0).claim(acc("owner.testnet"));
+    let n = e.plan().proposal.unwrap().transfers.len() as u32;
+    for i in 0..n {
+        let t = e.plan().proposal.unwrap().transfers[i as usize].clone();
+        if t.asset.is_evm() {
+            continue;
+        }
+        e.callback(vec![PromiseResult::Successful(vec![])]).on_near_transfer(acc("owner.testnet"), i);
+    }
+    // the ETH transfer keeps the plan open; confirm it through the executor
+    let ei = e.eth_index();
+    e.callback(vec![mpc_ok(BIG_R, S, 1)]).on_eth_signed(acc("owner.testnet"), ei, 1);
+    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), ei, "0xe".into());
+    e.as_("exec.testnet", 0).report_confirmed(acc("owner.testnet"), ei, "0xe".into());
+    assert_eq!(e.status(), PlanStatus::Settled);
+    let near_paid: u128 = e.plan().proposal.unwrap().transfers.iter().filter(|t| t.asset == Asset::Near).map(|t| t.amount.0).sum();
+    assert_eq!(e.plan().escrow.0, 10 * NEAR - 2 * REG - near_paid + 2 * REG);
+}
+
+#[test]
+fn owner_withdraws_tokens_and_a_failed_transfer_restores_escrow() {
+    let mut e = with_wnear();
+    ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, "");
+    let _ = e.as_("owner.testnet", 0).withdraw_ft(acc(WNEAR), U128(300));
+    assert_eq!(ft_escrow_of(&mut e), 700);
+    e.callback(vec![PromiseResult::Failed]).on_ft_withdraw(acc("owner.testnet"), acc(WNEAR), U128(300));
+    assert_eq!(ft_escrow_of(&mut e), 1_000);
+}
+
+#[test]
+#[should_panic(expected = "E_INSUFFICIENT_TOKEN_ESCROW")]
+fn cannot_withdraw_more_tokens_than_held() {
+    let mut e = with_wnear();
+    ft_deposit(&mut e, WNEAR, "owner.testnet", 10, "");
+    let _ = e.as_("owner.testnet", 0).withdraw_ft(acc(WNEAR), U128(11));
+}
+
+#[test]
+#[should_panic(expected = "E_PROPOSAL_OPEN")]
+fn token_withdrawal_frozen_while_a_release_is_open() {
+    let mut e = ft_approved();
+    let _ = e.as_("owner.testnet", 0).withdraw_ft(acc(WNEAR), U128(1));
+}
+
+#[test]
+#[should_panic(expected = "E_BAD_ASSET")]
+fn nep141_is_not_a_vault_asset() {
+    let mut e = with_wnear();
+    let _ = e.as_("owner.testnet", 0).withdraw_vault(Asset::Nep141(acc(WNEAR)), U128(1), OWNER_ETH.into());
+}
+
+#[test]
+#[should_panic(expected = "E_INSUFFICIENT_DEPOSIT")]
+fn listing_a_token_pays_for_registering_the_contract_with_it() {
+    let mut e = Env::new();
+    e.as_("admin.testnet", REG - 1).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
+}

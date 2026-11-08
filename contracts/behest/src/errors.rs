@@ -37,6 +37,7 @@ pub enum Error {
     VaultBusy,
     NoWithdrawal,
     BadAsset,
+    InsufficientTokenEscrow,
 }
 
 impl Error {
@@ -76,6 +77,7 @@ impl Error {
             Error::VaultBusy => "E_VAULT_BUSY",
             Error::NoWithdrawal => "E_NO_WITHDRAWAL",
             Error::BadAsset => "E_BAD_ASSET",
+            Error::InsufficientTokenEscrow => "E_INSUFFICIENT_TOKEN_ESCROW",
         }
     }
 }

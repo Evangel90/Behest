@@ -69,6 +69,8 @@ pub enum Asset {
     /// Allowlisted ERC-20 on the ETH chain, by lowercase `0x` token address.
     /// Appended last so stored plans keep their borsh encoding.
     Erc20(String),
+    /// Allowlisted NEP-141 token on NEAR, held in this contract's escrow.
+    Nep141(AccountId),
 }
 
 impl Asset {
@@ -87,6 +89,17 @@ pub struct Erc20Token {
     pub address: String,
     pub symbol: String,
     pub decimals: u8,
+}
+
+/// Admin-allowlisted NEP-141 token. `storage_deposit` is what registering one
+/// account with it costs (its NEP-145 `storage_balance_bounds().min`).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Nep141Token {
+    pub account_id: AccountId,
+    pub symbol: String,
+    pub decimals: u8,
+    pub storage_deposit: U128,
 }
 
 /// Token balance of a plan's vault as observed by the proposer (like `eth_balance`).
@@ -181,4 +194,6 @@ pub struct PlanView {
     /// When the plan becomes `Overdue` if the owner does not check in.
     pub overdue_at_ms: u64,
     pub now_ms: u64,
+    /// NEP-141 balances held for this plan (allowlisted tokens only).
+    pub ft_escrow: Vec<TokenBalance>,
 }

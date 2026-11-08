@@ -14,7 +14,7 @@ mod tests;
 
 use near_sdk::json_types::U128;
 use near_sdk::store::{IterableSet, LookupMap};
-use near_sdk::{env, ext_contract, log, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise};
+use near_sdk::{env, ext_contract, log, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue};
 
 pub use errors::Error;
 use errors::fail;
@@ -46,6 +46,12 @@ pub const VAULT_WITHDRAWAL: u32 = u32::MAX;
 /// withdrawal is unresolved (for executors). Raw keys: no state migration.
 const WITHDRAWAL_PREFIX: &[u8] = b"vw:";
 const PENDING_WITHDRAWALS_KEY: &[u8] = b"vw_pending";
+/// NEP-141 allowlist, per-plan token escrow (`ft:<token>:<owner>`) and the
+/// NEAR reserved for registering heirs with tokens (`ftr:<owner>`), all under
+/// raw keys. Account IDs can't contain ':', so the keys can't collide.
+const NEP141_TOKENS_KEY: &[u8] = b"nep141_tokens";
+const MAX_NEP141_TOKENS: usize = 4;
+const FT_GAS: Gas = Gas::from_tgas(15);
 
 /// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
 #[near(serializers = [json])]
@@ -129,6 +135,7 @@ pub struct ConfigView {
     pub eth_priority_fee: U128,
     pub eth_gas_limit: u64,
     pub erc20_tokens: Vec<Erc20Token>,
+    pub nep141_tokens: Vec<Nep141Token>,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -284,7 +291,7 @@ impl Contract {
     pub fn withdraw(&mut self, amount: U128) -> Promise {
         let owner = caller();
         let plan = self.plan_mut(&owner);
-        if plan.proposal.is_some() {
+        if release_open(plan) {
             fail(Error::ProposalOpen);
         }
         if amount.0 > plan.escrow.0 {
@@ -293,6 +300,61 @@ impl Contract {
         plan.escrow = U128(plan.escrow.0 - amount.0);
         emit("withdraw", near_sdk::serde_json::json!({"owner": owner, "amount": amount}));
         Promise::new(owner).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    /// NEP-141 deposit hook (`ft_transfer_call` to this contract). `msg` is the
+    /// plan owner the tokens are for (empty: the sender's own plan). Anything
+    /// not accepted is returned to the sender by the token (NEP-141 refund):
+    /// unlisted tokens, unknown plans, and plans with a release open (like
+    /// `deposit`, later deposits are not distributed).
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
+        let token = caller();
+        if !nep141_tokens().iter().any(|t| t.account_id == token) {
+            return PromiseOrValue::Value(amount);
+        }
+        let owner = if msg.trim().is_empty() {
+            sender_id.clone()
+        } else {
+            match msg.trim().parse::<AccountId>() {
+                Ok(a) => a,
+                Err(_) => return PromiseOrValue::Value(amount),
+            }
+        };
+        match self.read_plan(&owner) {
+            Some(plan) if plan.proposal.is_none() => {}
+            _ => return PromiseOrValue::Value(amount),
+        }
+        set_ft_escrow(&token, &owner, ft_escrow(&token, &owner) + amount.0);
+        emit("ft_deposit", near_sdk::serde_json::json!({"owner": owner, "token": token, "sender": sender_id, "amount": amount}));
+        PromiseOrValue::Value(U128(0))
+    }
+
+    /// The owner takes NEP-141 tokens back out of escrow (no release open).
+    pub fn withdraw_ft(&mut self, token: AccountId, amount: U128) -> Promise {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let held = ft_escrow(&token, &owner);
+        if amount.0 == 0 || amount.0 > held {
+            fail(Error::InsufficientTokenEscrow);
+        }
+        set_ft_escrow(&token, &owner, held - amount.0);
+        emit("ft_withdraw", near_sdk::serde_json::json!({"owner": owner, "token": token, "amount": amount}));
+        ft_transfer(&token, &owner, amount.0, "Behest withdrawal").then(
+            Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_ft_withdraw(owner, token, amount),
+        )
+    }
+
+    /// Restores the escrow if the withdrawal transfer failed.
+    #[private]
+    pub fn on_ft_withdraw(&mut self, owner: AccountId, token: AccountId, amount: U128) {
+        let ok = env::promise_results_count() == 1 && env::promise_result_checked(0, 0).is_ok();
+        if !ok {
+            set_ft_escrow(&token, &owner, ft_escrow(&token, &owner) + amount.0);
+            emit("ft_withdraw_failed", near_sdk::serde_json::json!({"owner": owner, "token": token, "amount": amount}));
+        }
     }
 
     /// D7. The owner withdraws ETH or a token from the plan's Sepolia vault to
@@ -306,11 +368,11 @@ impl Contract {
             fail(Error::Paused);
         }
         let plan = self.plan_ref(&owner);
-        if plan.proposal.as_ref().is_some_and(|p| !p.transfers.iter().all(|t| t.state == TransferState::Confirmed)) {
+        if release_open(&plan) {
             fail(Error::ProposalOpen);
         }
         let asset = match asset {
-            Asset::Near => fail(Error::BadAsset),
+            Asset::Near | Asset::Nep141(_) => fail(Error::BadAsset),
             Asset::Eth => Asset::Eth,
             Asset::Erc20(token) => {
                 let token = token.to_ascii_lowercase();
@@ -365,6 +427,7 @@ impl Contract {
     /// the proposer (D5). Guardians approve the resulting transfer list.
     pub fn propose_release(&mut self, owner: AccountId, eth_balance: Option<U128>, erc20_balances: Option<Vec<TokenBalance>>) -> u64 {
         let g = caller();
+        let fts = nep141_tokens();
         let allowed = erc20_tokens();
         let mut tokens: Vec<(String, u128)> = vec![];
         for b in erc20_balances.unwrap_or_default() {
@@ -396,7 +459,24 @@ impl Contract {
             fail(Error::VaultBusy);
         }
 
-        let near_total = plan.escrow.0;
+        // NEP-141: each token's escrow is split like NEAR among heirs with a
+        // NEAR destination. Registering a heir with a token (NEP-145) costs
+        // NEAR, reserved here from the plan's escrow so heirs need none.
+        let mut ft_snap: Vec<(AccountId, u128)> = vec![];
+        let mut ft_reserve = 0u128;
+        for t in &fts {
+            let bal = ft_escrow(&t.account_id, &owner);
+            if bal == 0 {
+                continue;
+            }
+            let payees = plan.policy.heirs.iter().filter(|h| h.near_destination.is_some() && policy::share_of(bal, h.share_bps) > 0).count();
+            ft_reserve += payees as u128 * t.storage_deposit.0;
+            ft_snap.push((t.account_id.clone(), bal));
+        }
+        if plan.escrow.0 < ft_reserve {
+            fail(Error::InsufficientFeeReserve);
+        }
+        let near_total = plan.escrow.0 - ft_reserve;
         let eth_heirs = plan.policy.heirs.iter().filter(|h| h.eth_destination.is_some()).count() as u128;
         let eth_balance = eth_balance.map(|b| b.0).unwrap_or(0);
         // Every vault transaction (ETH or token) is paid from the vault's ETH,
@@ -428,6 +508,12 @@ impl Contract {
                     near_reserved += amount;
                     transfers.push(new_transfer(&h.account_id, Asset::Near, dest.to_string(), amount));
                 }
+                for (token, bal) in &ft_snap {
+                    let amount = policy::share_of(*bal, h.share_bps);
+                    if amount > 0 {
+                        transfers.push(new_transfer(&h.account_id, Asset::Nep141(token.clone()), dest.to_string(), amount));
+                    }
+                }
             }
             if let Some(dest) = &h.eth_destination {
                 let amount = policy::share_of(eth_total, h.share_bps);
@@ -449,6 +535,11 @@ impl Contract {
         plan.proposals_opened += 1;
         let id = plan.proposals_opened;
         plan.escrow = U128(near_total - near_reserved);
+        for (token, bal) in &ft_snap {
+            let reserved: u128 = transfers.iter().filter(|x| x.asset == Asset::Nep141(token.clone())).map(|x| x.amount.0).sum();
+            set_ft_escrow(token, &owner, bal - reserved);
+        }
+        set_ft_reserve(&owner, ft_reserve);
         plan.proposal = Some(Proposal {
             id,
             plan_version: plan.version,
@@ -511,7 +602,7 @@ impl Contract {
             .filter(|(_, tr)| match tr.asset {
                 // NEAR: start or retry. ETH: first attempt only; ETH retries
                 // go through `retry_transfer` so the fee bump is explicit.
-                Asset::Near => matches!(tr.state, TransferState::Pending | TransferState::Failed),
+                Asset::Near | Asset::Nep141(_) => matches!(tr.state, TransferState::Pending | TransferState::Failed),
                 Asset::Eth | Asset::Erc20(_) => tr.state == TransferState::Pending,
             })
             .map(|(i, tr)| (i, tr.asset.is_evm()))
@@ -717,6 +808,44 @@ impl Contract {
         emit("erc20_tokens_set", near_sdk::serde_json::json!({"tokens": clean}));
     }
 
+    /// Replaces the NEP-141 allowlist and registers this contract with every
+    /// newly listed token (a token only accepts transfers to registered
+    /// accounts), paid from the attached deposit. Open proposals keep their snapshotted
+    /// token transfers; escrow of a delisted token stays withdrawable only
+    /// after it is listed again (withdraw_ft reads escrow by token id).
+    #[payable]
+    pub fn set_nep141_tokens(&mut self, tokens: Vec<Nep141Token>) {
+        self.assert_admin();
+        let before = nep141_tokens();
+        if tokens.len() > MAX_NEP141_TOKENS {
+            fail(Error::UnknownToken);
+        }
+        let mut clean: Vec<Nep141Token> = vec![];
+        for t in tokens {
+            if clean.iter().any(|c| c.account_id == t.account_id) {
+                fail(Error::UnknownToken);
+            }
+            clean.push(Nep141Token { symbol: t.symbol.chars().take(12).collect(), ..t });
+        }
+        let added: Vec<&Nep141Token> = clean.iter().filter(|t| !before.iter().any(|b| b.account_id == t.account_id)).collect();
+        let needed: u128 = added.iter().map(|t| t.storage_deposit.0).sum();
+        if env::attached_deposit().as_yoctonear() < needed {
+            fail(Error::InsufficientDeposit);
+        }
+        for t in added {
+            Promise::new(t.account_id.clone())
+                .function_call(
+                    "storage_deposit",
+                    near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"account_id": env::current_account_id(), "registration_only": true})).expect("json"),
+                    NearToken::from_yoctonear(t.storage_deposit.0),
+                    FT_GAS,
+                )
+                .detach();
+        }
+        env::storage_write(NEP141_TOKENS_KEY, &near_sdk::borsh::to_vec(&clean).expect("borsh"));
+        emit("nep141_tokens_set", near_sdk::serde_json::json!({"tokens": clean}));
+    }
+
     pub fn get_erc20_tokens(&self) -> Vec<Erc20Token> {
         erc20_tokens()
     }
@@ -735,6 +864,10 @@ impl Contract {
             status: status_of(&plan, now()),
             overdue_at_ms: overdue_at(&plan),
             now_ms: now(),
+            ft_escrow: nep141_tokens()
+                .iter()
+                .map(|t| TokenBalance { token: t.account_id.to_string(), amount: U128(ft_escrow(&t.account_id, &owner)) })
+                .collect(),
             plan,
         })
     }
@@ -787,6 +920,7 @@ impl Contract {
             eth_chain_id: self.eth_chain_id,
             eth_gas_limit: self.eth_gas_limit,
             erc20_tokens: erc20_tokens(),
+            nep141_tokens: nep141_tokens(),
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
@@ -798,6 +932,12 @@ impl Contract {
 }
 
 // -------------------------------------------------------------- internals
+
+/// A proposal exists and not every transfer has landed. Owner withdrawals
+/// are frozen only then; after settlement remainders can be taken back.
+fn release_open(plan: &Plan) -> bool {
+    plan.proposal.as_ref().is_some_and(|p| !p.transfers.iter().all(|t| t.state == TransferState::Confirmed))
+}
 
 fn overdue_at(plan: &Plan) -> u64 {
     plan.last_check_in_ms + plan.policy.check_in_interval_ms + plan.policy.grace_ms
@@ -857,6 +997,54 @@ fn write_withdrawal(owner: &AccountId, tr: &Transfer) {
     }
 }
 
+fn nep141_tokens() -> Vec<Nep141Token> {
+    env::storage_read(NEP141_TOKENS_KEY).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn ft_key(token: &AccountId, owner: &AccountId) -> Vec<u8> {
+    [b"ft:".as_slice(), token.as_bytes(), b":", owner.as_bytes()].concat()
+}
+
+fn ft_escrow(token: &AccountId, owner: &AccountId) -> u128 {
+    env::storage_read(&ft_key(token, owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or(0)
+}
+
+fn set_ft_escrow(token: &AccountId, owner: &AccountId, amount: u128) {
+    let key = ft_key(token, owner);
+    if amount == 0 {
+        env::storage_remove(&key);
+    } else {
+        env::storage_write(&key, &near_sdk::borsh::to_vec(&amount).expect("borsh"));
+    }
+}
+
+fn ft_reserve_key(owner: &AccountId) -> Vec<u8> {
+    [b"ftr:".as_slice(), owner.as_bytes()].concat()
+}
+
+/// NEAR set aside at proposal time for registering heirs with tokens.
+fn ft_reserve(owner: &AccountId) -> u128 {
+    env::storage_read(&ft_reserve_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or(0)
+}
+
+fn set_ft_reserve(owner: &AccountId, amount: u128) {
+    if amount == 0 {
+        env::storage_remove(&ft_reserve_key(owner));
+    } else {
+        env::storage_write(&ft_reserve_key(owner), &near_sdk::borsh::to_vec(&amount).expect("borsh"));
+    }
+}
+
+/// NEP-141 `ft_transfer` (1 yoctoNEAR attached, as the standard requires).
+fn ft_transfer(token: &AccountId, to: &AccountId, amount: u128, memo: &str) -> Promise {
+    Promise::new(token.clone()).function_call(
+        "ft_transfer",
+        near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"receiver_id": to, "amount": U128(amount), "memo": memo})).expect("json"),
+        NearToken::from_yoctonear(1),
+        FT_GAS,
+    )
+}
+
 fn erc20_tokens() -> Vec<Erc20Token> {
     env::storage_read(ERC20_TOKENS_KEY)
         .and_then(|b| near_sdk::borsh::from_slice(&b).ok())
@@ -870,7 +1058,7 @@ fn evm_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
     match &tr.asset {
         Asset::Eth => Some((dest, tr.amount.0, vec![])),
         Asset::Erc20(token) => Some((eth::parse_address(token)?, 0, eth::erc20_transfer_data(&dest, tr.amount.0))),
-        Asset::Near => None,
+        Asset::Near | Asset::Nep141(_) => None,
     }
 }
 
@@ -954,6 +1142,12 @@ impl Contract {
             .and_then(|p| p.proposal)
             .is_some_and(|p| p.transfers.iter().all(|t| t.state == TransferState::Confirmed));
         if settled {
+            let unused = ft_reserve(owner);
+            if unused > 0 {
+                set_ft_reserve(owner, 0);
+                let plan = self.plan_mut(owner);
+                plan.escrow = U128(plan.escrow.0 + unused);
+            }
             self.open_releases.remove(owner);
             emit("release_settled", near_sdk::serde_json::json!({"owner": owner}));
         }
@@ -997,13 +1191,43 @@ impl Contract {
     }
 
     /// T1a: mark in flight, then transfer NEAR from escrow to the fixed destination.
+    /// T1a for NEAR and NEP-141. A token transfer first registers the heir with
+    /// the token (first attempt only, paid from the proposal's registration
+    /// reserve; already-registered accounts get it refunded to this contract).
     fn send_near(&mut self, owner: &AccountId, index: usize) -> Promise {
+        let deposits: Vec<Nep141Token> = nep141_tokens();
         let tr = self.transfer_mut(owner, index as u32);
         tr.state = TransferState::Sending;
         tr.failure = None;
+        let first = tr.attempts == 0;
+        let asset = tr.asset.clone();
+        if matches!(asset, Asset::Nep141(_)) {
+            tr.attempts += 1;
+        }
         let dest: AccountId = tr.destination.parse().unwrap_or_else(|_| fail(Error::BadDestination));
-        let amount = NearToken::from_yoctonear(tr.amount.0);
-        Promise::new(dest).transfer(amount).then(
+        let amount = tr.amount.0;
+        let send = match asset {
+            Asset::Nep141(token) => {
+                let fee = deposits.iter().find(|t| t.account_id == token).map(|t| t.storage_deposit.0).unwrap_or(0);
+                let reserve = ft_reserve(owner);
+                let transfer = ft_transfer(&token, &dest, amount, "Behest release");
+                if first && fee > 0 && reserve >= fee {
+                    set_ft_reserve(owner, reserve - fee);
+                    Promise::new(token)
+                        .function_call(
+                            "storage_deposit",
+                            near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"account_id": dest, "registration_only": true})).expect("json"),
+                            NearToken::from_yoctonear(fee),
+                            FT_GAS,
+                        )
+                        .then(transfer)
+                } else {
+                    transfer
+                }
+            }
+            _ => Promise::new(dest).transfer(NearToken::from_yoctonear(amount)),
+        };
+        send.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(CALLBACK_GAS)
                 .on_near_transfer(owner.clone(), index as u32),
@@ -1120,8 +1344,20 @@ impl Contract {
         }
         let id = p.id;
         let reserved: u128 = p.transfers.iter().filter(|x| x.asset == Asset::Near).map(|x| x.amount.0).sum();
-        plan.escrow = U128(plan.escrow.0 + reserved);
+        let tokens: Vec<(AccountId, u128)> = p
+            .transfers
+            .iter()
+            .filter_map(|x| match &x.asset {
+                Asset::Nep141(t) => Some((t.clone(), x.amount.0)),
+                _ => None,
+            })
+            .collect();
+        plan.escrow = U128(plan.escrow.0 + reserved + ft_reserve(owner));
         plan.proposal = None;
+        set_ft_reserve(owner, 0);
+        for (token, amount) in tokens {
+            set_ft_escrow(&token, owner, ft_escrow(&token, owner) + amount);
+        }
         self.open_releases.remove(owner);
         emit("release_cancelled", near_sdk::serde_json::json!({"owner": owner, "proposal_id": id}));
     }
