@@ -3,13 +3,13 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { parseUnits, type Hex } from "viem";
-import { AppHeader, TestnetBar } from "@/components/chrome";
+import { AppShell, NavItem, NavLabel } from "@/components/chrome";
 import { BtcOwnerCard, BtcRebase, btcProposal, useBtc } from "@/components/Bitcoin";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
 import { OptionsCard } from "@/components/ReleaseOptions";
 import { RulesCard, useRules } from "@/components/ReleaseRules";
-import { Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
+import { AssetHead, Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
 import { ethBalance, getConfig, getVaultWithdrawal, tokenBalances, vaultAddress } from "@/lib/contract";
 import { watch } from "@/lib/demo";
@@ -42,50 +42,49 @@ function PlanScreen() {
   }, [view, owner]);
 
   const heirMode = active === "heir";
+  const tabs = view ? [...roles, "public" as const] : [];
+  const label = (r: Tab) => (r === "public" ? "Public inspector" : r === "owner" ? "As owner" : r === "guardian" ? "As guardian" : "As heir");
   return (
-    <div className={heirMode ? "min-h-dvh bg-paper" : "min-h-dvh"}>
-      <TestnetBar compact={heirMode} />
-      <AppHeader />
-      <main className={heirMode ? "mx-auto flex max-w-[560px] flex-col gap-5 px-4 py-6" : "mx-auto flex max-w-[1360px] flex-col gap-5 px-4 py-8 sm:px-6"}>
-        {view === undefined && !error && <p className="text-muted">Loading plan…</p>}
-        {error && <Notice tone="error">Couldn't load the plan: {error}</Notice>}
-        {view === null && (
-          <Card className="flex flex-col gap-3">
-            <h1 className="font-display text-3xl font-bold">No plan for {owner}</h1>
-            <p className="text-muted">Check the account name, or create a plan if it's yours.</p>
-            <div className="flex gap-2">
-              <ButtonLink href="/inspect" variant="outline">
-                Search again
-              </ButtonLink>
-              <ButtonLink href="/setup">Create a plan</ButtonLink>
-            </div>
-          </Card>
-        )}
-        {view && (
+    <AppShell
+      narrow={heirMode}
+      nav={
+        tabs.length > 1 || active === "public" ? (
           <>
-            {(roles.length > 0 || active === "public") && (
-              <div role="tablist" aria-label="View as" className="flex flex-wrap gap-1.5">
-                {[...roles, "public" as const].map((r) => (
-                  <button
-                    key={r}
-                    role="tab"
-                    aria-selected={active === r}
-                    onClick={() => setTab(r)}
-                    className={`min-h-11 rounded-full px-4 text-sm font-semibold ${active === r ? "bg-ink text-paper" : "border-[1.5px] border-ink"}`}
-                  >
-                    {r === "public" ? "Public inspector" : r === "owner" ? "As owner" : r === "guardian" ? "As guardian" : "As heir"}
-                  </button>
-                ))}
-              </div>
-            )}
-            {active === "owner" && <OwnerView view={view} now={chainNow} refresh={refresh} />}
-            {active === "guardian" && <GuardianView view={view} now={chainNow} refresh={refresh} />}
-            {active === "heir" && <HeirView view={view} now={chainNow} refresh={refresh} />}
-            {active === "public" && <PublicView view={view} now={chainNow} refresh={refresh} />}
+            <NavLabel>{shortName(owner)}&apos;s plan</NavLabel>
+            {tabs.map((r) => (
+              <NavItem key={r} active={active === r} onClick={() => setTab(r)}>
+                {label(r)}
+              </NavItem>
+            ))}
           </>
-        )}
-      </main>
-    </div>
+        ) : null
+      }
+    >
+      {view === undefined && !error && <p className="text-muted">Loading plan…</p>}
+      {error && <Notice tone="error">Couldn&apos;t load the plan: {error}</Notice>}
+      {view === null && (
+        <Card className="flex flex-col gap-3">
+          <h1 className="text-3xl font-medium tracking-[-0.03em]">No plan for {owner}</h1>
+          <p className="text-muted">Check the account name, or create a plan if it&apos;s yours.</p>
+          <div className="flex gap-2">
+            <ButtonLink href="/inspect" variant="outline">
+              Search again
+            </ButtonLink>
+            <ButtonLink href="/setup" variant="primary">
+              Create a plan
+            </ButtonLink>
+          </div>
+        </Card>
+      )}
+      {view && (
+        <>
+          {active === "owner" && <OwnerView view={view} now={chainNow} refresh={refresh} />}
+          {active === "guardian" && <GuardianView view={view} now={chainNow} refresh={refresh} />}
+          {active === "heir" && <HeirView view={view} now={chainNow} refresh={refresh} />}
+          {active === "public" && <PublicView view={view} now={chainNow} refresh={refresh} />}
+        </>
+      )}
+    </AppShell>
   );
 }
 
@@ -220,7 +219,7 @@ function OwnerView({ view, now, refresh }: Props) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-2.5">
           <StatusPill status={s} />
-          <h1 className="font-display text-[clamp(40px,6vw,64px)] font-bold leading-[0.92] tracking-[-0.045em]">Your plan</h1>
+          <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">Your plan</h1>
           <span className="font-mono text-xs text-muted">
             {view.plan.owner} · version {view.plan.version}
           </span>
@@ -266,7 +265,7 @@ function OwnerView({ view, now, refresh }: Props) {
           </div>
           <Lifecycle status={s} />
           <CanAct actions={actionsFor(view, "owner")} />
-          <p className="border-t border-line pt-4 font-display text-xl leading-snug tracking-[-0.01em]">{describePlan(p)}</p>
+          <p className="border-t border-line pt-4 text-xl leading-snug tracking-[-0.01em]">{describePlan(p)}</p>
           {open && view.plan.proposal?.waiting_ends_at_ms && (
             <Notice tone="info">
               You can cancel until <strong>{new Date(view.plan.proposal.waiting_ends_at_ms).toLocaleString()}</strong> ({relative(view.plan.proposal.waiting_ends_at_ms, now)}).
@@ -278,10 +277,10 @@ function OwnerView({ view, now, refresh }: Props) {
       <section aria-label="Assets" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <Card className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <span className="rounded-full bg-mint px-2.5 py-1 font-mono text-xs font-bold">NEAR</span>
+            <AssetHead ticker="NEAR" name="NEAR" />
             <TestnetTag />
           </div>
-          <span className="font-display text-[40px] font-bold leading-none tracking-[-0.04em]">{formatNear(view.plan.escrow)}</span>
+          <span className="text-[40px] font-medium leading-none tracking-[-0.04em]">{formatNear(view.plan.escrow)}</span>
           <span className="font-mono text-xs text-muted">held by {CONTRACT_ID} for this plan</span>
           {!open && (
             <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
@@ -300,10 +299,10 @@ function OwnerView({ view, now, refresh }: Props) {
         </Card>
         <Card className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <span className="rounded-full bg-s-approved px-2.5 py-1 font-mono text-xs font-bold">ETH · Sepolia</span>
+            <AssetHead ticker="ETH" name="Ethereum · Sepolia" />
             <TestnetTag />
           </div>
-          <span className="font-display text-[40px] font-bold leading-none tracking-[-0.04em]">{vault?.balance != null ? formatEth(vault.balance) : "…"}</span>
+          <span className="text-[40px] font-medium leading-none tracking-[-0.04em]">{vault?.balance != null ? formatEth(vault.balance) : "…"}</span>
           {vault && (
             <span className="break-all font-mono text-xs text-muted">
               vault <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink>
@@ -466,7 +465,7 @@ function GuardianView({ view, now, refresh }: Props) {
     <>
       <div className="flex flex-col gap-2.5">
         <StatusPill status={s} />
-        <h1 className="font-display text-[clamp(36px,5vw,56px)] font-bold leading-[0.95] tracking-[-0.04em]">You guard {name}'s plan.</h1>
+        <h1 className="text-[clamp(36px,5vw,56px)] font-medium leading-[0.95] tracking-[-0.04em]">You guard {name}'s plan.</h1>
         <p className="max-w-[760px] text-lg leading-relaxed">{describePlan(view.plan.policy, name)}</p>
       </div>
       <Result result={result} />
@@ -621,13 +620,13 @@ function HeirView({ view, now, refresh }: Props) {
   return (
     <>
       <StatusPill status={s} plain />
-      <h1 className="font-display text-[44px] font-bold leading-[0.95] tracking-[-0.04em]">{title}</h1>
+      <h1 className="text-[44px] font-medium leading-[0.95] tracking-[-0.04em]">{title}</h1>
       <p className="text-lg leading-relaxed">{body}</p>
       <Result result={result} />
 
-      <section className="flex flex-col gap-2 rounded-card border-[1.5px] border-ink bg-card p-5">
+      <section className="flex flex-col gap-2 rounded-card border border-line bg-card p-5">
         <span className="text-sm text-muted">Set aside for you</span>
-        <span className="font-display text-[32px] font-bold leading-none tracking-[-0.03em]">{heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share of ${owner}'s plan passed to you` : "—"}</span>
+        <span className="text-[32px] font-medium leading-none tracking-[-0.03em]">{heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share of ${owner}'s plan passed to you` : "—"}</span>
         <span className="text-base leading-normal">
           {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" and ") : "Amounts are fixed when a release is proposed."}
           {heir?.eth_destination && <> · Ethereum wallet ending in <strong>{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
@@ -636,9 +635,9 @@ function HeirView({ view, now, refresh }: Props) {
       </section>
 
       {s === "Waiting" && ready && (
-        <div className="flex items-center justify-between rounded-card bg-mint px-5 py-4">
+        <div className="flex items-center justify-between rounded-tile bg-gradient-to-b from-[#A9CCFF] to-[#6E9BFF] px-5 py-4 text-[#0A0A0A]">
           <span className="font-semibold">Ready from</span>
-          <span className="font-display text-2xl font-bold">{new Date(ready).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+          <span className="text-2xl font-medium">{new Date(ready).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
         </div>
       )}
 
@@ -653,9 +652,9 @@ function HeirView({ view, now, refresh }: Props) {
           {mine.map(({ t, index }) => {
             const url = receiptUrl(t);
             return (
-              <div key={index} className="flex flex-col gap-2 rounded-card border-[1.5px] border-ink bg-card p-4">
+              <div key={index} className="flex flex-col gap-2 rounded-card border border-line bg-card p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-display text-xl font-bold">{formatAmount(t)}</span>
+                  <span className="text-xl font-medium">{formatAmount(t)}</span>
                   <TransferPill state={t.state} plain />
                 </div>
                 {t.state === "Failed" && (
@@ -695,7 +694,7 @@ function HeirView({ view, now, refresh }: Props) {
         signedIn
       />
       <OptionsCard view={view} now={now} me={me} editable={false} act={() => undefined} busy={!!busy} />
-      <details className="rounded-card border-[1.5px] border-line p-4">
+      <details className="rounded-card border border-line p-4">
         <summary className="min-h-11 cursor-pointer content-center font-semibold">Technical details</summary>
         <div className="flex flex-col gap-1 pt-2">
           <Row k="Plan" v={view.plan.owner} mono />
@@ -705,7 +704,7 @@ function HeirView({ view, now, refresh }: Props) {
           ))}
         </div>
       </details>
-      <Link href="/#how" className="flex min-h-14 items-center justify-center rounded-full border-[1.5px] border-ink font-semibold">
+      <Link href="/#features" className="flex min-h-12 items-center justify-center rounded-tile bg-subtle font-medium">
         What happens next?
       </Link>
     </>
@@ -725,13 +724,13 @@ function PublicView({ view, now, refresh }: Props) {
     <>
       <div className="flex flex-col gap-2.5">
         <StatusPill status={view.status} />
-        <h1 className="font-display text-[clamp(36px,5vw,56px)] font-bold leading-[0.95] tracking-[-0.04em]">Plan inspector</h1>
+        <h1 className="text-[clamp(36px,5vw,56px)] font-medium leading-[0.95] tracking-[-0.04em]">Plan inspector</h1>
         <span className="break-all font-mono text-sm text-muted">{view.plan.owner}</span>
       </div>
       <CanAct actions={actionsFor(view, "public")} />
       <Card className="flex flex-col gap-3">
         <Bracket>In plain words</Bracket>
-        <p className="font-display text-xl leading-snug tracking-[-0.01em]">{describePlan(p, shortName(view.plan.owner))}</p>
+        <p className="text-xl leading-snug tracking-[-0.01em]">{describePlan(p, shortName(view.plan.owner))}</p>
         <Lifecycle status={view.status} />
       </Card>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -801,9 +800,9 @@ function PublicView({ view, now, refresh }: Props) {
           <TransferTable transfers={prop.transfers} technical />
         </Card>
       )}
-      <details className="rounded-card border-[1.5px] border-line p-4">
+      <details className="rounded-card border border-line p-4">
         <summary className="min-h-11 cursor-pointer content-center font-semibold">Raw contract view (JSON)</summary>
-        <pre className="mt-2 max-h-[480px] overflow-auto rounded-tile bg-void p-4 font-mono text-xs text-paper">{JSON.stringify(view, null, 2)}</pre>
+        <pre className="mt-2 max-h-[480px] overflow-auto rounded-tile bg-void p-4 font-mono text-xs text-white">{JSON.stringify(view, null, 2)}</pre>
       </details>
       <span className="text-xs text-muted">Addresses shown in full or as {shortAddr("0x0000000000000000000000000000000000000000")} for brevity. Everything here is read directly from the chain.</span>
     </>

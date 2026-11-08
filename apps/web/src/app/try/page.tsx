@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AppHeader, TestnetBar } from "@/components/chrome";
+import { AppShell } from "@/components/chrome";
 import { Bracket, Button, ButtonLink, Card, ExtLink, Notice, StatusPill } from "@/components/ui";
 import { ETH_EXPLORER } from "@/lib/config";
 import { vaultAddress } from "@/lib/contract";
@@ -20,20 +20,16 @@ export default function TryPage() {
     setLoaded(true);
   }, []);
   return (
-    <div className="min-h-dvh">
-      <TestnetBar />
-      <AppHeader />
-      <main className="mx-auto flex max-w-[1100px] flex-col gap-6 px-4 py-8 sm:px-6">
+    <AppShell>
         <div className="flex flex-col gap-3">
           <Bracket>Try as…</Bracket>
-          <h1 className="font-display text-[clamp(40px,6vw,72px)] font-bold leading-[0.92] tracking-[-0.045em]">Play every role.</h1>
+          <h1 className="text-[clamp(40px,6vw,72px)] font-medium leading-[0.92] tracking-[-0.045em]">Play every role.</h1>
           <p className="max-w-[720px] text-lg leading-relaxed">
             We'll create six real testnet accounts for you: Kemi the owner, three guardians and two heirs. Their keys stay in this browser. Timers are shortened so a whole release takes about five minutes.
           </p>
         </div>
         {loaded && (sandbox ? <SandboxView sandbox={sandbox} onReset={() => setSandbox(null)} /> : <CreateSandbox onCreated={setSandbox} />)}
-      </main>
-    </div>
+      </AppShell>
   );
 }
 
@@ -139,7 +135,7 @@ function SandboxView({ sandbox, onReset }: { sandbox: Sandbox; onReset: () => vo
           <Bracket>Kemi's plan</Bracket>
           {s && <StatusPill status={s} />}
         </div>
-        {hint && <p className="font-display text-xl leading-snug">{hint.text}</p>}
+        {hint && <p className="text-xl leading-snug">{hint.text}</p>}
         <Link href={`/plan/${owner}?view=inspect`} className="self-start text-sm underline underline-offset-4">
           Open the public inspector
         </Link>
@@ -151,8 +147,8 @@ function SandboxView({ sandbox, onReset }: { sandbox: Sandbox; onReset: () => vo
           const current = session?.accountId === p.accountId;
           const suggested = hint?.who.includes(r);
           return (
-            <div key={r} className={`flex flex-col gap-2 rounded-card border-[1.5px] p-4 ${suggested ? "border-ink bg-mint" : "border-ink bg-card"}`}>
-              <span className="font-display text-xl font-bold">{p.label}</span>
+            <div key={r} className={`flex flex-col gap-2 rounded-card border p-4 ${suggested ? "border-signal bg-s-approved" : "border-line bg-card"}`}>
+              <span className="text-xl font-medium">{p.label}</span>
               <span className="text-sm">{p.blurb}</span>
               <span className="truncate font-mono text-[11px] text-muted" title={p.accountId}>
                 {p.accountId}

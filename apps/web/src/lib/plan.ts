@@ -94,24 +94,31 @@ export function actionsFor(view: PlanView, role: Role | "public", account?: stri
 
 export const LIFECYCLE: PlanStatus[] = ["Active", "Overdue", "Proposed", "Waiting", "Eligible", "Executing", "Settled"];
 
-export const STATUS_STYLE: Record<PlanStatus, { color: string; sym: string; label: string }> = {
-  Active: { color: "var(--color-s-active)", sym: "●", label: "Active" },
-  Overdue: { color: "var(--color-s-overdue)", sym: "◷", label: "Owner unreachable" },
-  Proposed: { color: "var(--color-s-proposed)", sym: "◆", label: "Release proposed" },
-  Waiting: { color: "var(--color-s-waiting)", sym: "⧗", label: "Waiting period" },
-  Eligible: { color: "var(--color-s-eligible)", sym: "◎", label: "Ready to receive" },
-  Executing: { color: "var(--color-s-signing)", sym: "✎", label: "Sending" },
-  Settled: { color: "var(--color-s-active)", sym: "✓", label: "Complete" },
+/** Chip look per state: tinted tone + a dot shape that tells states apart without colour. */
+export interface ChipStyle {
+  tone: "active" | "overdue" | "proposed" | "approved" | "waiting" | "eligible" | "signing" | "broadcast" | "cancelled" | "failed" | "partial";
+  shape: "circle" | "square" | "diamond";
+  label: string;
+}
+
+export const STATUS_STYLE: Record<PlanStatus, ChipStyle> = {
+  Active: { tone: "active", shape: "circle", label: "Active" },
+  Overdue: { tone: "overdue", shape: "square", label: "Owner unreachable" },
+  Proposed: { tone: "proposed", shape: "diamond", label: "Release proposed" },
+  Waiting: { tone: "waiting", shape: "square", label: "Waiting period" },
+  Eligible: { tone: "eligible", shape: "diamond", label: "Ready to receive" },
+  Executing: { tone: "signing", shape: "circle", label: "Sending" },
+  Settled: { tone: "active", shape: "diamond", label: "Complete" },
 };
 
-export const TRANSFER_STYLE: Record<TransferState, { color: string; sym: string; label: string }> = {
-  Pending: { color: "var(--color-s-cancelled)", sym: "○", label: "Not started" },
-  Sending: { color: "var(--color-s-signing)", sym: "✎", label: "Sending" },
-  Signing: { color: "var(--color-s-signing)", sym: "✎", label: "Signing" },
-  Signed: { color: "var(--color-s-approved)", sym: "▲", label: "Signed" },
-  Broadcast: { color: "var(--color-s-broadcast)", sym: "⇢", label: "On its way" },
-  Confirmed: { color: "var(--color-s-active)", sym: "✓", label: "Received" },
-  Failed: { color: "var(--color-s-failed)", sym: "!", label: "Needs a retry" },
+export const TRANSFER_STYLE: Record<TransferState, ChipStyle> = {
+  Pending: { tone: "cancelled", shape: "square", label: "Not started" },
+  Sending: { tone: "signing", shape: "circle", label: "Sending" },
+  Signing: { tone: "signing", shape: "circle", label: "Signing" },
+  Signed: { tone: "approved", shape: "circle", label: "Signed" },
+  Broadcast: { tone: "broadcast", shape: "circle", label: "On its way" },
+  Confirmed: { tone: "active", shape: "diamond", label: "Received" },
+  Failed: { tone: "failed", shape: "diamond", label: "Needs a retry" },
 };
 
 /** Why a transfer failed, in words an heir can act on. Funds never leave the vault on failure. */

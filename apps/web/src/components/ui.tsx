@@ -1,20 +1,27 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
-import { STATUS_STYLE, TRANSFER_STYLE, type Actions } from "@/lib/plan";
+import { STATUS_STYLE, TRANSFER_STYLE, type Actions, type ChipStyle } from "@/lib/plan";
 import type { PlanStatus, TransferState } from "@/lib/types";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
-type Variant = "ink" | "mint" | "outline" | "outline-light" | "ghost" | "danger";
+// Buttons: 48px, 12px corners. "primary" is the blue call to action, "ink"
+// the dark default, "outline" a bordered neutral, "subtle" the grey
+// secondary, "danger" the soft red, "outline-light" for dark surfaces.
+// ("mint" is kept as an alias of primary for older call sites.)
+type Variant = "primary" | "ink" | "mint" | "outline" | "outline-light" | "subtle" | "ghost" | "danger";
 const VARIANTS: Record<Variant, string> = {
-  ink: "bg-ink text-paper hover:bg-panel",
-  mint: "bg-mint text-ink hover:brightness-95",
-  outline: "border-[1.5px] border-ink text-ink hover:bg-ink hover:text-paper",
-  "outline-light": "border-[1.5px] border-line-dark text-paper hover:border-mint",
+  primary: "bg-primary text-white hover:bg-[#1D4ED8]",
+  mint: "bg-primary text-white hover:bg-[#1D4ED8]",
+  ink: "bg-ink text-ink-contrast hover:opacity-90",
+  outline: "border border-line-strong bg-card text-ink hover:bg-subtle",
+  "outline-light": "border border-white/20 text-white hover:bg-white/10",
+  subtle: "bg-subtle text-ink hover:bg-line",
   ghost: "text-ink underline-offset-4 hover:underline",
-  danger: "bg-s-failed text-ink hover:brightness-95",
+  danger: "bg-error-bg text-error hover:opacity-90",
 };
-const base = "inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-6 font-semibold transition-[background,color,filter,border] duration-[120ms] ease-ledger disabled:cursor-not-allowed disabled:opacity-50";
+const base =
+  "inline-flex min-h-12 items-center justify-center gap-2 rounded-tile px-5 text-[15px] font-medium tracking-[-0.01em] transition-[background,color,opacity,border] duration-[120ms] ease-ledger disabled:cursor-not-allowed disabled:opacity-50";
 
 export function Button({ variant = "ink", className, ...p }: ComponentProps<"button"> & { variant?: Variant }) {
   return <button className={cx(base, VARIANTS[variant], className)} {...p} />;
@@ -24,49 +31,53 @@ export function ButtonLink({ variant = "ink", className, ...p }: ComponentProps<
   return <Link className={cx(base, VARIANTS[variant], className)} {...p} />;
 }
 
+/** Outlined card (24px). `dark` is the fixed dark surface used for the pulse. */
 export function Card({ dark, className, ...p }: ComponentProps<"section"> & { dark?: boolean }) {
-  return <section className={cx("rounded-card p-5 sm:p-6", dark ? "void bg-void text-paper" : "border-[1.5px] border-ink bg-card", className)} {...p} />;
+  return <section className={cx("rounded-card p-5 sm:p-6", dark ? "bg-void text-white" : "border border-line bg-card", className)} {...p} />;
 }
 
-/** "[ Label ]" section marker from the design system. */
+/** Section label ("Balances", "Lifecycle"). */
 export function Bracket({ children, dark }: { children: ReactNode; dark?: boolean }) {
-  return <span className={cx("font-mono text-xs font-bold uppercase tracking-wide", dark ? "text-muted-dark" : "text-ink")}>[ {children} ]</span>;
+  return <span className={cx("text-sm font-semibold", dark ? "text-muted-dark" : "text-ink")}>{children}</span>;
 }
 
 export function TestnetTag() {
-  return <span className="rounded-tag bg-ink px-1.5 py-0.5 font-mono text-[10.5px] font-bold text-testnet">TESTNET</span>;
+  return <span className="inline-flex h-6 items-center rounded-tag bg-s-approved px-2 text-xs font-semibold text-[var(--s-approved-fg)]">Testnet</span>;
 }
 
-export function StatusPill({ status, plain }: { status: PlanStatus; plain?: boolean }) {
+/** Tinted 6px chip with a dot whose shape differs per state (readable without colour). */
+export function Chip({ style, children, className }: { style: ChipStyle; children: ReactNode; className?: string }) {
+  return (
+    <span
+      className={cx("inline-flex h-7 shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-tag px-2.5 text-sm font-semibold", className)}
+      style={{ background: `var(--s-${style.tone}-bg)`, color: `var(--s-${style.tone}-fg)` }}
+    >
+      <span aria-hidden="true" className="h-2 w-2 shrink-0 bg-current" style={{ borderRadius: style.shape === "circle" ? "50%" : style.shape === "square" ? "2px" : "1px", transform: style.shape === "diamond" ? "rotate(45deg)" : undefined }} />
+      {children}
+    </span>
+  );
+}
+
+export function StatusPill({ status }: { status: PlanStatus; plain?: boolean }) {
   const s = STATUS_STYLE[status];
-  return (
-    <span className={cx("inline-flex items-center gap-1.5 self-start rounded-full px-2.5 py-1 text-xs font-bold text-ink", !plain && "font-mono uppercase")} style={{ background: s.color }}>
-      <span aria-hidden="true">{s.sym}</span>
-      {s.label}
-    </span>
-  );
+  return <Chip style={s}>{s.label}</Chip>;
 }
 
-export function TransferPill({ state, plain }: { state: TransferState; plain?: boolean }) {
+export function TransferPill({ state }: { state: TransferState; plain?: boolean }) {
   const s = TRANSFER_STYLE[state];
-  return (
-    <span className={cx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-ink", !plain && "font-mono uppercase")} style={{ background: s.color }}>
-      <span aria-hidden="true">{s.sym}</span>
-      {s.label}
-    </span>
-  );
+  return <Chip style={s}>{s.label}</Chip>;
 }
 
-/** "Can act now / Can't" rows on status cards. */
+/** "You can / You can't" rows on status cards. */
 export function CanAct({ actions, plain }: { actions: Actions; plain?: boolean }) {
   return (
-    <div className="grid gap-2.5 sm:grid-cols-2">
-      <div className="flex flex-col gap-1 rounded-2xl bg-mint p-3.5 text-ink">
-        <span className={cx("text-[11px] font-bold", !plain && "font-mono")}>{plain ? "You can" : "CAN ACT NOW"}</span>
-        <span className="text-sm">{actions.can.length ? actions.can.join(" · ") : "Nothing right now."}</span>
+    <div className="grid gap-2 sm:grid-cols-2">
+      <div className="flex flex-col gap-1 rounded-row bg-ok-bg p-4 text-ok">
+        <span className="text-[13px] font-semibold">{plain ? "You can" : "Can act now"}</span>
+        <span className="text-sm text-ink">{actions.can.length ? actions.can.join(" · ") : "Nothing right now."}</span>
       </div>
-      <div className="flex flex-col gap-1 rounded-2xl bg-ink p-3.5 text-paper">
-        <span className={cx("text-[11px] font-bold text-[#FF8A80]", !plain && "font-mono")}>{plain ? "You can't" : "CAN'T"}</span>
+      <div className="flex flex-col gap-1 rounded-row bg-subtle p-4">
+        <span className="text-[13px] font-semibold text-muted">{plain ? "You can't" : "Can't"}</span>
         <span className="text-sm">{actions.cant.length ? actions.cant.join(" · ") : "Nothing is blocked."}</span>
       </div>
     </div>
@@ -78,18 +89,19 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
     <label className="flex flex-col gap-1.5">
       <span className="text-sm font-semibold">{label}</span>
       {children}
-      {hint && !error && <span className="text-xs text-muted">{hint}</span>}
-      {error && <span className="text-xs font-semibold text-[#B3261E]">{error}</span>}
+      {hint && !error && <span className="text-[13px] text-muted">{hint}</span>}
+      {error && <span className="text-[13px] font-semibold text-error">{error}</span>}
     </label>
   );
 }
 
-export const inputClass = "min-h-12 w-full rounded-tile border-[1.5px] border-ink bg-card px-3.5 text-base placeholder:text-muted focus:border-mint focus:outline-none";
+export const inputClass =
+  "min-h-12 w-full rounded-tile border border-line-strong bg-card px-3.5 text-base text-ink placeholder:text-muted focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal";
 
 export function Notice({ tone = "info", children }: { tone?: "info" | "ok" | "error"; children: ReactNode }) {
-  const t = { info: "border-ink bg-card", ok: "border-mint-ink bg-[#E6FBF3]", error: "border-[#B3261E] bg-[#FFF1EF]" }[tone];
+  const t = { info: "bg-subtle text-ink", ok: "bg-ok-bg text-ok", error: "bg-error-bg text-error" }[tone];
   return (
-    <div role={tone === "error" ? "alert" : "status"} className={cx("rounded-tile border-[1.5px] px-4 py-3 text-sm", t)}>
+    <div role={tone === "error" ? "alert" : "status"} className={cx("rounded-row px-4 py-3 text-sm", t)}>
       {children}
     </div>
   );
@@ -97,7 +109,7 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "ok" | "er
 
 export function ExtLink({ href, children, className }: { href: string; children: ReactNode; className?: string }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer" className={cx("underline decoration-1 underline-offset-4 hover:text-mint-ink", className)}>
+    <a href={href} target="_blank" rel="noreferrer" className={cx("text-signal-text underline decoration-1 underline-offset-4 hover:opacity-80", className)}>
       {children}
       <span className="sr-only"> (opens in a new tab)</span>
     </a>
@@ -105,3 +117,17 @@ export function ExtLink({ href, children, className }: { href: string; children:
 }
 
 export { cx };
+
+const ASSET_MARK: Record<string, string> = { NEAR: "#171717", ETH: "#6366F1", BTC: "#FB7A1E" };
+
+/** Asset heading: coloured ticker disc + name (design "Balances" rows). */
+export function AssetHead({ ticker, name }: { ticker: "NEAR" | "ETH" | "BTC"; name: string }) {
+  return (
+    <span className="flex items-center gap-3">
+      <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white ring-1 ring-white/10" style={{ background: ASSET_MARK[ticker] }}>
+        {ticker}
+      </span>
+      <span className="text-[15px]">{name}</span>
+    </span>
+  );
+}

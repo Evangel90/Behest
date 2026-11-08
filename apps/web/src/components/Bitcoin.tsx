@@ -9,7 +9,7 @@ import { useAction } from "@/lib/hooks";
 import { btcSplit, formatBtc, isBtc, looksLikeBtcAddress, shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import type { BtcDestination, BtcRelease, BtcUtxo, BtcVault, PlanView, ReleaseRules } from "@/lib/types";
-import { Bracket, Button, Card, ExtLink, Field, Notice, TestnetTag, inputClass } from "./ui";
+import { AssetHead, Bracket, Button, Card, ExtLink, Field, Notice, TestnetTag, inputClass } from "./ui";
 
 export interface BtcState {
   vault: BtcVault | null | undefined;
@@ -68,7 +68,7 @@ export function BtcOwnerCard({ view, btc, locked }: { view: PlanView; btc: BtcSt
   return (
     <Card className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="rounded-full bg-s-proposed px-2.5 py-1 font-mono text-xs font-bold">BTC · testnet4</span>
+        <AssetHead ticker="BTC" name="Bitcoin · testnet4" />
         <TestnetTag />
       </div>
       {btc.vault === undefined && <span className="text-muted">Loading…</span>}
@@ -82,7 +82,7 @@ export function BtcOwnerCard({ view, btc, locked }: { view: PlanView; btc: BtcSt
       )}
       {btc.vault && (
         <>
-          <span className="font-display text-[40px] font-bold leading-none tracking-[-0.04em]">{balance != null ? formatBtc(balance) : "…"}</span>
+          <span className="text-[40px] font-medium leading-none tracking-[-0.04em]">{balance != null ? formatBtc(balance) : "…"}</span>
           <span className="break-all font-mono text-xs text-muted">
             vault <ExtLink href={`${BTC_EXPLORER}/address/${btc.vault.address}`}>{btc.vault.address}</ExtLink>
           </span>

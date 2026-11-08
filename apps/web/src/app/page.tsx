@@ -1,327 +1,298 @@
 import Link from "next/link";
-import { AccountButton, Logo, TestnetBar } from "@/components/chrome";
+import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
+import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
 import { ButtonLink } from "@/components/ui";
 
-const STEPS = [
-  { n: "01", c: "var(--color-s-active)", t: "Set your rules", b: "Heirs, shares and fixed addresses per chain; guardians and how many must agree; a check-in schedule and a waiting period.", s: "Active" },
-  { n: "02", c: "var(--color-s-active)", t: "Check in", b: "One tap every few months. Each check-in adds a ring. Nothing else changes while you're around.", s: "Active" },
-  { n: "03", c: "var(--color-s-overdue)", t: "Owner unreachable", b: "A missed check-in plus a grace period. Nothing moves yet.", s: "Overdue" },
-  { n: "04", c: "var(--color-s-waiting)", t: "Approve, then wait", b: "Guardians approve one exact proposal. A waiting period follows; you can cancel until it ends.", s: "Waiting" },
-  { n: "05", c: "var(--color-s-eligible)", t: "Heirs receive", b: "Each share goes to its fixed address. Network fees come from the plan; heirs pay no gas. Receipts on every chain.", s: "Eligible" },
+// Hairline-framed 1280px column used by every section.
+const frame = "mx-auto max-w-[1280px] border-x border-hairline";
+const frameDark = "mx-auto max-w-[1280px] border-x border-white/[0.11]";
+const air = "pt-[clamp(96px,10vw,128px)]";
+const h2 = "text-[clamp(30px,3.4vw,40px)] font-medium leading-none tracking-[-0.025em]";
+const lede = "text-lg leading-7";
+
+const SAFETY = [
+  { t: "You keep control", b: "Funds sit in plan escrow and in vault addresses only your plan's contract can sign for. Behest never holds keys.", icon: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4" },
+  { t: "Rules are public", b: "Anyone can read a plan's rules in plain words and in code, before and after a release.", icon: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
+  { t: "Failures are visible", b: "If a transfer fails you see why, that the funds are safe, and who can retry. A retry never pays twice.", icon: "M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" },
+  { t: "Not a will", b: "Behest follows your instructions. Pair it with legal estate planning that refers to it.", icon: "M7 3h7l4 4v14H7zM14 3v4h4M10 13h5M10 17h5" },
+];
+
+const TECH = [
+  { t: "NEAR Protocol", c: "#2F6BFF", b: "Where your plan's rules live and are enforced: check-ins, guardians, waiting periods, every amount." },
+  { t: "Chain Signatures", c: "#FB7A1E", b: "Lets the plan control its own Ethereum and Bitcoin addresses. The contract builds each transaction, so the MPC network can only sign what your plan allows." },
+  { t: "Sponsored gas", c: "#3B82F6", b: "Meta-transactions so check-ins, approvals and claims need no NEAR. Network fees on other chains come from the plan." },
+  { t: "Replaceable executors", c: "#A78BFA", b: "Signed transactions are public. Anyone can broadcast them; the contract records what landed." },
+];
+
+const STATS = [
+  { v: "3", l: "chains on testnet" },
+  { v: "0", l: "custodians" },
+  { v: "1 tap", l: "to check in" },
+  { v: "100%", l: "of rules on-chain" },
 ];
 
 const COLS = ["Owner", "Guardians", "Heirs", "Executors", "Gas relayer"];
-const Y = { sym: "✓", cls: "bg-mint text-ink", sr: "can" };
-const N = { sym: "✕", cls: "border-[1.5px] border-line text-muted", sr: "cannot" };
-const P = { sym: "◐", cls: "bg-testnet text-ink", sr: "partly" };
-const M = { y: Y, n: N, p: P } as const;
 const ROWS: [string, string][] = [
   ["Set heirs, amounts, destinations", "ynnnn"],
-  ["Check in / cancel before the cutoff", "ynnnn"],
-  ["Propose a release", "nynnn"],
-  ["Approve a specific proposal", "nynnn"],
-  ["Receive after eligibility", "nnynn"],
-  ["Broadcast a signed transfer", "nnpyn"],
+  ["Check in, or cancel before the cutoff", "ynnnn"],
+  ["Propose and approve a release", "nynnn"],
+  ["Receive after the waiting period", "nnynn"],
+  ["Broadcast a signed transfer", "nnyyn"],
   ["Pay NEAR gas for others", "nnnny"],
-];
-
-const SAFETY = [
-  { t: "Non-custodial.", b: "Funds sit in escrow and in addresses your plan's contract controls. Behest never holds keys." },
-  { t: "Cancel until the cutoff.", b: "Until the waiting period ends, one action from you stops any release." },
-  { t: "No redirects.", b: "Guardians, executors and the gas relayer can't change recipients, amounts or addresses." },
-  { t: "Rules are public.", b: "Every plan's rules are on-chain and readable, in plain words and in code." },
-  { t: "Failures are visible.", b: "If a transfer fails you see why, that the funds are safe, and who can retry." },
+  ["Change where funds go", "nnnnn"],
 ];
 
 const LIMITS = [
   { t: "Not a will", b: "Pair it with legal estate planning that refers to it." },
   { t: "Doesn't determine death", b: "It only knows check-ins stopped. Guardians decide whether to propose." },
-  { t: "Public by default", b: "Rules and heir addresses are on-chain. A private mode is planned for Stage 3." },
-  { t: "Testnet today", b: "Unaudited. NEAR and Sepolia ETH only; Bitcoin and tokens come later. Owners can't withdraw ETH from the vault yet." },
-];
-
-const ROAD = [
-  { n: 1, tag: "NOW", t: "Testnet MVP", b: "Plans, check-ins, quorum, waiting period, heir claims, sponsored gas." },
-  { n: 2, tag: "NEXT", t: "Richer rules", b: "Delay signers, claim modes, versions, recovery packet, ETH withdrawals." },
-  { n: 3, tag: "PLANNED", t: "Guided & private", b: "Presets, cooling-off, guardian rotation, private mode." },
-  { n: 4, tag: "PLANNED", t: "Mainnet", b: "Audits, value caps, allowlists, pause transparency." },
-  { n: 5, tag: "VISION", t: "Full vision", b: "Policy builder, attestors, Bitcoin and token adapters." },
+  { t: "Public by default", b: "Rules and heir addresses are on-chain. A private mode is planned." },
+  { t: "Testnet today", b: "Unaudited. NEAR, Sepolia ETH and WETH, wNEAR and Bitcoin testnet4 only." },
 ];
 
 const FAQ = [
+  { q: "What is Behest?", a: "A non-custodial way to pass on crypto. You set heirs, guardians and timing; a public contract on NEAR carries it out across NEAR, Ethereum and Bitcoin." },
   { q: "What if I forget to check in?", a: "Nothing can start until you're overdue and the grace period has passed. Even after guardians propose, you can cancel or check in until the waiting period ends." },
   { q: "Could guardians team up and take the funds?", a: "No. They can only approve releasing the plan exactly as written, to your heirs' fixed addresses." },
-  { q: "Do heirs need crypto experience?", a: "They need the wallet address you recorded. Heir pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas." },
-  { q: "What if Behest disappears?", a: "Rules live on-chain and executors are permissionless: every signed transfer is public and anyone can broadcast it." },
+  { q: "Do heirs need crypto experience?", a: "They need the wallet address you recorded. Heir pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas. In automatic mode they don't even need to claim." },
+  { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it." },
   { q: "What does it cost?", a: "On testnet nothing real. Network fees come out of the plan's own balance and are shown before anything is signed." },
 ];
 
 export default function Landing() {
   return (
-    <div className="bg-paper">
+    <div className="bg-paper text-ink">
       <TestnetBar />
-      <header className="mx-auto flex max-w-[1360px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <Logo />
-        <nav aria-label="Sections" className="hidden gap-1 text-[15px] font-medium md:flex">
-          {[["#how", "How it works"], ["#roles", "Roles"], ["#safety", "Safety"], ["#roadmap", "Roadmap"], ["/inspect", "Inspect"]].map(([h, l]) => (
-            <a key={h} href={h} className="rounded-full px-3.5 py-3 hover:bg-line-soft">
-              {l}
-            </a>
-          ))}
-        </nav>
-        <AccountButton />
-      </header>
+      <SiteHeader links={[["#features", "How it works"], ["#safety", "Safety"], ["#faq", "FAQ"], ["/inspect", "Inspect"]]} />
 
       <main>
-        <section className="mx-auto flex max-w-[1360px] flex-col gap-9 px-4 pb-[clamp(48px,8vw,104px)] pt-[clamp(40px,8vw,96px)] sm:px-6">
-          <span className="font-mono text-[13px] font-bold uppercase tracking-[0.06em] text-muted">[ Non-custodial inheritance · built on NEAR ]</span>
-          <h1 className="font-display text-[clamp(56px,12vw,184px)] font-bold leading-[0.88] tracking-[-0.055em]">
-            Your <span className="inline-block rounded-full bg-mint px-[0.18em]">behest</span>,<br />
-            honoured by code.
-          </h1>
-          <div className="flex flex-wrap items-end justify-between gap-8 border-t border-ink pt-7">
-            <p className="max-w-[620px] text-[clamp(18px,1.8vw,22px)] leading-[1.45]">
-              Decide who receives your NEAR and Ethereum. If you stop checking in, guardians can start a release that only pays the addresses you chose — and you can cancel until the last moment.
-            </p>
-            <div className="flex flex-wrap gap-2.5">
-              <ButtonLink href="/try" className="min-h-[60px] px-8 text-[17px]">
-                Try it on testnet
-              </ButtonLink>
-              <ButtonLink href="#how" variant="outline" className="min-h-[60px] px-8 text-[17px]">
-                See how it works
-              </ButtonLink>
-            </div>
-          </div>
-        </section>
-
-        <div className="overflow-hidden whitespace-nowrap bg-ink py-4 text-mint" aria-hidden="true">
-          <div className="marquee inline-block text-[15px] font-bold uppercase tracking-[0.06em]">
-            {Array.from({ length: 2 }, (_, k) => (
-              <span key={k}>
-                {["Non-custodial", "Cancel until cutoff", "No redirects", "Heirs need no gas", "Rules on-chain", "NEAR · ETH"].map((t) => (
-                  <span key={t} className="px-6">
-                    {t} <span className="pl-6">✱</span>
-                  </span>
-                ))}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <section className="mx-auto flex max-w-[1360px] flex-wrap gap-12 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-          <div className="flex min-w-0 flex-[1_1_380px] flex-col gap-4">
-            <span className="font-mono text-[13px] font-bold uppercase">[ 01 ] The problem</span>
-            <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">Keys die with their holders.</h2>
-          </div>
-          <div className="grid min-w-0 flex-[1.4_1_520px] grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
-            {[
-              ["CUSTODIAL", "Someone else holds the keys", "Counterparty risk, and trust in a company outliving you.", "bg-card"],
-              ["FRAGILE", "A seed phrase in a drawer", "Lost, found too early, or never understood by family.", "bg-card"],
-              ["BEHEST", "Rules, not middlemen", "You keep control. A public contract enforces who, how much, where and when.", "bg-mint"],
-            ].map(([k, t, b, bg]) => (
-              <div key={k} className={`flex flex-col gap-2.5 rounded-card border-[1.5px] border-ink p-6 ${bg}`}>
-                <span className="font-mono text-xs font-bold">{k}</span>
-                <span className="font-display text-2xl font-bold leading-tight tracking-[-0.02em]">{t}</span>
-                <span className="text-[15px] leading-normal">{b}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="how" className="void bg-void text-paper">
-          <div className="mx-auto flex max-w-[1360px] flex-col gap-10 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">Five steps. One promise.</h2>
-              <span className="font-mono text-[13px] font-bold uppercase text-muted-dark">[ 02 ] How it works</span>
-            </div>
-            <ol className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
-              {STEPS.map((s) => (
-                <li key={s.n} className="flex flex-col gap-3 rounded-card border border-line-dark bg-panel p-5">
-                  <span className="font-mono text-xs font-bold" style={{ color: s.c }}>
-                    [ {s.n} ]
-                  </span>
-                  <span className="font-display text-2xl font-bold tracking-[-0.02em]">{s.t}</span>
-                  <span className="flex-1 text-[15px] leading-normal text-[#C9C8C1]">{s.b}</span>
-                  <span className="self-start rounded-full px-2.5 py-1 font-mono text-[11px] font-bold uppercase text-ink" style={{ background: s.c }}>
-                    {s.s}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </section>
-
-        <section id="roles" className="mx-auto flex max-w-[1360px] flex-col gap-8 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">Everyone has a job. Nobody can redirect.</h2>
-            <span className="font-mono text-[13px] font-bold uppercase">[ 03 ] Roles &amp; boundaries</span>
-          </div>
-          <div className="overflow-x-auto rounded-card border-[1.5px] border-ink bg-card">
-            <table className="w-full min-w-[720px] border-collapse text-left text-[15px]">
-              <thead>
-                <tr className="border-b-[1.5px] border-ink">
-                  <th scope="col" className="p-4 font-mono text-xs font-bold uppercase">Action</th>
-                  {COLS.map((c) => (
-                    <th key={c} scope="col" className="p-4 text-center font-mono text-xs font-bold uppercase">
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {ROWS.map(([a, cells]) => (
-                  <tr key={a} className="border-b border-line">
-                    <th scope="row" className="p-4 font-normal">{a}</th>
-                    {cells.split("").map((c, i) => {
-                      const m = M[c as keyof typeof M];
-                      return (
-                        <td key={i} className="p-3 text-center">
-                          <span className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${m.cls}`} aria-label={`${COLS[i]} ${m.sr}`}>
-                            {m.sym}
-                          </span>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-                <tr className="bg-[#FFF1EF]">
-                  <th scope="row" className="p-4 font-bold">Change where funds go</th>
-                  {COLS.map((c) => (
-                    <td key={c} className="p-3 text-center">
-                      <span className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${N.cls}`} aria-label={`${c} cannot`}>
-                        ✕
-                      </span>
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p className="text-sm text-muted">Only the owner sets destinations, and only while no release is open. ◐ Heirs can broadcast their own signed transfer; so can anyone.</p>
-        </section>
-
-        <section id="safety" className="border-y-[1.5px] border-ink bg-mint">
-          <div className="mx-auto flex max-w-[1360px] flex-col gap-8 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-            <span className="font-mono text-[13px] font-bold uppercase">[ 04 ] Safety principles</span>
-            <ul className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-x-8 gap-y-6">
-              {SAFETY.map((s) => (
-                <li key={s.t} className="flex flex-col gap-2 border-t-[1.5px] border-ink pt-4">
-                  <span className="font-display text-[28px] font-bold leading-none tracking-[-0.03em]">{s.t}</span>
-                  <span className="text-[15px] leading-normal">{s.b}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        <section className="void bg-void text-paper">
-          <div className="mx-auto flex max-w-[1360px] flex-wrap gap-12 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-            <div className="flex min-w-0 flex-[1_1_420px] flex-col gap-5">
-              <span className="font-mono text-[13px] font-bold uppercase text-muted-dark">[ 05 ] Chain Signatures</span>
-              <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">One account. Every chain.</h2>
-              <p className="max-w-[560px] text-lg leading-relaxed text-[#C9C8C1]">
-                Your plan lives on NEAR and controls a derived Ethereum address through NEAR Chain Signatures. No bridges, no wrapped tokens. The contract builds each transfer itself, so the MPC network can only ever sign the exact payment your plan allows.
+        <section>
+          <div className={frame}>
+            <div className="flex flex-col items-start gap-6 px-4 pb-16 pt-[clamp(64px,8vw,96px)] sm:px-8">
+              <h1 className="max-w-[900px] text-[clamp(36px,5vw,60px)] font-medium leading-none tracking-[-0.025em]">
+                Everything you own,
+                <br />
+                passed on exactly as you wish.
+              </h1>
+              <p className={`max-w-[640px] text-muted ${lede}`}>
+                Bitcoin, Ethereum and NEAR in one plan. Choose who receives what, check in now and then, and stay in control until the very last moment.
               </p>
+              <div className="flex flex-wrap items-center gap-5">
+                <ButtonLink href="/setup" variant="ink">
+                  Create a plan
+                </ButtonLink>
+                <ButtonLink href="/try" variant="subtle">
+                  Try it as a guardian or heir
+                </ButtonLink>
+              </div>
+              <span className="text-base text-muted">No custody. No middlemen. Ready in minutes on testnet.</span>
             </div>
-            <div className="flex min-w-0 flex-[1_1_420px] flex-col justify-center gap-3 rounded-card border border-line-dark bg-panel p-6 font-mono text-sm">
-              <span className="text-muted-dark">kemi.testnet · plan contract</span>
-              {[
-                ["NEAR", "var(--color-s-active)", "escrow in behest-ekkr6.testnet"],
-                ["ETH", "var(--color-s-approved)", "vault 0x… derived from behest/v1/kemi.testnet/eth"],
-                ["BTC", "var(--color-s-cancelled)", "planned (Stage 5)"],
-              ].map(([k, c, a]) => (
-                <div key={k} className="flex flex-wrap items-center gap-3 border-t border-line-dark pt-3">
-                  <span className="rounded-full px-2.5 py-1 text-xs font-bold text-ink" style={{ background: c }}>
-                    {k}
+            <figure className="flex flex-col px-2 pb-24 sm:px-8">
+              <figcaption className="flex items-center justify-center gap-2 px-4 pb-6 pt-2 text-base text-muted">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-signal/25" aria-hidden="true">
+                  <span className="h-2 w-2 rounded-full bg-signal" />
+                </span>
+                Example plan. Explore the tabs, then check in.
+              </figcaption>
+              <LandingDemo />
+            </figure>
+          </div>
+        </section>
+
+        <section id="features" className="border-t border-hairline">
+          <div className={`${frame} ${air}`}>
+            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+              <h2 className={`${h2} max-w-[820px]`}>Your crypto deserves better than a seed phrase in a drawer.</h2>
+              <p className={`max-w-[760px] text-muted ${lede}`}>Set it up once. Behest quietly keeps watch, and only acts the way you told it to.</p>
+            </header>
+            <FeatureExplorer />
+          </div>
+        </section>
+
+        <section id="safety" className="bg-frame text-white">
+          <div className={`${frameDark} ${air}`}>
+            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+              <h2 className={h2}>Nobody can redirect a single coin.</h2>
+              <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>
+                Not your guardians, not the people who send transactions, not us. The destinations you set are the only ones the contract will ever sign for.
+              </p>
+            </header>
+            <div className="grid gap-px bg-white/[0.11] py-px sm:grid-cols-2 lg:grid-cols-4">
+              {SAFETY.map((s) => (
+                <div key={s.t} className="flex flex-col gap-16 bg-frame p-8">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[rgba(47,107,255,.16)]">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8DB4FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d={s.icon} />
+                    </svg>
                   </span>
-                  <span className="min-w-0 break-all text-paper">{a}</span>
+                  <div className="flex flex-col gap-0.5">
+                    <h3 className="text-lg font-medium tracking-[-0.015em]">{s.t}</h3>
+                    <p className="text-sm leading-5 text-[#A1A1A1]">{s.b}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="h-[clamp(96px,10vw,128px)]" />
+          </div>
+        </section>
+
+        <section className="border-t border-white/[0.11] bg-frame text-white">
+          <div className={`${frameDark} ${air}`}>
+            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+              <h2 className={h2}>Built on open infrastructure.</h2>
+              <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>Behest runs on NEAR technology that controls assets across chains without bridges or custodians.</p>
+            </header>
+            <div className="grid gap-px bg-white/[0.11] py-px sm:grid-cols-2 lg:grid-cols-4">
+              {TECH.map((t) => (
+                <div key={t.t} className="flex min-h-[240px] flex-col justify-between gap-16 bg-frame p-8">
+                  <span className="h-2 w-2 rounded-full" style={{ background: t.c }} aria-hidden="true" />
+                  <div className="flex flex-col gap-0.5">
+                    <h3 className="text-lg font-medium tracking-[-0.015em]">{t.t}</h3>
+                    <p className="text-sm leading-5 text-[#A1A1A1]">{t.b}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div aria-label="Supported assets" className="flex flex-wrap items-center justify-between gap-8 px-4 py-12 text-xl font-semibold tracking-[-0.02em] text-[#A1A1A1] sm:px-8">
+              <span>Bitcoin</span>
+              <span>Ethereum</span>
+              <span>NEAR</span>
+              <span>NEP-141 tokens</span>
+              <span>ERC-20 tokens</span>
+            </div>
+            <div className="grid gap-px bg-white/[0.11] pt-px sm:grid-cols-2 lg:grid-cols-4">
+              {STATS.map((s) => (
+                <div key={s.l} className="flex flex-col gap-1 bg-frame px-8 pb-8 pt-16">
+                  <span className="text-[clamp(40px,4.4vw,60px)] leading-none tracking-[-0.035em]">{s.v}</span>
+                  <span className="text-base text-[#A1A1A1]">{s.l}</span>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        <section className="mx-auto flex max-w-[1360px] flex-col gap-8 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">What Behest isn't.</h2>
-            <span className="font-mono text-[13px] font-bold uppercase">[ 06 ] Honest limits</span>
-          </div>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
-            {LIMITS.map((l) => (
-              <div key={l.t} className="flex flex-col gap-2 rounded-card border-[1.5px] border-ink bg-card p-6">
-                <span className="font-display text-2xl font-bold tracking-[-0.02em]">{l.t}</span>
-                <span className="text-[15px] leading-normal text-muted">{l.b}</span>
+        <section>
+          <div className={`${frame} ${air}`}>
+            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+              <h2 className={h2}>Everyone has a job. Nobody can redirect.</h2>
+              <p className={`max-w-[760px] text-muted ${lede}`}>Only the owner sets destinations, and only while no release is open.</p>
+            </header>
+            <div className="px-4 pb-16 sm:px-8">
+              <div className="overflow-x-auto rounded-row border border-line bg-card">
+                <table className="w-full min-w-[720px] border-collapse text-left text-[15px]">
+                  <thead>
+                    <tr className="bg-subtle text-[13px] text-muted">
+                      <th scope="col" className="px-5 py-3 font-medium">
+                        Action
+                      </th>
+                      {COLS.map((c) => (
+                        <th key={c} scope="col" className="px-3 py-3 text-center font-medium">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ROWS.map(([a, cells]) => (
+                      <tr key={a} className="border-t border-line">
+                        <th scope="row" className="px-5 py-3.5 font-medium">
+                          {a}
+                        </th>
+                        {cells.split("").map((c, i) => (
+                          <td key={i} className="px-3 py-3 text-center">
+                            {c === "y" ? (
+                              <span className="inline-flex h-7 items-center rounded-tag bg-s-active px-2.5 text-sm font-semibold text-[var(--s-active-fg)]" aria-label={`${COLS[i]} can`}>
+                                Yes
+                              </span>
+                            ) : (
+                              <span className="text-muted" aria-label={`${COLS[i]} cannot`}>
+                                —
+                              </span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="roadmap" className="void bg-void text-paper">
-          <div className="mx-auto flex max-w-[1360px] flex-col gap-8 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">Shipping in public.</h2>
-              <span className="font-mono text-[13px] font-bold uppercase text-muted-dark">[ 07 ] Roadmap</span>
             </div>
-            <ol className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
-              {ROAD.map((r) => (
-                <li
-                  key={r.n}
-                  aria-current={r.n === 1 ? "step" : undefined}
-                  className={`flex flex-col gap-2 rounded-card border p-5 ${r.n === 1 ? "border-mint bg-mint text-ink" : "border-line-dark bg-panel"}`}
-                >
-                  <span className="font-mono text-xs font-bold">
-                    STAGE {r.n} · {r.tag}
-                  </span>
-                  <span className="font-display text-2xl font-bold tracking-[-0.02em]">{r.t}</span>
-                  <span className={`text-sm leading-normal ${r.n === 1 ? "" : "text-[#C9C8C1]"}`}>{r.b}</span>
-                </li>
+            <div className="grid gap-px border-t border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-4">
+              {LIMITS.map((l) => (
+                <div key={l.t} className="flex flex-col gap-1 bg-paper p-8">
+                  <h3 className="text-lg font-medium tracking-[-0.015em]">{l.t}</h3>
+                  <p className="text-sm leading-5 text-muted">{l.b}</p>
+                </div>
               ))}
-            </ol>
+            </div>
           </div>
         </section>
 
-        <section className="mx-auto grid max-w-[1360px] gap-10 px-4 py-[clamp(64px,9vw,120px)] sm:px-6 lg:grid-cols-[1fr_1.4fr]">
-          <h2 className="font-display text-[clamp(40px,5.5vw,80px)] font-bold leading-[0.95] tracking-[-0.045em]">FAQ</h2>
-          <div className="flex flex-col">
+        <section id="faq" className="border-t border-hairline">
+          <div className={frame}>
+            <header className="flex flex-col items-start gap-4 border-b border-hairline px-4 pb-16 pt-[clamp(96px,10vw,128px)] sm:px-8">
+              <h2 className={h2}>Frequently asked questions</h2>
+              <p className={`text-muted ${lede}`}>Want to see a real plan? Look one up by its owner&apos;s account.</p>
+              <InspectForm />
+            </header>
             {FAQ.map((f) => (
-              <details key={f.q} className="group border-t-[1.5px] border-ink py-5 last:border-b-[1.5px]">
-                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 font-display text-xl font-bold tracking-[-0.01em]">
+              <details key={f.q} className="group border-b border-hairline">
+                <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-4 px-4 py-6 text-lg tracking-[-0.015em] sm:px-8">
                   {f.q}
-                  <span className="text-2xl transition-transform duration-[240ms] ease-ledger group-open:rotate-45" aria-hidden="true">
+                  <span className="text-[22px] leading-7 text-muted transition-transform duration-200 group-open:rotate-45" aria-hidden="true">
                     +
                   </span>
                 </summary>
-                <p className="pt-3 text-base leading-relaxed text-muted">{f.a}</p>
+                <p className="max-w-[760px] px-4 pb-6 text-base leading-6 text-muted sm:px-8">{f.a}</p>
               </details>
             ))}
           </div>
         </section>
 
-        <section className="border-t-[1.5px] border-ink">
-          <div className="mx-auto flex max-w-[1360px] flex-col gap-8 px-4 py-[clamp(64px,9vw,120px)] sm:px-6">
-            <h2 className="font-display text-[clamp(48px,8vw,128px)] font-bold leading-[0.9] tracking-[-0.05em]">
-              Set your behest.
-              <br />
-              It will be <span className="inline-block rounded-full bg-mint px-[0.18em]">honoured</span>.
-            </h2>
-            <div className="flex flex-wrap items-end justify-between gap-6">
-              <ButtonLink href="/setup" className="min-h-[60px] px-8 text-[17px]">
-                Create a plan (testnet)
-              </ButtonLink>
-              <InspectForm />
-            </div>
+        <section className="bg-gradient-to-b from-[#A9CCFF] via-[#6E9BFF] to-[#2F6BFF]">
+          <div className="mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] sm:px-8">
+            <h2 className={`${h2} text-black`}>Your plan is minutes away.</h2>
+            <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, add your heirs, and you&apos;re set.</p>
+            <ButtonLink href="/setup" className="mt-2 bg-[#171717] text-white hover:bg-black">
+              Create a plan
+            </ButtonLink>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-[1360px] flex-wrap items-center justify-between gap-4 px-4 py-6 text-sm text-muted sm:px-6">
-          <span>Behest · open-source contracts · not a will, not legal advice</span>
-          <nav aria-label="Footer" className="flex gap-4">
-            <Link href="/inspect" className="hover:text-ink">Inspect a plan</Link>
-            <Link href="/try" className="hover:text-ink">Try as…</Link>
-          </nav>
+      <footer className="overflow-hidden bg-frame text-white">
+        <div className={frameDark}>
+          <div className="grid gap-16 px-4 py-24 sm:px-8 md:grid-cols-2">
+            <div className="flex flex-col gap-5">
+              <span className="flex items-center gap-2.5">
+                <Mark light />
+                <span className="text-[21px] font-semibold tracking-[-0.03em]">behest</span>
+              </span>
+              <p className="max-w-[400px] text-base leading-6 text-[#A1A1A1]">Non-custodial inheritance for Bitcoin, Ethereum and NEAR. Not a will or legal advice. Testnet software.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-8">
+              {[
+                { h: "Product", links: [["/app", "Dashboard"], ["/setup", "Create a plan"], ["/inspect", "Inspect a plan"]] as const },
+                { h: "Try it", links: [["/try", "Try as a guardian or heir"], ["#faq", "FAQ"]] as const },
+              ].map((c) => (
+                <div key={c.h} className="flex flex-col gap-6">
+                  <h3 className="text-base font-medium">{c.h}</h3>
+                  <ul className="flex flex-col gap-4">
+                    {c.links.map(([href, l]) => (
+                      <li key={href}>
+                        <Link href={href} className="text-base text-[#A1A1A1] hover:text-white">
+                          {l}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div aria-hidden="true" className="h-[clamp(90px,15vw,210px)] overflow-hidden px-4 sm:px-8">
+            <span className="block text-[clamp(150px,26vw,360px)] font-semibold leading-[0.82] tracking-[-0.06em] text-[#333333]">behest</span>
+          </div>
         </div>
       </footer>
     </div>

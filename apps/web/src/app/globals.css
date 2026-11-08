@@ -1,53 +1,121 @@
 @import "tailwindcss";
 
-/* Open Ledger tokens (Behest design system). */
-@theme {
-  --color-paper: #F4F3EE;
-  --color-void: #0A0A0A;
-  --color-mint: #00E59B;
-  --color-mint-ink: #007A52;
-  --color-card: #FFFFFF;
-  --color-panel: #141414;
-  --color-ink: #0B0B0B;
-  --color-muted: #5E5D58;
-  --color-muted-dark: #A3A29C;
-  --color-line: #D6D4CC;
-  --color-line-soft: #EAE9E2;
-  --color-line-dark: #2A2A2A;
-  --color-grid: #1A1A1A;
-  --color-testnet: #FFB224;
+/* Behest design system (Claude Design canvas, "Calm money, clear blue").
+   Semantic tokens live on :root and flip for dark mode; Tailwind colors
+   point at them, so `bg-paper`, `text-ink`, `border-line`… follow the theme. */
+:root {
+  --paper: #FAFAFA;          /* page */
+  --card: #FFFFFF;
+  --subtle: #F5F5F5;
+  --ink: #0A0A0A;            /* text, and the dark button */
+  --ink-contrast: #FAFAFA;   /* text on ink */
+  --muted: #6B6B6B;
+  --line: #E5E5E5;
+  --line-soft: #F0F0F0;
+  --line-strong: #D4D4D4;
+  --hairline: rgba(0, 0, 0, 0.11);
+  --signal: #2F6BFF;
+  --signal-text: #1D4ED8;
+  --primary: #2563EB;
+  --frame: #262626;          /* dashboard frame, dark sections */
+  --frame-text: #D4D4D4;
+  --error: #9F1239;
+  --error-bg: #FFE4E6;
+  --ok: #00573A;
+  --ok-bg: #D5FFF0;
 
-  --color-s-active: #00E59B;
-  --color-s-overdue: #FFB224;
-  --color-s-proposed: #FF8A3D;
-  --color-s-approved: #4DA3FF;
-  --color-s-waiting: #9B7BFF;
-  --color-s-eligible: #F5E14B;
-  --color-s-signing: #FF6FD8;
-  --color-s-broadcast: #34D5FF;
-  --color-s-cancelled: #A3A29C;
-  --color-s-failed: #FF5A4E;
+  /* plan / transfer states: tinted bg + strong fg */
+  --s-active-bg: #D5FFF0; --s-active-fg: #00573A;
+  --s-overdue-bg: #FEF3C7; --s-overdue-fg: #7B3306;
+  --s-proposed-bg: #FFEDD5; --s-proposed-fg: #9A3412;
+  --s-approved-bg: #DBEAFE; --s-approved-fg: #1E40AF;
+  --s-waiting-bg: #E0E7FF; --s-waiting-fg: #3730A3;
+  --s-eligible-bg: #FEF9C3; --s-eligible-fg: #713F12;
+  --s-signing-bg: #FAE8FF; --s-signing-fg: #86198F;
+  --s-broadcast-bg: #CFFAFE; --s-broadcast-fg: #155E75;
+  --s-cancelled-bg: #F5F5F5; --s-cancelled-fg: #404040;
+  --s-failed-bg: #FFE4E6; --s-failed-fg: #9F1239;
+  --s-partial-bg: #F3E8FF; --s-partial-fg: #6B21A8;
+  color-scheme: light;
+}
 
-  --font-display: var(--font-space-grotesk), Inter, system-ui, sans-serif;
-  --font-sans: var(--font-inter), system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+:root[data-theme="dark"] {
+  --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
+  --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
+  --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #70FFCD; --ok-bg: #053B2A;
+  --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
+  --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
+  --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
+  --s-failed-bg: #4C0519; --s-failed-fg: #FECDD3; --s-partial-bg: #3B0764; --s-partial-fg: #E9D5FF;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
+    --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
+    --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #70FFCD; --ok-bg: #053B2A;
+    --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
+    --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
+    --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
+    --s-failed-bg: #4C0519; --s-failed-fg: #FECDD3; --s-partial-bg: #3B0764; --s-partial-fg: #E9D5FF;
+    color-scheme: dark;
+  }
+}
 
-  --radius-tag: 4px;
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-subtle: var(--subtle);
+  --color-ink: var(--ink);
+  --color-ink-contrast: var(--ink-contrast);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+  --color-hairline: var(--hairline);
+  --color-signal: var(--signal);
+  --color-signal-text: var(--signal-text);
+  --color-primary: var(--primary);
+  --color-frame: var(--frame);
+  --color-frame-text: var(--frame-text);
+  --color-error: var(--error);
+  --color-error-bg: var(--error-bg);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  /* fixed dark surfaces (pulse card, dark sections) */
+  --color-void: #171717;
+  --color-panel: #1F1F1F;
+  --color-muted-dark: #A1A1A1;
+  --color-line-dark: rgba(255, 255, 255, 0.11);
+
+  --color-s-active: var(--s-active-bg);
+  --color-s-overdue: var(--s-overdue-bg);
+  --color-s-proposed: var(--s-proposed-bg);
+  --color-s-approved: var(--s-approved-bg);
+  --color-s-waiting: var(--s-waiting-bg);
+  --color-s-eligible: var(--s-eligible-bg);
+  --color-s-signing: var(--s-signing-bg);
+  --color-s-broadcast: var(--s-broadcast-bg);
+  --color-s-cancelled: var(--s-cancelled-bg);
+  --color-s-failed: var(--s-failed-bg);
+
+  --font-display: var(--font-figtree), system-ui, sans-serif;
+  --font-sans: var(--font-figtree), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-tag: 6px;
   --radius-tile: 12px;
+  --radius-row: 16px;
   --radius-card: 24px;
+  --radius-section: 32px;
 
   --ease-ledger: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-html { background: var(--color-paper); color: var(--color-ink); }
-body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
-:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 3px; }
-.void :focus-visible { outline-color: var(--color-mint); }
+html { background: var(--paper); color: var(--ink); }
+body { font-family: var(--font-sans); font-weight: 500; -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 
-@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-.marquee { animation: marquee 40s linear infinite; }
-@keyframes ring-in { from { r: 0; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .marquee { animation: none; }
   * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
 }

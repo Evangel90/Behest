@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppHeader, TestnetBar } from "@/components/chrome";
+import { AppShell } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Bracket, Card, StatusPill } from "@/components/ui";
 import { getPlan, listOpenReleases } from "@/lib/contract";
@@ -18,13 +18,10 @@ export default function Inspect() {
     })();
   }, []);
   return (
-    <div className="min-h-dvh">
-      <TestnetBar />
-      <AppHeader />
-      <main className="mx-auto flex max-w-[1100px] flex-col gap-6 px-4 py-8 sm:px-6">
+    <AppShell>
         <div className="flex flex-col gap-3">
           <Bracket>Public inspector</Bracket>
-          <h1 className="font-display text-[clamp(40px,6vw,72px)] font-bold leading-[0.92] tracking-[-0.045em]">Every rule is public.</h1>
+          <h1 className="text-[clamp(40px,6vw,72px)] font-medium leading-[0.92] tracking-[-0.045em]">Every rule is public.</h1>
           <p className="max-w-[680px] text-lg leading-relaxed">Look up any plan by its owner's account to see its rules, guardians, heirs, open release and every transfer, read straight from the chain.</p>
         </div>
         <InspectForm />
@@ -33,7 +30,7 @@ export default function Inspect() {
           {open === null && <p className="text-muted">Loading…</p>}
           {open?.length === 0 && <p className="text-muted">No releases are open.</p>}
           {open?.map((v) => (
-            <Link key={v.plan.owner} href={`/plan/${v.plan.owner}?view=inspect`} className="flex flex-wrap items-center justify-between gap-3 rounded-tile border border-line p-3 hover:border-ink">
+            <Link key={v.plan.owner} href={`/plan/${v.plan.owner}?view=inspect`} className="flex flex-wrap items-center justify-between gap-3 rounded-tile border border-line p-3 hover:border-line-strong">
               <span className="flex min-w-0 flex-col">
                 <span className="font-semibold">{shortName(v.plan.owner)}</span>
                 <span className="truncate font-mono text-xs text-muted">{v.plan.owner}</span>
@@ -42,7 +39,6 @@ export default function Inspect() {
             </Link>
           ))}
         </Card>
-      </main>
-    </div>
+      </AppShell>
   );
 }

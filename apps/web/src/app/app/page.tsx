@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppHeader, TestnetBar } from "@/components/chrome";
+import { AppShell } from "@/components/chrome";
 import { SignInDialog } from "@/components/SignIn";
 import { Bracket, Button, ButtonLink, Card, StatusPill } from "@/components/ui";
 import { getPlan, listOpenReleases } from "@/lib/contract";
@@ -43,7 +43,7 @@ export default function Home() {
     return (
       <Shell>
         <Card className="flex flex-col gap-4">
-          <h1 className="font-display text-4xl font-bold tracking-[-0.03em]">Sign in to see your plans</h1>
+          <h1 className="text-4xl font-medium tracking-[-0.03em]">Sign in to see your plans</h1>
           <p className="text-muted">Owners, guardians and heirs all start here. No wallet? Try every role with test personas.</p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => setSignIn(true)}>Sign in</Button>
@@ -62,7 +62,7 @@ export default function Home() {
     <Shell>
       <div className="flex flex-col gap-2">
         <Bracket>Home</Bracket>
-        <h1 className="font-display text-[clamp(40px,6vw,64px)] font-bold leading-[0.92] tracking-[-0.045em]">
+        <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">
           Hello{session ? `, ${session.kind === "persona" ? session.label.split(" ")[0] : shortName(session.accountId)}` : ""}.
         </h1>
       </div>
@@ -88,7 +88,7 @@ export default function Home() {
           </div>
         )}
         {mine && (
-          <Link href={`/plan/${mine.plan.owner}`} className="flex flex-col gap-2 rounded-tile border border-line p-4 hover:border-ink">
+          <Link href={`/plan/${mine.plan.owner}`} className="flex flex-col gap-2 rounded-tile border border-line p-4 hover:border-line-strong">
             <StatusPill status={mine.status} />
             <span className="text-base leading-relaxed">{describePlan(mine.plan.policy)}</span>
           </Link>
@@ -112,10 +112,10 @@ function PlanRow({ entry, dark }: { entry: Entry; dark?: boolean }) {
   return (
     <Link
       href={`/plan/${view.plan.owner}`}
-      className={`flex flex-wrap items-center justify-between gap-3 rounded-tile border p-4 ${dark ? "border-line-dark hover:border-mint" : "border-line hover:border-ink"}`}
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-tile border p-4 ${dark ? "border-line-dark hover:border-signal" : "border-line hover:border-line-strong"}`}
     >
       <span className="flex min-w-0 flex-col">
-        <span className="font-display text-xl font-bold">{shortName(view.plan.owner)}'s plan</span>
+        <span className="text-xl font-medium">{shortName(view.plan.owner)}'s plan</span>
         <span className={`text-sm ${dark ? "text-muted-dark" : "text-muted"}`}>You're {roles.map((r) => (r === "heir" ? "an heir" : `a ${r}`)).join(" and ")}</span>
       </span>
       <StatusPill status={view.status} />
@@ -125,10 +125,6 @@ function PlanRow({ entry, dark }: { entry: Entry; dark?: boolean }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-dvh">
-      <TestnetBar />
-      <AppHeader />
-      <main className="mx-auto flex max-w-[1100px] flex-col gap-5 px-4 py-8 sm:px-6">{children}</main>
-    </div>
+    <AppShell>{children}</AppShell>
   );
 }

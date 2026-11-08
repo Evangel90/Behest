@@ -1,7 +1,7 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { AppHeader, TestnetBar } from "@/components/chrome";
+import { AppShell } from "@/components/chrome";
 import { SignInDialog } from "@/components/SignIn";
 import { HeirList } from "@/components/PlanParts";
 import { Bracket, Button, Card, Field, Notice, inputClass } from "@/components/ui";
@@ -127,7 +127,7 @@ function Setup() {
     return (
       <Shell>
         <Card className="flex flex-col gap-3">
-          <h1 className="font-display text-4xl font-bold tracking-[-0.03em]">Sign in to create a plan</h1>
+          <h1 className="text-4xl font-medium tracking-[-0.03em]">Sign in to create a plan</h1>
           <p className="text-muted">The account you sign in with becomes the plan owner.</p>
           <Button className="self-start" onClick={() => setSignIn(true)}>
             Sign in
@@ -154,7 +154,7 @@ function Setup() {
     <Shell>
       <div className="flex flex-col gap-2">
         <Bracket>{editing ? "Edit plan" : "Create a plan"}</Bracket>
-        <h1 className="font-display text-[clamp(40px,6vw,64px)] font-bold leading-[0.92] tracking-[-0.045em]">{step === "edit" ? "Set your rules." : "Read it once more."}</h1>
+        <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">{step === "edit" ? "Set your rules." : "Read it once more."}</h1>
         {existing && !editing && <Notice>You already have a plan. Saving replaces it and counts as a check-in.</Notice>}
         {demo && <p className="text-sm text-muted">This is a demo-timer deployment: minutes are allowed so you can watch a release end to end.</p>}
       </div>
@@ -253,7 +253,7 @@ function Setup() {
         <>
           <Card className="flex flex-col gap-4">
             <Bracket>What you're signing</Bracket>
-            <p className="font-display text-2xl leading-snug tracking-[-0.01em]">{describePlan(plan)}</p>
+            <p className="text-2xl leading-snug tracking-[-0.01em]">{describePlan(plan)}</p>
             <div className="grid gap-2 text-sm sm:grid-cols-3">
               <span>Check in every {duration(plan.check_in_interval_ms)}</span>
               <span>Grace {duration(plan.grace_ms)}</span>
@@ -265,9 +265,9 @@ function Setup() {
             {!editing && depositYocto && depositYocto > 0n && <p className="text-sm">You'll also put {deposit} NEAR into the plan (a second transaction).</p>}
           </Card>
           <HeirList view={{ status: "Active", overdue_at_ms: 0, now_ms: 0, plan: { owner: session.accountId, version: 0, policy: plan, last_check_in_ms: 0, escrow: "0", eth_next_nonce: 0, proposal: null, proposals_opened: 0 } }} />
-          <details className="rounded-card border-[1.5px] border-line p-4">
+          <details className="rounded-card border border-line p-4">
             <summary className="min-h-11 cursor-pointer content-center font-semibold">Exact contract call</summary>
-            <pre className="mt-2 overflow-auto rounded-tile bg-void p-4 font-mono text-xs text-paper">{JSON.stringify({ method: "set_plan", args: { plan } }, null, 2)}</pre>
+            <pre className="mt-2 overflow-auto rounded-tile bg-void p-4 font-mono text-xs text-white">{JSON.stringify({ method: "set_plan", args: { plan } }, null, 2)}</pre>
             <p className="pt-2 text-xs text-muted">Shares: {plan.heirs.map((h) => `${h.account_id} ${percent(h.share_bps)}`).join(" · ")}</p>
           </details>
           {error && <Notice tone="error">{error}</Notice>}
@@ -288,10 +288,6 @@ function Setup() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-dvh">
-      <TestnetBar />
-      <AppHeader />
-      <main className="mx-auto flex max-w-[1100px] flex-col gap-5 px-4 py-8 sm:px-6">{children}</main>
-    </div>
+    <AppShell>{children}</AppShell>
   );
 }
