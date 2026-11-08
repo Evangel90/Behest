@@ -18,7 +18,7 @@ export interface PlanView {
       id: number;
       approvals: string[];
       waiting_ends_at_ms: number | null;
-      transfers: { heir: string; asset: string | { Erc20: string }; amount: string; state: string; failure: string | null; attempts: number }[];
+      transfers: { heir: string; asset: string | { Erc20: string } | { Nep141: string }; amount: string; state: string; failure: string | null; attempts: number }[];
     };
     proposals_opened: number;
   };

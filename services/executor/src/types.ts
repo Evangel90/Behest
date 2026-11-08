@@ -25,10 +25,10 @@ export interface Transfer {
   failure: string | null;
 }
 
-export type Asset = "Near" | "Eth" | { Erc20: string };
+export type Asset = "Near" | "Eth" | { Erc20: string } | { Nep141: string };
 
 /** Paid from the plan's Ethereum vault (ETH or an allowlisted ERC-20). */
-export const isEvm = (a: Asset) => a !== "Near";
+export const isEvm = (a: Asset): a is "Eth" | { Erc20: string } => a === "Eth" || (typeof a === "object" && "Erc20" in a);
 
 /**
  * The exact call a vault transaction must make for a transfer: ETH goes to the
@@ -36,7 +36,7 @@ export const isEvm = (a: Asset) => a !== "Near";
  * Mirrors `evm_call` in contracts/behest/src/lib.rs.
  */
 export function expectedCall(t: Pick<Transfer, "asset" | "destination" | "amount">): { to: string; value: bigint; data: string } {
-  if (t.asset === "Near") throw new Error("not an EVM transfer");
+  if (!isEvm(t.asset)) throw new Error("not an EVM transfer");
   if (t.asset === "Eth") return { to: t.destination.toLowerCase(), value: BigInt(t.amount), data: "0x" };
   const word = (hex: string) => hex.padStart(64, "0");
   const data = `0xa9059cbb${word(t.destination.toLowerCase().slice(2))}${word(BigInt(t.amount).toString(16))}`;
