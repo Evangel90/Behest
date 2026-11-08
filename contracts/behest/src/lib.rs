@@ -746,19 +746,19 @@ impl Contract {
             Some(end) if t >= end => end,
             _ => fail(Error::NotEligible),
         };
-        let from = match opts.mode {
-            ReleaseMode::Claim => fail(Error::NotReleasable),
-            ReleaseMode::Automatic => end,
-            ReleaseMode::Hybrid => end + opts.hybrid_grace_ms,
+        // Each transfer follows the mode for its heir and asset group.
+        let open = |tr: &Transfer| match policy::mode_for(&opts, &tr.heir, &tr.asset) {
+            (ReleaseMode::Claim, _) => false,
+            (ReleaseMode::Automatic, _) => true,
+            (ReleaseMode::Hybrid, grace) => t >= end + grace,
         };
-        if t < from {
+        let mine: Vec<(usize, &Transfer)> = p.transfers.iter().enumerate().filter(|(_, tr)| tr.heir == heir).collect();
+        if !mine.iter().any(|(_, tr)| open(tr)) {
             fail(Error::NotReleasable);
         }
-        let which: Vec<(usize, bool)> = p
-            .transfers
-            .iter()
-            .enumerate()
-            .filter(|(_, tr)| tr.heir == heir && tr.state == TransferState::Pending)
+        let which: Vec<(usize, bool)> = mine
+            .into_iter()
+            .filter(|(_, tr)| tr.state == TransferState::Pending && open(tr))
             .map(|(i, tr)| (i, tr.asset.is_evm()))
             .collect();
         emit("released", near_sdk::serde_json::json!({"owner": owner, "heir": heir, "by": caller(), "transfers": which.len()}));
@@ -1222,7 +1222,20 @@ fn options_key(owner: &AccountId) -> Vec<u8> {
 }
 
 fn read_options(owner: &AccountId) -> Option<ReleaseOptions> {
-    env::storage_read(&options_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok())
+    let b = env::storage_read(&options_key(owner))?;
+    if let Ok(o) = near_sdk::borsh::from_slice::<ReleaseOptions>(&b) {
+        return Some(o);
+    }
+    let v1: ReleaseOptionsV1 = near_sdk::borsh::from_slice(&b).ok()?;
+    Some(ReleaseOptions {
+        mode: v1.mode,
+        hybrid_grace_ms: v1.hybrid_grace_ms,
+        delay_signers: v1.delay_signers,
+        delay_quorum: v1.delay_quorum,
+        max_extension_ms: v1.max_extension_ms,
+        max_total_extension_ms: v1.max_total_extension_ms,
+        overrides: vec![],
+    })
 }
 
 fn extension_key(owner: &AccountId) -> Vec<u8> {

@@ -1629,6 +1629,7 @@ fn opts(mode: ReleaseMode) -> ReleaseOptions {
         delay_quorum: 2,
         max_extension_ms: 14 * DAY,
         max_total_extension_ms: 30 * DAY,
+        overrides: vec![],
     }
 }
 
@@ -1847,4 +1848,71 @@ fn making_a_delay_signer_a_heir_is_refused() {
     let mut p = plan_input();
     p.heirs[1].account_id = acc("d1.testnet");
     e.as_("owner.testnet", 0).set_plan(p);
+}
+
+fn ov(heir: Option<&str>, assets: AssetGroup, mode: ReleaseMode, grace: u64) -> ModeOverride {
+    ModeOverride { heir: heir.map(acc), assets, mode, hybrid_grace_ms: grace }
+}
+
+#[test]
+fn per_heir_mode_overrides_the_plan_mode() {
+    // plan: Claim; Tobi alone is Automatic
+    let mut o = opts(ReleaseMode::Claim);
+    o.overrides = vec![ov(Some("tobi.testnet"), AssetGroup::All, ReleaseMode::Automatic, 0)];
+    let mut e = with_options(o);
+    e.advance(30 * DAY);
+    assert_eq!(e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("tobi.testnet")), 1);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet"))));
+    assert!(r.is_err(), "Amara keeps the plan's Claim mode");
+}
+
+#[test]
+fn per_asset_group_mode_releases_only_that_group() {
+    // NEAR side automatic for everyone; Ethereum side stays Claim
+    let mut o = opts(ReleaseMode::Claim);
+    o.overrides = vec![ov(None, AssetGroup::Near, ReleaseMode::Automatic, 0)];
+    let mut e = with_options(o);
+    e.advance(30 * DAY);
+    assert_eq!(e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet")), 1);
+    assert_eq!(states(&mut e, "amara.testnet"), vec![TransferState::Sending, TransferState::Pending], "NEAR started, ETH waits for her claim");
+    assert_eq!(e.as_("amara.testnet", 0).claim(acc("owner.testnet")), 1);
+}
+
+#[test]
+fn first_matching_override_wins() {
+    // Amara's Ethereum side is Hybrid (7 days) though every Ethereum share is Automatic
+    let mut o = opts(ReleaseMode::Claim);
+    o.overrides = vec![
+        ov(Some("amara.testnet"), AssetGroup::Ethereum, ReleaseMode::Hybrid, 7 * DAY),
+        ov(None, AssetGroup::Ethereum, ReleaseMode::Automatic, 0),
+    ];
+    let mut e = with_options(o);
+    e.advance(30 * DAY);
+    let early = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("x.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet"))));
+    assert!(early.is_err());
+    e.advance(7 * DAY);
+    assert_eq!(e.as_("x.testnet", 0).release(acc("owner.testnet"), acc("amara.testnet")), 1);
+    assert_eq!(states(&mut e, "amara.testnet"), vec![TransferState::Pending, TransferState::Signing]);
+}
+
+#[test]
+#[should_panic(expected = "E_INVALID_OPTIONS")]
+fn override_must_name_a_heir() {
+    expect_bad_options(|o| o.overrides = vec![ov(Some("kemi.testnet"), AssetGroup::All, ReleaseMode::Automatic, 0)]);
+}
+
+#[test]
+#[should_panic(expected = "E_DURATION_OUT_OF_BOUNDS")]
+fn override_hybrid_grace_is_bounded() {
+    expect_bad_options(|o| o.overrides = vec![ov(None, AssetGroup::Near, ReleaseMode::Hybrid, 1)]);
+}
+
+#[test]
+fn options_stored_before_overrides_still_read() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    let v1 = ReleaseOptionsV1 { mode: ReleaseMode::Automatic, hybrid_grace_ms: 0, delay_signers: vec![], delay_quorum: 0, max_extension_ms: 0, max_total_extension_ms: 0 };
+    env::storage_write(b"opts:owner.testnet", &near_sdk::borsh::to_vec(&v1).unwrap());
+    let o = e.as_("x.testnet", 0).get_release_options(acc("owner.testnet")).unwrap();
+    assert_eq!((o.mode, o.overrides.len()), (ReleaseMode::Automatic, 0));
 }

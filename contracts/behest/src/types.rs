@@ -158,6 +158,51 @@ pub struct ReleaseOptions {
     pub delay_quorum: u8,
     pub max_extension_ms: u64,
     pub max_total_extension_ms: u64,
+    /// Per-heir and/or per-asset-group modes; the first match wins, otherwise
+    /// `mode`. Appended last; options stored before it existed still decode.
+    #[serde(default)]
+    pub overrides: Vec<ModeOverride>,
+}
+
+/// Options as first stored (before `overrides`); read as a fallback.
+#[near(serializers = [borsh])]
+pub struct ReleaseOptionsV1 {
+    pub mode: ReleaseMode,
+    pub hybrid_grace_ms: u64,
+    pub delay_signers: Vec<AccountId>,
+    pub delay_quorum: u8,
+    pub max_extension_ms: u64,
+    pub max_total_extension_ms: u64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AssetGroup {
+    All,
+    /// NEAR and NEP-141 tokens.
+    Near,
+    /// ETH and ERC-20 tokens from the vault.
+    Ethereum,
+}
+
+impl AssetGroup {
+    pub fn contains(&self, a: &Asset) -> bool {
+        match self {
+            AssetGroup::All => true,
+            AssetGroup::Near => !a.is_evm(),
+            AssetGroup::Ethereum => a.is_evm(),
+        }
+    }
+}
+
+/// Release mode for one heir (or every heir, `heir: None`) and asset group.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModeOverride {
+    pub heir: Option<AccountId>,
+    pub assets: AssetGroup,
+    pub mode: ReleaseMode,
+    pub hybrid_grace_ms: u64,
 }
 
 #[near(serializers = [borsh, json])]

@@ -2,7 +2,7 @@ use near_sdk::AccountId;
 use std::collections::HashSet;
 
 use crate::errors::{fail, Error};
-use crate::types::{Asset, PlanInput, Recipient, ReleaseMode, ReleaseOptions, ReleaseRules};
+use crate::types::{Asset, ModeOverride, PlanInput, Recipient, ReleaseMode, ReleaseOptions, ReleaseRules};
 
 pub const MAX_HEIRS: usize = 10;
 pub const MAX_GUARDIANS: usize = 10;
@@ -166,13 +166,28 @@ pub const MAX_DELAY_SIGNERS: usize = 10;
 /// Validates release options against the plan. Delay signers may overlap with
 /// guardians (disclosed in the UI) but are never the owner or a heir, who have
 /// their own interests in the timing.
-pub fn validate_options(owner: &AccountId, p: &PlanInput, o: ReleaseOptions) -> ReleaseOptions {
-    if o.mode == ReleaseMode::Hybrid {
-        if !in_bounds(o.hybrid_grace_ms, HYBRID_GRACE) {
+fn check_mode(mode: ReleaseMode, grace: u64) {
+    if mode == ReleaseMode::Hybrid {
+        if !in_bounds(grace, HYBRID_GRACE) {
             fail(Error::DurationOutOfBounds);
         }
-    } else if o.hybrid_grace_ms != 0 {
+    } else if grace != 0 {
         fail(Error::InvalidOptions);
+    }
+}
+
+pub const MAX_OVERRIDES: usize = 20;
+
+pub fn validate_options(owner: &AccountId, p: &PlanInput, o: ReleaseOptions) -> ReleaseOptions {
+    check_mode(o.mode, o.hybrid_grace_ms);
+    if o.overrides.len() > MAX_OVERRIDES {
+        fail(Error::InvalidOptions);
+    }
+    for x in &o.overrides {
+        check_mode(x.mode, x.hybrid_grace_ms);
+        if x.heir.as_ref().is_some_and(|h| !p.heirs.iter().any(|y| &y.account_id == h)) {
+            fail(Error::InvalidOptions);
+        }
     }
     let s = &o.delay_signers;
     let unique: HashSet<_> = s.iter().collect();
@@ -192,6 +207,18 @@ pub fn validate_options(owner: &AccountId, p: &PlanInput, o: ReleaseOptions) -> 
         }
     }
     o
+}
+
+/// The mode and grace that apply to a transfer held by `heir` (the first
+/// matching override, else the plan's). A share reassigned to an alternate or
+/// the fallback has no heir-specific override and follows the asset-group or
+/// plan mode.
+pub fn mode_for(o: &ReleaseOptions, heir: &AccountId, asset: &Asset) -> (ReleaseMode, u64) {
+    o.overrides
+        .iter()
+        .find(|x| x.heir.as_ref().is_none_or(|h| h == heir) && x.assets.contains(asset))
+        .map(|x: &ModeOverride| (x.mode, x.hybrid_grace_ms))
+        .unwrap_or((o.mode, o.hybrid_grace_ms))
 }
 
 /// Splits `total` of one asset: fixed amounts first (in rule order, capped by
