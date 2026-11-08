@@ -4,19 +4,21 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { parseUnits, type Hex } from "viem";
 import { AppShell, NavItem, NavLabel } from "@/components/chrome";
-import { BtcOwnerCard, BtcRebase, btcProposal, useBtc } from "@/components/Bitcoin";
+import { BtcOwnerCard, BtcRebase, useBtc } from "@/components/Bitcoin";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
 import { OptionsCard } from "@/components/ReleaseOptions";
 import { RulesCard, useRules } from "@/components/ReleaseRules";
+import { HistoryCard, ProposeCard, SnapshotCheck, lastSettledAt, useHistory } from "@/components/Rounds";
 import { AssetHead, Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
-import { ethBalance, getConfig, getVaultWithdrawal, tokenBalances, vaultAddress } from "@/lib/contract";
+import { getConfig, getVaultWithdrawal } from "@/lib/contract";
+import { useVault, type Vault } from "@/lib/vault";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
-import { actionsFor, assetLabel, describePlan, formatBtc, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, vaultSplit, type Role } from "@/lib/plan";
+import { actionsFor, followUpOpen, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role } from "@/lib/plan";
 import { useSession } from "@/lib/session";
-import type { Asset, ContractConfig, Erc20Token, PlanView, Transfer } from "@/lib/types";
+import type { Asset, ContractConfig, PlanView, Transfer } from "@/lib/types";
 
 type Tab = Role | "public";
 
@@ -94,34 +96,6 @@ interface Props {
   refresh?: () => Promise<void>;
 }
 
-interface Vault {
-  address: Hex;
-  balance: bigint | null;
-  /** Allowlisted tokens with their vault balance (null while unread or on error). */
-  tokens: { token: Erc20Token; balance: bigint | null }[];
-  /** Most a single vault transaction can cost (gas limit × fee cap). */
-  feePerTx: bigint | null;
-}
-
-function useVault(owner: string) {
-  const [vault, setVault] = useState<Vault | null>(null);
-  useEffect(() => {
-    let off = false;
-    (async () => {
-      const [address, cfg] = await Promise.all([vaultAddress(owner).catch(() => null), getConfig().catch(() => null)]);
-      if (!address || off) return;
-      const list = cfg?.erc20_tokens ?? [];
-      const feePerTx = cfg ? BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap) : null;
-      setVault({ address, balance: null, tokens: list.map((token) => ({ token, balance: null })), feePerTx });
-      const [balance, toks] = await Promise.all([ethBalance(address).catch(() => null), tokenBalances(address, list)]);
-      if (!off) setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })), feePerTx });
-    })();
-    return () => {
-      off = true;
-    };
-  }, [owner]);
-  return vault;
-}
 
 function Result({ result }: { result: ReturnType<typeof useAction>["result"] }) {
   if (!result) return null;
@@ -214,6 +188,7 @@ function OwnerView({ view, now, refresh }: Props) {
       return r;
     });
 
+  const history = useHistory(view.plan.owner, `${view.status}:${view.plan.proposal?.id}`);
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -323,6 +298,7 @@ function OwnerView({ view, now, refresh }: Props) {
         <HeirList view={view} />
         <GuardianList view={view} />
       </div>
+      <HistoryCard view={view} history={history} />
       <RulesCard
         view={view}
         now={now}
@@ -438,22 +414,14 @@ function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vau
 function GuardianView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
-  const vault = useVault(view.plan.owner);
   const btc = useBtc(view.plan.owner);
-  const bp = btcProposal(view, btc);
   const rules = useRules(view.plan.owner);
-  const [cfg, setCfg] = useState<ContractConfig | null>(null);
-  useEffect(() => void getConfig().then(setCfg).catch(() => {}), []);
   const me = session!.accountId;
   const name = shortName(view.plan.owner);
   const s = view.status;
   const p = view.plan.proposal;
-  const ethHeirs = view.plan.policy.heirs.filter((h) => h.eth_destination).length;
-  const heldTokens = (vault?.tokens ?? []).filter((t) => t.balance != null && t.balance > 0n);
-  const split =
-    cfg && vault?.balance != null
-      ? vaultSplit({ ethHeirs, ethBalance: vault.balance, tokenBalances: heldTokens.map((t) => t.balance!), gasLimit: cfg.eth_gas_limit, feeCap: BigInt(cfg.eth_max_fee_cap) })
-      : null;
+  const history = useHistory(view.plan.owner, `${s}:${p?.id}`);
+  const followUp = followUpOpen(view, lastSettledAt(history));
   const act = (label: string, method: string, args: Record<string, unknown>) =>
     run(label, async () => {
       const r = await session!.call(method, args, { tgas: 100 });
@@ -469,7 +437,7 @@ function GuardianView({ view, now, refresh }: Props) {
         <p className="max-w-[760px] text-lg leading-relaxed">{describePlan(view.plan.policy, name)}</p>
       </div>
       <Result result={result} />
-      <CanAct actions={actionsFor(view, "guardian", me)} />
+      <CanAct actions={actionsFor(view, "guardian", me, followUp)} />
 
       {s === "Active" && (
         <Card className="flex flex-col gap-2">
@@ -480,57 +448,7 @@ function GuardianView({ view, now, refresh }: Props) {
         </Card>
       )}
 
-      {s === "Overdue" && (
-        <Card className="flex flex-col gap-4">
-          <Bracket>Propose a release</Bracket>
-          <p>
-            {name} hasn't checked in since {new Date(view.plan.last_check_in_ms).toLocaleString()}. Proposing freezes the plan and asks the other guardians to approve. {name} can still cancel until the waiting period ends.
-          </p>
-          <div className="grid gap-1">
-            <Row k="NEAR to distribute" v={`${formatNear(view.plan.escrow)} NEAR`} />
-            {(view.ft_escrow ?? []).filter((b) => b.amount !== "0").map((b) => (
-              <Row key={b.token} k={`${assetLabel({ Nep141: b.token })} to distribute`} v={`${formatAmount({ asset: { Nep141: b.token }, amount: b.amount })}`} />
-            ))}
-            {ethHeirs > 0 && (
-              <>
-                <Row k="ETH in vault" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "reading…"} />
-                {heldTokens.map(({ token, balance }) => (
-                  <Row key={token.address} k={`${token.symbol} to distribute`} v={`${formatToken(balance!, token)} ${token.symbol}`} />
-                ))}
-                <Row k="Network-fee reserve" v={split ? `${formatEth(split.reserve)} ETH (${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : "…"} />
-                <Row k="ETH to distribute" v={split ? `${formatEth(split.ethToSplit)} ETH` : "…"} />
-                {split?.error && <Notice tone="error">The vault doesn't hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
-              </>
-            )}
-            {bp.heirs > 0 && btc.vault && (
-              <>
-                <Row k="BTC in vault (used)" v={btc.utxos ? `${formatBtc(bp.coins.reduce((a, c) => a + BigInt(c.value), 0n))} BTC · ${bp.coins.length} coin${bp.coins.length === 1 ? "" : "s"}` : "reading…"} />
-                {bp.coins.length > 0 && (
-                  <>
-                    <Row k="Bitcoin fee reserve" v={`${formatBtc(bp.split.reserve)} BTC (${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
-                    <Row k="BTC to distribute" v={`${formatBtc(bp.split.toSplit)} BTC`} />
-                  </>
-                )}
-                {"error" in bp.split && <Notice tone="error">The Bitcoin vault's coins don't cover the network fees for these payouts. Add BTC to the vault first.</Notice>}
-              </>
-            )}
-          </div>
-          <Button
-            className="self-start"
-            disabled={!!busy || !bp.ready || "error" in bp.split || (ethHeirs > 0 && (vault?.balance == null || vault.tokens.some((t) => t.balance == null) || !!split?.error))}
-            onClick={() =>
-              act("Propose release", "propose_release", {
-                owner: view.plan.owner,
-                eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null,
-                erc20_balances: ethHeirs > 0 && heldTokens.length ? heldTokens.map((t) => ({ token: t.token.address, amount: t.balance!.toString() })) : null,
-                btc_utxos: bp.coins.length ? bp.coins : null,
-              })
-            }
-          >
-            {busy ? "Proposing…" : "Propose release"}
-          </Button>
-        </Card>
-      )}
+      {(s === "Overdue" || s === "Settled") && <ProposeCard view={view} act={act} busy={!!busy} followUp={followUp} />}
 
       {p && (
         <Card className="flex flex-col gap-4">
@@ -541,6 +459,7 @@ function GuardianView({ view, now, refresh }: Props) {
             </span>
           </div>
           <TransferTable transfers={p.transfers} />
+          {(s === "Proposed" || s === "Waiting") && <SnapshotCheck view={view} />}
           {s === "Proposed" && !p.approvals.includes(me) && !p.rejections.includes(me) && (
             <div className="flex flex-wrap gap-2">
               <Button variant="mint" disabled={!!busy} onClick={() => act("Approve", "approve_release", { owner: view.plan.owner, proposal_id: p.id })}>
@@ -561,6 +480,7 @@ function GuardianView({ view, now, refresh }: Props) {
       <BtcRebase view={view} btc={btc} />
       <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
       <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} />
+      <HistoryCard view={view} history={history} />
       <GuardianList view={view} />
     </>
   );
@@ -582,6 +502,14 @@ function HeirView({ view, now, refresh }: Props) {
   const mine = p?.transfers.map((t, index) => ({ t, index })).filter(({ t }) => t.heir === me) ?? [];
   const started = mine.some(({ t }) => t.state !== "Pending");
   const ready = p?.waiting_ends_at_ms;
+  const history = useHistory(view.plan.owner, `${s}:${p?.id}`);
+  const followUp = followUpOpen(view, lastSettledAt(history));
+  const act = (label: string, method: string, args: Record<string, unknown>) =>
+    run(label, async () => {
+      const r = await session!.call(method, args, { tgas: 100 });
+      await refresh?.();
+      return r;
+    });
 
   const claim = () =>
     run(
@@ -615,6 +543,10 @@ function HeirView({ view, now, refresh }: Props) {
   if (s === "Settled") {
     title = "Done.";
     body = `Everything ${owner} set aside for you has arrived. Your receipts are below.`;
+  }
+  if (followUp && s === "Overdue") {
+    title = "Done.";
+    body = `${owner}'s release to you has completed. If anything was left in the plan, you can start a follow-up round below; guardians approve it. Your receipts are under Past releases.`;
   }
 
   return (
@@ -678,6 +610,9 @@ function HeirView({ view, now, refresh }: Props) {
         </section>
       )}
 
+      {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
+      <HistoryCard view={view} history={history} />
+
       <RulesCard
         view={view}
         now={now}
@@ -720,6 +655,7 @@ function PublicView({ view, now, refresh }: Props) {
   const vault = useVault(view.plan.owner);
   const p = view.plan.policy;
   const prop = view.plan.proposal;
+  const history = useHistory(view.plan.owner, `${view.status}:${prop?.id}`);
   return (
     <>
       <div className="flex flex-col gap-2.5">
@@ -774,6 +710,7 @@ function PublicView({ view, now, refresh }: Props) {
         busy={!!busy}
         signedIn={!!session}
       />
+      <HistoryCard view={view} history={history} />
       <OptionsCard
         view={view}
         now={now}

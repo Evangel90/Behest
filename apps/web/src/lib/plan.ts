@@ -69,7 +69,17 @@ export interface Actions {
 }
 
 /** "Can act now / Can't" rows for a status card. */
-export function actionsFor(view: PlanView, role: Role | "public", account?: string): Actions {
+/**
+ * D21: a follow-up round is open to heirs (guardians may always propose once
+ * the owner is overdue) when a release settled and the owner hasn't checked
+ * in since. `lastSettledAt` is when that release was proposed.
+ */
+export function followUpOpen(view: PlanView, lastSettledAt: number | null): boolean {
+  if (view.status !== "Settled" && view.status !== "Overdue") return false;
+  return lastSettledAt != null && lastSettledAt > view.plan.last_check_in_ms;
+}
+
+export function actionsFor(view: PlanView, role: Role | "public", account?: string, followUp = false): Actions {
   const s = view.status;
   const p = view.plan.proposal;
   const voted = !!account && !!p && (p.approvals.includes(account) || p.rejections.includes(account));
@@ -77,14 +87,17 @@ export function actionsFor(view: PlanView, role: Role | "public", account?: stri
     case "owner":
       if (s === "Active" || s === "Overdue") return { can: ["Check in", "Edit the plan", "Add or withdraw NEAR"], cant: ["Guardians can't propose while you're current"].slice(s === "Active" ? 0 : 1) };
       if (s === "Proposed" || s === "Waiting") return { can: ["Cancel the release", "Check in (also cancels)"], cant: ["Edit the plan or withdraw while a release is open"] };
+      if (s === "Settled") return { can: ["Check in to take the plan back", "Withdraw what is left"], cant: ["Undo the completed release"] };
       return { can: [], cant: ["Cancel: the waiting period is over", "Change recipients or amounts"] };
     case "guardian":
       if (s === "Active") return { can: [], cant: ["Propose a release while the owner is checking in"] };
-      if (s === "Overdue") return { can: ["Propose a release"], cant: ["Choose recipients or amounts"] };
+      if (s === "Overdue") return { can: [followUp ? "Propose a follow-up release" : "Propose a release"], cant: ["Choose recipients or amounts"] };
+      if (s === "Settled") return { can: ["Propose a follow-up release for anything left"], cant: ["Choose recipients or amounts"] };
       if (s === "Proposed") return voted ? { can: [], cant: ["Vote twice on the same proposal"] } : { can: ["Approve or reject this exact proposal"], cant: ["Change what it pays out"] };
       return { can: [], cant: ["Stop the release: only the owner can, until the waiting period ends"] };
     case "heir":
       if (s === "Eligible" || s === "Executing") return { can: ["Receive your share"], cant: ["Change the destination"] };
+      if (followUp) return { can: ["See your receipts", "Start a follow-up release for anything left"], cant: ["Approve it: guardians do"] };
       if (s === "Settled") return { can: ["See your receipts"], cant: [] };
       return { can: [], cant: ["Receive anything yet"] };
     default:

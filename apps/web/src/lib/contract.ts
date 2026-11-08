@@ -5,7 +5,7 @@ import { publicKeyToAddress } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { BTC_ESPLORA, CONTRACT_ID, MPC_CONTRACT, NEAR_RPC, SEPOLIA_RPC } from "./config";
 import { registerTokens } from "./plan";
-import type { BtcDestination, BtcRelease, BtcTx, BtcUtxo, BtcVault, ContractConfig, Erc20Token, PlanView, Transfer } from "./types";
+import type { BtcDestination, BtcRelease, BtcTx, BtcUtxo, BtcVault, ContractConfig, Erc20Token, PlanView, Proposal, Transfer } from "./types";
 
 export const provider = new JsonRpcProvider({ url: NEAR_RPC });
 export const sepoliaClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
@@ -17,6 +17,8 @@ export async function view<T>(method: string, args: Record<string, unknown> = {}
 export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { owner });
 /** The owner's latest vault withdrawal (contract D7). */
 export const getVaultWithdrawal = (owner: string) => view<Transfer | null>("get_vault_withdrawal", { owner });
+/** D21: settled releases, oldest first (a settled one not yet archived included). */
+export const getReleaseHistory = (owner: string) => view<Proposal[]>("get_release_history", { owner });
 export async function getConfig() {
   const cfg = await view<ContractConfig>("get_config");
   registerTokens(cfg.erc20_tokens ?? [], cfg.nep141_tokens ?? []);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, assetLabel, btcSplit, formatBtc, looksLikeBtcAddress, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import { actionsFor, followUpOpen, assetLabel, btcSplit, formatBtc, looksLikeBtcAddress, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView, Transfer } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -57,6 +57,18 @@ describe("roles and actions", () => {
   it("only lets guardians propose once the owner is unreachable", () => {
     expect(actionsFor(viewOf("Active"), "guardian").can).toEqual([]);
     expect(actionsFor(viewOf("Overdue"), "guardian").can).toEqual(["Propose a release"]);
+  });
+
+  it("opens a follow-up round to heirs only after a settled release the owner hasn't answered", () => {
+    const v = viewOf("Overdue");
+    const checkedIn = v.plan.last_check_in_ms;
+    expect(followUpOpen(v, null)).toBe(false);
+    expect(followUpOpen(v, checkedIn + 1)).toBe(true);
+    expect(followUpOpen(v, checkedIn - 1)).toBe(false); // the owner checked in after it
+    expect(followUpOpen(viewOf("Active"), checkedIn + 1)).toBe(false);
+    expect(actionsFor(v, "heir", "amara.testnet", true).can).toContain("Start a follow-up release for anything left");
+    expect(actionsFor(v, "guardian", "funmi.testnet", true).can).toEqual(["Propose a follow-up release"]);
+    expect(actionsFor(viewOf("Settled"), "guardian").can).toEqual(["Propose a follow-up release for anything left"]);
   });
 
   it("tells the owner they can cancel during the waiting period but not after", () => {
