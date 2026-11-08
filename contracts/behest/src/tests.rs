@@ -2287,6 +2287,77 @@ mod btc_flow {
     }
 
     #[test]
+    fn bumped_withdrawal_keeps_the_original_and_adopts_it() {
+        let mut e = with_vault();
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        let w = VAULT_WITHDRAWAL;
+        let _ = e.as_("owner.testnet", 0).withdraw_btc(vec![utxo(COIN, 1, 100_000)], U64(20_000), AMARA_BTC.into());
+        e.callback(vec![mpc_ok(BIG_R, S, 0)]).on_btc_signed(o(), w, 1);
+        let first = e.as_("x.testnet", 0).get_btc_tx(o(), w).unwrap();
+        e.as_("exec.testnet", 0).report_broadcast(o(), w, first.txid.clone());
+        e.as_("exec.testnet", 0).report_failed(o(), w, "Stuck".into());
+        let _ = e.as_("exec.testnet", 0).retry_transfer(o(), w);
+        e.callback(vec![mpc_ok(BIG_R, S, 0)]).on_btc_signed(o(), w, 2);
+        let bumped = e.as_("x.testnet", 0).get_btc_tx(o(), w).unwrap();
+        assert_ne!(bumped.txid, first.txid);
+        let v = e.as_("x.testnet", 0).get_btc_tx_versions(o(), w);
+        assert_eq!(v.iter().map(|x| x.txid.clone()).collect::<Vec<_>>(), vec![first.txid.clone()]);
+
+        // the original may still be mined, so the withdrawal can't be cancelled
+        e.as_("exec.testnet", 0).report_failed(o(), w, "Conflict".into());
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = e.as_("exec.testnet", 0).cancel_vault_withdrawal(o());
+        }));
+        assert!(r.is_err());
+        // a txid the contract never built is refused
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            e.as_("exec.testnet", 0).report_broadcast(o(), w, "ff".repeat(32));
+        }));
+        assert!(r.is_err());
+
+        // the network mined the original: it becomes current again
+        e.as_("exec.testnet", 0).report_broadcast(o(), w, first.txid.clone());
+        let cur = e.as_("x.testnet", 0).get_btc_tx(o(), w).unwrap();
+        assert_eq!((cur.txid.clone(), cur.fee_rate), (first.txid.clone(), 2));
+        assert_eq!(e.as_("x.testnet", 0).get_btc_tx_versions(o(), w)[0].txid, bumped.txid);
+        e.as_("exec.testnet", 0).report_confirmed(o(), w, first.txid.clone());
+        assert_eq!(e.as_("x.testnet", 0).get_vault_withdrawal(o()).unwrap().state, TransferState::Confirmed);
+    }
+
+    #[test]
+    fn adopting_an_earlier_head_rechains_later_payouts() {
+        let mut e = with_vault();
+        proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        let (a, t) = (btc_idx(&mut e, "amara.testnet"), btc_idx(&mut e, "tobi.testnet"));
+        e.advance(30 * DAY);
+        let _ = e.as_("amara.testnet", 0).claim(o());
+        sign(&mut e, a, 1);
+        let first = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap();
+        e.as_("exec.testnet", 0).report_broadcast(o(), a, first.txid.clone());
+        e.as_("exec.testnet", 0).report_failed(o(), a, "Stuck".into());
+        let _ = e.as_("exec.testnet", 0).retry_transfer(o(), a);
+        sign(&mut e, a, 1);
+        let bumped = e.as_("x.testnet", 0).get_btc_tx(o(), a).unwrap();
+        // Tobi chains on the bumped change
+        let _ = e.as_("tobi.testnet", 0).claim(o());
+        sign(&mut e, t, 1);
+        assert_eq!(e.as_("x.testnet", 0).get_btc_tx(o(), t).unwrap().inputs[0].txid, bumped.txid);
+
+        e.as_("exec.testnet", 0).report_broadcast(o(), a, first.txid.clone());
+        let rel = e.as_("x.testnet", 0).get_btc_release(o()).unwrap();
+        assert_eq!((rel.signed, rel.last), (1, Some(a)));
+        assert_eq!(rel.head, vec![utxo(&first.txid, 1, first.outputs[1].value.0)]);
+        let tr = e.plan().proposal.unwrap().transfers;
+        assert_eq!((tr[t as usize].state, tr[t as usize].failure.as_deref()), (TransferState::Failed, Some("Rechained")));
+        assert!(e.as_("x.testnet", 0).get_btc_tx(o(), t).is_none());
+
+        let _ = e.as_("exec.testnet", 0).retry_transfer(o(), t);
+        let tt = e.as_("x.testnet", 0).get_btc_tx(o(), t).unwrap();
+        assert_eq!((tt.inputs[0].txid.clone(), tt.seq), (first.txid.clone(), 1));
+    }
+
+    #[test]
     #[should_panic(expected = "E_PROPOSAL_OPEN")]
     fn destinations_frozen_while_release_open() {
         let mut e = with_vault();

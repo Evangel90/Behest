@@ -29,7 +29,7 @@ const transfer = (state: Transfer["state"], extra: Partial<Transfer> = {}): Tran
   eth_tx: null, signature: null, attempts: 1, tx_hash: null, failure: null, ...extra,
 });
 
-function setup(t: Transfer, b: BtcTx, net: Partial<BtcPort> = {}) {
+function setup(t: Transfer, b: BtcTx, net: Partial<BtcPort> = {}, versions: BtcTx[] = []) {
   const calls: string[] = [];
   const near = {
     config: async () => ({ eth_max_fee_cap: "1", eth_chain_id: 1, mpc_contract: "m" }),
@@ -45,6 +45,7 @@ function setup(t: Transfer, b: BtcTx, net: Partial<BtcPort> = {}) {
     getReleaseOptions: async () => null,
     getBtcTx: async () => b,
     getBtcRelease: async () => ({ last: 0 }),
+    getBtcTxVersions: async () => versions,
     btcVaultAddress: async () => vault.address!,
   } as unknown as NearPort;
   const sent: string[] = [];
@@ -140,5 +141,61 @@ describe("Bitcoin payouts", () => {
   it("does not retry a conflict (a guardian must rebase)", async () => {
     const s = setup(transfer("Failed", { failure: "Conflict" }), build());
     expect(await s.tick()).toBe("needs-human");
+  });
+
+  describe("fee-bumped versions", () => {
+    const old = { ...build({ amount: 60_000n }), txid: "0b".repeat(32) };
+
+    it("broadcasts the bump as a replacement of its own earlier version", async () => {
+      const b = build();
+      const s = setup(transfer("Signed"), b, { outspend: async () => old.txid }, [old]);
+      expect(await s.tick()).toBe("broadcast");
+      expect(s.sent).toEqual([b.raw]);
+      expect(s.calls).toEqual([`broadcast:0:${b.txid}`]);
+    });
+
+    it("keeps the earlier version when it was already mined", async () => {
+      const b = build();
+      const s = setup(transfer("Signed"), b, {
+        outspend: async () => old.txid,
+        broadcast: async () => { throw new Error("bad-txns-inputs-missingorspent"); },
+        status: async (id) => (id === old.txid ? { confirmed: true, height: 99 } : null),
+      }, [old]);
+      expect(await s.tick()).toBe("broadcast");
+      expect(s.calls).toEqual([`broadcast:0:${old.txid}`]);
+    });
+
+    it("asks for another bump when the replacement is underpriced", async () => {
+      const b = build();
+      const s = setup(transfer("Signed"), b, {
+        outspend: async () => old.txid,
+        broadcast: async () => { throw new Error("insufficient fee, rejecting replacement"); },
+        status: async () => ({ confirmed: false, height: null }),
+      }, [old]);
+      expect(await s.tick()).toBe("reported-failure");
+      expect(s.calls).toEqual(["failed:0:Underpriced"]);
+    });
+
+    it("tracks the earlier version instead of calling it a conflict", async () => {
+      const b = build();
+      const s = setup(transfer("Broadcast", { tx_hash: b.txid }), b, { outspend: async () => old.txid }, [old]);
+      await s.tick(); // first sight: start the clock
+      expect(await s.tick()).toBe("broadcast");
+      expect(s.calls).toEqual([`broadcast:0:${old.txid}`]);
+    });
+
+    it("reports a winning earlier version rather than retrying", async () => {
+      const b = build();
+      const s = setup(transfer("Failed", { failure: "Stuck" }), b, { outspend: async () => old.txid }, [old]);
+      expect(await s.tick()).toBe("broadcast");
+      expect(s.calls).toEqual([`broadcast:0:${old.txid}`]);
+    });
+
+    it("still reports a spend by an unknown transaction as a conflict", async () => {
+      const b = build();
+      const s = setup(transfer("Signed"), b, { outspend: async () => "0c".repeat(32) }, [old]);
+      expect(await s.tick()).toBe("reported-failure");
+      expect(s.calls).toEqual(["failed:0:Conflict"]);
+    });
   });
 });

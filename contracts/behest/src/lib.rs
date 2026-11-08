@@ -534,6 +534,10 @@ impl Contract {
         // closed. (If its inputs were real, broadcasting it later only pays the
         // owner's own address.)
         if w.asset.is_btc() {
+            // A replaced version may still be mined: then it isn't cancellable.
+            if !read_btx_versions(&owner, VAULT_WITHDRAWAL, None).is_empty() {
+                fail(Error::InvalidTransferState);
+            }
             w.failure = Some("Cancelled".into());
             write_withdrawal(&owner, &w);
             emit("vault_withdrawal_cancelled", near_sdk::serde_json::json!({"owner": owner, "asset": "Btc"}));
@@ -637,6 +641,15 @@ impl Contract {
         read_btx(&owner, index, pid)
     }
 
+    /// Earlier signed versions of a Bitcoin payout replaced by a fee bump.
+    pub fn get_btc_tx_versions(&self, owner: AccountId, index: u32) -> Vec<BtcTx> {
+        let pid = if index == VAULT_WITHDRAWAL { None } else { self.read_plan(&owner).and_then(|p| p.proposal).map(|p| p.id) };
+        if index != VAULT_WITHDRAWAL && pid.is_none() {
+            return vec![];
+        }
+        read_btx_versions(&owner, index, pid)
+    }
+
     pub fn get_btc_release(&self, owner: AccountId) -> Option<BtcRelease> {
         let id = self.read_plan(&owner)?.proposal?.id;
         read_btc_release(&owner).filter(|r| r.proposal_id == id)
@@ -710,6 +723,7 @@ impl Contract {
             fail(Error::VaultBusy);
         }
         write_withdrawal(&owner, &new_transfer(&owner, Asset::Btc, to.clone(), amount.0 as u128));
+        remove_btx(&owner, VAULT_WITHDRAWAL, None);
         write_btx(&owner, VAULT_WITHDRAWAL, None, &BtcTx { inputs: utxos, outputs: vec![], fee_rate: 0, fee: U64(0), seq: 0, txid: String::new(), sighashes: vec![], signatures: vec![], raw: None });
         emit("vault_withdrawal", near_sdk::serde_json::json!({"owner": owner, "asset": "Btc", "amount": amount, "to": to}));
         self.sign_btc(&owner, VAULT_WITHDRAWAL as usize)
@@ -1202,6 +1216,9 @@ impl Contract {
     pub fn report_broadcast(&mut self, owner: AccountId, index: u32, tx_hash: String) {
         self.assert_executor();
         let mut tr = self.tr_get(&owner, index);
+        if tr.asset.is_btc() {
+            return self.report_btc_broadcast(&owner, index, tr, tx_hash);
+        }
         if !tr.asset.is_external() || !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
             fail(Error::InvalidTransferState);
         }
@@ -1583,6 +1600,28 @@ fn write_btx(owner: &AccountId, index: u32, pid: Option<u64>, b: &BtcTx) {
 
 fn remove_btx(owner: &AccountId, index: u32, pid: Option<u64>) {
     env::storage_remove(&btx_key(owner, index, pid));
+    env::storage_remove(&btxv_key(owner, index, pid));
+}
+
+/// Earlier signed versions of a payout that a fee bump replaced (newest last).
+/// Any of them may still be the one the network mines.
+fn btxv_key(owner: &AccountId, index: u32, pid: Option<u64>) -> Vec<u8> {
+    let mut k = b"btxv".to_vec();
+    k.extend_from_slice(&btx_key(owner, index, pid)[3..]);
+    k
+}
+
+fn read_btx_versions(owner: &AccountId, index: u32, pid: Option<u64>) -> Vec<BtcTx> {
+    env::storage_read(&btxv_key(owner, index, pid)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn write_btx_versions(owner: &AccountId, index: u32, pid: Option<u64>, v: &Vec<BtcTx>) {
+    env::storage_write(&btxv_key(owner, index, pid), &near_sdk::borsh::to_vec(v).expect("borsh"));
+}
+
+/// The vault change a payout leaves (output 1), if any.
+fn btc_change(b: &BtcTx) -> Vec<BtcUtxo> {
+    b.outputs.get(1).map(|o| vec![BtcUtxo { txid: b.txid.clone(), vout: 1, value: o.value }]).unwrap_or_default()
 }
 
 /// Validates reported coins: 1..=MAX_BTC_INPUTS distinct outpoints with a
@@ -1893,6 +1932,70 @@ impl Contract {
     /// T1b / T6: build the exact transaction from the snapshot and ask the MPC
     /// network to sign its hash. The nonce is assigned once and never changes;
     /// only the fees move on retry, bounded by the cap.
+    /// T3 for Bitcoin. The reported txid must be a version this contract
+    /// built. The current one needs a signed transfer; a replaced version is
+    /// already on the network (the executor saw it spend the inputs), so it is
+    /// adopted from any unsettled state: it becomes the current version, the
+    /// release head moves to its change, and later payouts that spent the
+    /// bumped version's change are reset to be signed again from there.
+    fn report_btc_broadcast(&mut self, owner: &AccountId, index: u32, mut tr: Transfer, txid: String) {
+        let pid = self.btx_pid(owner, index);
+        let cur = read_btx(owner, index, pid).unwrap_or_else(|| fail(Error::InvalidTransferState));
+        if cur.txid == txid && cur.raw.is_some() {
+            if !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+                fail(Error::InvalidTransferState);
+            }
+        } else {
+            if tr.state == TransferState::Confirmed {
+                fail(Error::InvalidTransferState);
+            }
+            let mut versions = read_btx_versions(owner, index, pid);
+            let at = versions.iter().position(|v| v.txid == txid).unwrap_or_else(|| fail(Error::InvalidTransferState));
+            let old = versions.remove(at);
+            if cur.raw.is_some() && !versions.iter().any(|v| v.txid == cur.txid) {
+                versions.push(cur.clone());
+            }
+            write_btx_versions(owner, index, pid, &versions);
+            write_btx(owner, index, pid, &old);
+            if let Some(id) = pid {
+                let mut rel = read_btc_release(owner).unwrap_or_else(|| fail(Error::NoProposal));
+                let transfers = self.plan_ref(owner).proposal.map(|p| p.transfers).unwrap_or_default();
+                let mut reset = vec![];
+                for (j, t) in transfers.iter().enumerate() {
+                    let j = j as u32;
+                    if j == index || !t.asset.is_btc() {
+                        continue;
+                    }
+                    if read_btx(owner, j, Some(id)).is_some_and(|b| b.seq > old.seq) {
+                        if t.state == TransferState::Confirmed {
+                            fail(Error::InvalidTransferState);
+                        }
+                        reset.push(j);
+                    }
+                }
+                for j in &reset {
+                    remove_btx(owner, *j, Some(id));
+                    let mut t = self.tr_get(owner, *j);
+                    t.state = TransferState::Failed;
+                    t.failure = Some("Rechained".into());
+                    t.tx_hash = None;
+                    self.tr_put(owner, *j, t);
+                    emit_transfer(owner, *j, TransferState::Failed);
+                }
+                rel.signed = old.seq + 1;
+                rel.last = Some(index);
+                rel.head = btc_change(&old);
+                write_btc_release(owner, &rel);
+            }
+            emit("btc_version_adopted", near_sdk::serde_json::json!({"owner": owner, "index": index, "txid": txid}));
+            tr.failure = None;
+        }
+        tr.tx_hash = Some(txid);
+        tr.state = TransferState::Broadcast;
+        self.tr_put(owner, index, tr);
+        emit_transfer(owner, index, TransferState::Broadcast);
+    }
+
     fn btx_pid(&self, owner: &AccountId, index: u32) -> Option<u64> {
         if index == VAULT_WITHDRAWAL {
             None
@@ -1941,6 +2044,13 @@ impl Contract {
                 let bumped = (b.fee_rate + 1).max(b.fee_rate * 5 / 4).min(cfg.max_fee_rate);
                 if bumped <= b.fee_rate {
                     fail(Error::FeeAtCap);
+                }
+                // It may already be in a mempool or a block: keep it so the
+                // executor can still recognise and report it.
+                let mut v = read_btx_versions(owner, idx, pid);
+                if !v.iter().any(|x| x.txid == b.txid) {
+                    v.push(b.clone());
+                    write_btx_versions(owner, idx, pid, &v);
                 }
                 (b.inputs.clone(), b.seq, bumped, false)
             }

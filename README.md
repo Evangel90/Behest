@@ -169,7 +169,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Allowlisted Sepolia ERC-20 (WETH): token address snapshotted per transfer, `transfer()` calldata signed by MPC, one fee reserve per vault transaction, executor calldata check (D15, threats 21–22)
 - [x] Partial failure and retry across two assets without replaying the successful transfer (`e2e-partial`; executor `WouldRevert` pre-check)
 - [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
-- [ ] Bitcoin testnet adapter: contract, executor, relayer and web done (D20, threats 28–30); live `e2e-btc` waiting for testnet4 coins
+- [ ] Bitcoin testnet adapter: contract, executor, relayer and web done (D20, threats 28–31); live `e2e-btc` waiting for testnet4 coins
 - [x] Delay-signer quorum; automatic and hybrid release modes per plan, heir and asset group (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve

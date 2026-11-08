@@ -70,6 +70,7 @@ export function createNearPort(o: NearOptions): NearPort {
     release: (owner, heir) => call("release", { owner, heir }, 300),
     getBtcTx: (owner, index) => view<BtcTx | null>("get_btc_tx", { owner, index }),
     getBtcRelease: (owner) => view<{ last: number | null } | null>("get_btc_release", { owner }),
+    getBtcTxVersions: (owner, index) => view<BtcTx[]>("get_btc_tx_versions", { owner, index }),
     btcVaultAddress: async (owner) => (await view<{ address: string } | null>("get_btc_vault", { owner }))?.address ?? null,
   };
 }

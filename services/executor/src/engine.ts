@@ -18,7 +18,7 @@ export interface EngineOptions {
 }
 
 /** Failure reasons the executor retries on its own. Others need a human. */
-export const AUTO_RETRY = new Set(["SignFailed", "Stuck", "Underpriced", "FeeAboveCap", "Dropped", "BadSignature"]);
+export const AUTO_RETRY = new Set(["SignFailed", "Stuck", "Underpriced", "FeeAboveCap", "Dropped", "BadSignature", "Rechained"]);
 // Bitcoin "Conflict" (a vault coin was spent by something else) needs a guardian
 // to rebase the release onto the vault's real coins, so it isn't retried.
 
@@ -291,10 +291,33 @@ export class Engine {
       case "Broadcast":
         return this.btcTrack(owner, index, t, key);
       case "Failed":
-        return this.maybeRetry(owner, index, t, key);
+      case "Signing": {
+        // A fee bump replaced a version that may still win: if the network
+        // has one, report it instead of retrying (or cancelling) blind.
+        const won = await this.btcVersionOnNetwork(owner, index);
+        if (won) return this.btcAdopt(owner, index, won, key);
+        return t.state === "Failed" ? this.maybeRetry(owner, index, t, key) : "noop";
+      }
       default:
         return "noop";
     }
+  }
+
+  /** Txids of the earlier, replaced versions of this payout. */
+  private async btcVersions(owner: string, index: number): Promise<Set<string>> {
+    return new Set(((await this.near.getBtcTxVersions?.(owner, index)) ?? []).map((v) => v.txid));
+  }
+
+  /** A replaced version that spends this payout's inputs on the network, if any. */
+  private async btcVersionOnNetwork(owner: string, index: number): Promise<string | null> {
+    const versions = await this.btcVersions(owner, index);
+    if (!versions.size) return null;
+    const b = await this.near.getBtcTx!(owner, index);
+    for (const i of b?.inputs ?? []) {
+      const s = await this.btc!.outspend(i.txid, i.vout);
+      if (s && s !== "unspent" && versions.has(s)) return s;
+    }
+    return null;
   }
 
   private async btcBroadcast(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
@@ -309,11 +332,18 @@ export class Engine {
     // Inputs: a payout spends the previous payout's change, so that one must
     // reach the network first (like an earlier ETH nonce). An input someone
     // else spent means the vault moved under us: a guardian must rebase.
+    // A spend by one of this payout's own earlier versions is the fee bump's
+    // reason for being: broadcast it as a replacement (BIP125).
+    let replacing: string | null = null;
     for (const i of b.inputs) {
       const s = await this.btc!.outspend(i.txid, i.vout);
       if (s === null) return "waiting-for-earlier-nonce";
       if (s !== "unspent") {
         if (s === b.txid) return this.btcAdopt(owner, index, b.txid, key);
+        if ((await this.btcVersions(owner, index)).has(s)) {
+          replacing = s;
+          continue;
+        }
         await this.near.reportFailed(owner, index, "Conflict");
         return "reported-failure";
       }
@@ -322,6 +352,17 @@ export class Engine {
       await this.btc!.broadcast(b.raw);
     } catch (e) {
       const msg = String(e).toLowerCase();
+      if (replacing) {
+        // Mined already, or the replacement was refused: the earlier version
+        // is the one out there. A refusal for fees gets another bump later.
+        const st = await this.btc!.status(replacing);
+        if (!st?.confirmed && (msg.includes("fee") || msg.includes("replacement"))) {
+          await this.near.reportFailed(owner, index, "Underpriced");
+          return "reported-failure";
+        }
+        this.opts.log("earlier version kept", { key, txid: replacing, reason: msg.slice(0, 120) });
+        return this.btcAdopt(owner, index, replacing, key);
+      }
       if (msg.includes("already in") || msg.includes("txn-already-known") || msg.includes("already-in-mempool")) {
         // fine: it's out there
       } else if (msg.includes("fee") || msg.includes("insufficient priority")) {
@@ -374,11 +415,12 @@ export class Engine {
     // Unknown to the network: dropped, or replaced by a conflicting spend.
     const b = await this.near.getBtcTx!(owner, index);
     if (!b?.raw) return "noop";
+    const versions = await this.btcVersions(owner, index);
     for (const i of b.inputs) {
       const sp = await this.btc!.outspend(i.txid, i.vout);
       if (sp && sp !== "unspent" && sp !== txid) {
-        // A bumped version of this same payout? Its txid is in the contract only
-        // after re-signing, so anything else is a conflict.
+        // Another version of this same payout won: that's the one to track.
+        if (versions.has(sp) || sp === b.txid) return this.btcAdopt(owner, index, sp, key);
         await this.near.reportFailed(owner, index, "Conflict");
         return "reported-failure";
       }

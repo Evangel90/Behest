@@ -109,6 +109,8 @@ export interface NearPort {
   /** Bitcoin (D20); optional so EVM-only deployments and fakes needn't implement it. */
   getBtcTx?(owner: string, index: number): Promise<BtcTx | null>;
   getBtcRelease?(owner: string): Promise<{ last: number | null } | null>;
+  /** Earlier signed versions of a payout that a fee bump replaced. */
+  getBtcTxVersions?(owner: string, index: number): Promise<BtcTx[]>;
   btcVaultAddress?(owner: string): Promise<string | null>;
 }
 
