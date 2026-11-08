@@ -1,0 +1,77 @@
+use near_sdk::env;
+
+/// Coded errors. The code before the colon is stable; the UI maps it to copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    Unauthorized,
+    Paused,
+    PlanExists,
+    NoPlan,
+    ProposalExists,
+    NoProposal,
+    NotOverdue,
+    NotGuardian,
+    NotHeir,
+    AlreadyVoted,
+    NotProposed,
+    CancelWindowClosed,
+    NotEligible,
+    NothingToDistribute,
+    InsufficientFeeReserve,
+    InsufficientEscrow,
+    InsufficientDeposit,
+    InvalidHeirs,
+    DuplicateHeir,
+    InvalidShares,
+    NoDestination,
+    InvalidEthAddress,
+    InvalidGuardians,
+    InvalidQuorum,
+    ConflictingRole,
+    DurationOutOfBounds,
+    ProposalOpen,
+    InvalidTransferState,
+    BadIndex,
+    BadDestination,
+}
+
+impl Error {
+    pub fn code(self) -> &'static str {
+        match self {
+            Error::Unauthorized => "E_UNAUTHORIZED",
+            Error::Paused => "E_PAUSED",
+            Error::PlanExists => "E_PLAN_EXISTS",
+            Error::NoPlan => "E_NO_PLAN",
+            Error::ProposalExists => "E_PROPOSAL_EXISTS",
+            Error::NoProposal => "E_NO_PROPOSAL",
+            Error::NotOverdue => "E_NOT_OVERDUE",
+            Error::NotGuardian => "E_NOT_GUARDIAN",
+            Error::NotHeir => "E_NOT_HEIR",
+            Error::AlreadyVoted => "E_ALREADY_VOTED",
+            Error::NotProposed => "E_NOT_PROPOSED",
+            Error::CancelWindowClosed => "E_CANCEL_WINDOW_CLOSED",
+            Error::NotEligible => "E_NOT_ELIGIBLE",
+            Error::NothingToDistribute => "E_NOTHING_TO_DISTRIBUTE",
+            Error::InsufficientFeeReserve => "E_INSUFFICIENT_FEE_RESERVE",
+            Error::InsufficientEscrow => "E_INSUFFICIENT_ESCROW",
+            Error::InsufficientDeposit => "E_INSUFFICIENT_DEPOSIT",
+            Error::InvalidHeirs => "E_INVALID_HEIRS",
+            Error::DuplicateHeir => "E_DUPLICATE_HEIR",
+            Error::InvalidShares => "E_INVALID_SHARES",
+            Error::NoDestination => "E_NO_DESTINATION",
+            Error::InvalidEthAddress => "E_INVALID_ETH_ADDRESS",
+            Error::InvalidGuardians => "E_INVALID_GUARDIANS",
+            Error::InvalidQuorum => "E_INVALID_QUORUM",
+            Error::ConflictingRole => "E_CONFLICTING_ROLE",
+            Error::DurationOutOfBounds => "E_DURATION_OUT_OF_BOUNDS",
+            Error::ProposalOpen => "E_PROPOSAL_OPEN",
+            Error::InvalidTransferState => "E_INVALID_TRANSFER_STATE",
+            Error::BadIndex => "E_BAD_INDEX",
+            Error::BadDestination => "E_BAD_DESTINATION",
+        }
+    }
+}
+
+pub fn fail(e: Error) -> ! {
+    env::panic_str(e.code())
+}
