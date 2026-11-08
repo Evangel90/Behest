@@ -12,6 +12,7 @@ Non-custodial inheritance for digital assets, enforced by a NEAR contract and NE
 | `contracts/behest/` | Rust NEAR contract (near-sdk 5.x) |
 | `services/executor/` | TypeScript executor: broadcasts contract-signed Sepolia transfers, tracks confirmations, retries |
 | `apps/web/` | Next.js web app: landing, owner dashboard and setup, guardian approval, mobile heir claim, public inspector, “Try as…” personas |
+| `services/notifier/` | Read-only notifier: check-in reminders and lifecycle notices to the console and an optional webhook |
 | `services/relayer/` | Gas relayer: pays NEAR gas (NEP-366 meta-transactions) so heirs, guardians and owner check-ins need no NEAR |
 | `tools/testnet/` | Testnet deploy script and live end-to-end scenarios |
 | `deployments/testnet.json` | Current testnet deployment (public account IDs, wasm hash) |
@@ -56,6 +57,19 @@ Sign-in options:
 - **Try as…** (testnet only). `/api/demo` creates six funded accounts under `DEMO_FUNDER_ACCOUNT_ID` from public keys the browser generates. The private keys never leave the browser. Rate limits: 3 sandboxes per hour per IP and 30 per day.
 
 Heirs see the paper theme in plain language; hashes appear only under "Technical details". Anyone can open `/plan/<owner>?view=inspect`.
+
+## Notifier
+
+```sh
+pnpm --filter @behest/notifier test
+NOTIFY_OWNERS=kemi.testnet pnpm --filter @behest/notifier start   # optional NOTIFY_WEBHOOK_URL (Slack/Discord-style JSON)
+```
+
+It sends:
+- an owner reminder once 75% of the check-in window has passed;
+- notices on unreachable, proposed, approved (with the cancel deadline), cancelled, ready to receive, transfer failed, and settled.
+
+Each notice has a stable key, so restarts never repeat one. The notifier holds no keys, and a missed notice can't change a plan. It watches every open release plus the owners in `NOTIFY_OWNERS`; the contract doesn't list all plans.
 
 ## Gas relayer
 

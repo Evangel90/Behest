@@ -1,0 +1,21 @@
+{
+  "name": "@behest/notifier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Behest notifier: watches plans and sends reminders and lifecycle notices to the console and an optional webhook.",
+  "scripts": {
+    "start": "tsx --env-file=../../.env src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
