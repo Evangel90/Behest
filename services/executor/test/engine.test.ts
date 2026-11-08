@@ -78,6 +78,8 @@ class FakeEth implements EthPort {
   known = async (h: Hex) => this.mempool.has(h) || this.receipts.has(h);
   blockNumber = async () => this.head;
   minedNonce = async () => this.mined;
+  needGas = 21_000n;
+  estimateTransferGas = async () => this.needGas;
 }
 
 let near: FakeNear, eth: FakeEth, store: Store, clock: number, engine: Engine;
@@ -122,6 +124,21 @@ describe("Signed transfers", () => {
     near.transfers = [transfer("Signed")];
     expect(await run()).toBe("needs-human");
     expect(eth.sent).toEqual([]);
+    expect(near.calls).toEqual([]);
+  });
+
+  it("refuses to broadcast when the signed gas limit is below the estimate", async () => {
+    near.raw = await signed();
+    near.transfers = [transfer("Signed")];
+    eth.needGas = 207_391n; // first transfer to an unused address on Sepolia
+    expect(await run()).toBe("reported-failure");
+    expect(eth.sent).toEqual([]);
+    expect(near.calls).toEqual(["failed:0:GasLimitTooLow"]);
+  });
+
+  it("does not auto-retry GasLimitTooLow (needs the admin to raise the limit)", async () => {
+    near.transfers = [transfer("Failed", { failure: "GasLimitTooLow" })];
+    expect(await run()).toBe("needs-human");
     expect(near.calls).toEqual([]);
   });
 

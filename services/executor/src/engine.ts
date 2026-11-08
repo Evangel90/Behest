@@ -107,6 +107,19 @@ export class Engine {
     if (nonce > mined) return "waiting-for-earlier-nonce";
     if (nonce < mined) return this.reconcileConsumedNonce(owner, index, raw, key);
 
+    // A transfer that runs out of gas still burns the vault's fee and its
+    // nonce. Since Glamsterdam a first transfer to an unused address costs far
+    // more than 21k, so check before sending. Re-signing at the same nonce with
+    // a higher limit (after the admin raises it) is safe.
+    if (mem.hashes.length === 0) {
+      const need = await this.eth.estimateTransferGas(vault, tx.to as `0x${string}`, tx.value ?? 0n).catch(() => null);
+      if (need !== null && need > (tx.gas ?? 0n)) {
+        this.opts.log("gas limit too low: refusing to broadcast", { key, signed: String(tx.gas), needed: String(need) });
+        await this.near.reportFailed(owner, index, "GasLimitTooLow");
+        return "reported-failure";
+      }
+    }
+
     let hash: `0x${string}`;
     try {
       hash = await this.eth.sendRaw(raw);

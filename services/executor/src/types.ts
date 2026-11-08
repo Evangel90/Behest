@@ -8,6 +8,7 @@ export interface EthTxParams {
   max_fee_per_gas: string;
   max_priority_fee_per_gas: string;
   payload_hash: string;
+  gas_limit: number;
 }
 
 export interface Transfer {
@@ -67,6 +68,8 @@ export interface EthPort {
   blockNumber(): Promise<bigint>;
   /** Count of mined txs from `address` (the next usable nonce). */
   minedNonce(address: `0x${string}`): Promise<number>;
+  /** Gas a plain value transfer `from → to` needs right now. */
+  estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint): Promise<bigint>;
 }
 
 /**
