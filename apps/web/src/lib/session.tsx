@@ -18,6 +18,8 @@ import { loadSandbox, type Persona } from "./demo";
 export interface CallOptions {
   deposit?: bigint;
   tgas?: number;
+  /** Another contract to call (e.g. a token's ft_transfer_call). Never sponsored. */
+  receiverId?: string;
 }
 export interface CallResult {
   txHash: string;
@@ -102,7 +104,8 @@ export function personaSession(p: Persona): Session {
     async call(method, args, opts = {}) {
       const deposit = opts.deposit ?? 0n;
       const fc = actions.functionCall(method, args, teraToGas(opts.tgas ?? 100), deposit);
-      if (sponsorable(method, deposit)) {
+      const receiverId = opts.receiverId ?? CONTRACT_ID;
+      if (!opts.receiverId && sponsorable(method, deposit)) {
         try {
           const { signedDelegate } = await acct.createSignedMetaTransaction({ receiverId: CONTRACT_ID, actions: [fc], blockHeightTtl: 120 });
           return { txHash: await relay(base64Encode(encodeSignedDelegate(signedDelegate))), sponsored: true };
@@ -111,7 +114,7 @@ export function personaSession(p: Persona): Session {
           if (!(e instanceof RelayError) || e.code !== "UNREACHABLE") throw e instanceof RelayError ? new Error(`Relayer: ${e.message}`) : e;
         }
       }
-      const out = await acct.signAndSendTransaction({ receiverId: CONTRACT_ID, actions: [fc], throwOnFailure: false });
+      const out = await acct.signAndSendTransaction({ receiverId, actions: [fc], throwOnFailure: false });
       const err = failureOf(out);
       if (err) throw new Error(err);
       return { txHash: txHashOf(out), sponsored: false };
@@ -129,7 +132,8 @@ function walletSession(wallet: NearWalletBase, accountId: string): Session {
     async call(method, args, opts = {}) {
       const deposit = opts.deposit ?? 0n;
       const fc = actions.functionCall(method, args, teraToGas(opts.tgas ?? 100), deposit);
-      if (canDelegate && sponsorable(method, deposit)) {
+      const receiverId = opts.receiverId ?? CONTRACT_ID;
+      if (canDelegate && !opts.receiverId && sponsorable(method, deposit)) {
         const { signedDelegateActions } = await wallet.signDelegateActions({
           network: "testnet",
           signerId: accountId,
@@ -144,7 +148,7 @@ function walletSession(wallet: NearWalletBase, accountId: string): Session {
           }
         }
       }
-      const out = await wallet.signAndSendTransaction({ network: "testnet", signerId: accountId, receiverId: CONTRACT_ID, actions: [fc] });
+      const out = await wallet.signAndSendTransaction({ network: "testnet", signerId: accountId, receiverId, actions: [fc] });
       const err = failureOf(out);
       if (err) throw new Error(err);
       return { txHash: txHashOf(out), sponsored: false };

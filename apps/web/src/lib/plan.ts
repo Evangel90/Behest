@@ -1,6 +1,6 @@
 // Pure plan logic for the UI: plain-language summaries, roles, what each person
 // can do right now, and display formatting. No I/O, so it's unit-tested.
-import type { PlanInput, PlanStatus, PlanView, Transfer, TransferState, Asset, Erc20Token } from "./types";
+import type { PlanInput, PlanStatus, PlanView, Transfer, TransferState, Asset, Erc20Token, Nep141Token } from "./types";
 
 export type Role = "owner" | "guardian" | "heir";
 
@@ -145,13 +145,19 @@ export const formatEth = (wei: string | bigint, digits = 6) => fmt(BigInt(wei), 
 
 // Allowlisted tokens, filled from the contract config on first read.
 let TOKENS: Erc20Token[] = [];
-export const registerTokens = (tokens: Erc20Token[]) => void (TOKENS = tokens);
-export const tokenOf = (asset: Asset) => (typeof asset === "object" ? TOKENS.find((t) => t.address === asset.Erc20.toLowerCase()) : undefined);
-export const isEvm = (asset: Asset) => asset !== "Near";
+let FTS: Nep141Token[] = [];
+export const registerTokens = (tokens: Erc20Token[], fts: Nep141Token[] = []) => void ((TOKENS = tokens), (FTS = fts));
+export const tokenOf = (asset: Asset): Pick<Erc20Token, "symbol" | "decimals"> | undefined => {
+  if (typeof asset !== "object") return undefined;
+  if ("Erc20" in asset) return TOKENS.find((t) => t.address === asset.Erc20.toLowerCase());
+  return FTS.find((t) => t.account_id === asset.Nep141);
+};
+export const isEvm = (asset: Asset) => asset === "Eth" || (typeof asset === "object" && "Erc20" in asset);
 export function assetLabel(asset: Asset): string {
   if (asset === "Near") return "NEAR";
   if (asset === "Eth") return "ETH";
-  return tokenOf(asset)?.symbol ?? `token ${asset.Erc20.slice(0, 8)}…`;
+  const id = "Erc20" in asset ? asset.Erc20.slice(0, 8) + "…" : asset.Nep141;
+  return tokenOf(asset)?.symbol ?? `token ${id}`;
 }
 export function formatToken(amount: string | bigint, token: Pick<Erc20Token, "decimals">, digits = 6) {
   return fmt(BigInt(amount), 10n ** BigInt(token.decimals), digits);

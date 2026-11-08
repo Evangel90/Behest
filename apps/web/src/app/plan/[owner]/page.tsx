@@ -137,6 +137,64 @@ function Result({ result }: { result: ReturnType<typeof useAction>["result"] }) 
 
 // ------------------------------------------------------------------- owner
 
+/**
+ * NEP-141 tokens held for the plan. Adding wNEAR wraps NEAR first (the token
+ * registers the owner and keeps its registration fee), then sends it here with
+ * ft_transfer_call; the token refunds anything Behest doesn't accept.
+ */
+function NearTokens({ view, open, busy, act }: { view: PlanView; open: boolean; busy: boolean; act: (label: string, method: string, args: Record<string, unknown>, deposit?: bigint, receiverId?: string) => void }) {
+  const [cfg, setCfg] = useState<ContractConfig | null>(null);
+  const [amt, setAmt] = useState("0.1");
+  useEffect(() => void getConfig().then(setCfg).catch(() => setCfg(null)), []);
+  const fts = cfg?.nep141_tokens ?? [];
+  if (fts.length === 0) return null;
+  const held = (id: string) => BigInt(view.ft_escrow?.find((b) => b.token === id)?.amount ?? "0");
+  return (
+    <div className="flex flex-col gap-2 border-t border-line pt-3">
+      {fts.map((t) => {
+        const units = (() => {
+          try {
+            return parseUnits(amt, t.decimals);
+          } catch {
+            return 0n;
+          }
+        })();
+        return (
+          <div key={t.account_id} className="flex flex-col gap-2">
+            <span className="font-mono text-sm">
+              {formatToken(held(t.account_id), t)} {t.symbol} <span className="text-muted">· {t.account_id}</span>
+            </span>
+            {!open && (
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label={`Amount (${t.symbol})`}>
+                  <input className={`${inputClass} w-32`} inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value)} />
+                </Field>
+                {t.account_id.startsWith("wrap.") && (
+                  <Button
+                    disabled={busy || units === 0n}
+                    onClick={() => {
+                      act(`Wrap ${amt} NEAR`, "near_deposit", {}, units, t.account_id);
+                    }}
+                  >
+                    Wrap NEAR
+                  </Button>
+                )}
+                <Button disabled={busy || units === 0n} onClick={() => act(`Add ${t.symbol}`, "ft_transfer_call", { receiver_id: CONTRACT_ID, amount: units.toString(), msg: view.plan.owner }, 1n, t.account_id)}>
+                  Add {t.symbol}
+                </Button>
+                <Button variant="outline" disabled={busy || units === 0n || units > held(t.account_id)} onClick={() => act(`Withdraw ${t.symbol}`, "withdraw_ft", { token: t.account_id, amount: units.toString() })}>
+                  Withdraw
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {!open && <span className="text-xs text-muted">Tokens split between heirs with a NEAR account. Each heir's first token payment includes a small registration fee, taken from the plan's NEAR.</span>}
+    </div>
+  );
+}
+
 function OwnerView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
@@ -145,9 +203,9 @@ function OwnerView({ view, now, refresh }: Props) {
   const p = view.plan.policy;
   const s = view.status;
   const open = s === "Proposed" || s === "Waiting";
-  const act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint) =>
+  const act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint, receiverId?: string) =>
     run(label, async () => {
-      const r = await session!.call(method, args, { deposit });
+      const r = await session!.call(method, args, { deposit, receiverId });
       await refresh?.();
       return r;
     });
@@ -233,6 +291,7 @@ function OwnerView({ view, now, refresh }: Props) {
               </Button>
             </div>
           )}
+          <NearTokens view={view} open={open} busy={!!busy} act={act} />
         </Card>
         <Card className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -408,6 +467,9 @@ function GuardianView({ view, now, refresh }: Props) {
           </p>
           <div className="grid gap-1">
             <Row k="NEAR to distribute" v={`${formatNear(view.plan.escrow)} NEAR`} />
+            {(view.ft_escrow ?? []).filter((b) => b.amount !== "0").map((b) => (
+              <Row key={b.token} k={`${assetLabel({ Nep141: b.token })} to distribute`} v={`${formatAmount({ asset: { Nep141: b.token }, amount: b.amount })}`} />
+            ))}
             {ethHeirs > 0 && (
               <>
                 <Row k="ETH in vault" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "reading…"} />

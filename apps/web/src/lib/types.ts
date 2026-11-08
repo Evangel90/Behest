@@ -20,7 +20,14 @@ export interface PlanInput {
 }
 
 /** ERC-20 transfers carry the lowercase token address. */
-export type Asset = "Near" | "Eth" | { Erc20: string };
+export type Asset = "Near" | "Eth" | { Erc20: string } | { Nep141: string };
+
+export interface Nep141Token {
+  account_id: string;
+  symbol: string;
+  decimals: number;
+  storage_deposit: string;
+}
 
 export interface Erc20Token {
   address: string;
@@ -72,6 +79,8 @@ export interface PlanView {
   overdue_at_ms: number;
   now_ms: number;
   plan: Plan;
+  /** NEP-141 balances held for the plan (older contracts omit it). */
+  ft_escrow?: { token: string; amount: string }[];
 }
 
 export interface ContractConfig {
@@ -83,6 +92,7 @@ export interface ContractConfig {
   eth_priority_fee: string;
   eth_gas_limit: number;
   erc20_tokens: Erc20Token[];
+  nep141_tokens?: Nep141Token[];
   paused: boolean;
   executors: string[];
   demo_timers: boolean;

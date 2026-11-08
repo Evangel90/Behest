@@ -1,6 +1,6 @@
 "use client";
 import { ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
-import { LIFECYCLE, STATUS_STYLE, formatAmount, percent, shortAddr, shortName } from "@/lib/plan";
+import { LIFECYCLE, STATUS_STYLE, formatAmount, isEvm, percent, shortAddr, shortName } from "@/lib/plan";
 import type { PlanView, Transfer } from "@/lib/types";
 import { Bracket, ExtLink, TransferPill, cx } from "./ui";
 
@@ -91,8 +91,8 @@ export function GuardianList({ view }: { view: PlanView }) {
 }
 
 export function receiptUrl(t: Transfer): string | null {
-  if (t.asset !== "Near" && t.tx_hash) return `${ETH_EXPLORER}/tx/${t.tx_hash}`;
-  if (t.asset === "Near" && t.state === "Confirmed") return `${NEAR_EXPLORER}/address/${t.destination}`;
+  if (isEvm(t.asset) && t.tx_hash) return `${ETH_EXPLORER}/tx/${t.tx_hash}`;
+  if (!isEvm(t.asset) && t.state === "Confirmed") return `${NEAR_EXPLORER}/address/${t.destination}`;
   return null;
 }
 

@@ -19,7 +19,7 @@ export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { ow
 export const getVaultWithdrawal = (owner: string) => view<Transfer | null>("get_vault_withdrawal", { owner });
 export async function getConfig() {
   const cfg = await view<ContractConfig>("get_config");
-  registerTokens(cfg.erc20_tokens ?? []);
+  registerTokens(cfg.erc20_tokens ?? [], cfg.nep141_tokens ?? []);
   return cfg;
 }
 export const listOpenReleases = () => view<string[]>("list_open_releases", { from_index: 0, limit: 100 });
