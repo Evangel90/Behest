@@ -673,3 +673,16 @@ fn every_signed_version_is_kept_for_reconciliation() {
     // A late duplicate callback for the same payload does not add a version.
     assert_eq!(e.eth_transfer().signed_versions.len(), 2);
 }
+
+#[test]
+fn claim_schedules_independent_chains_for_near_and_eth() {
+    // Regression: returning `near.and(eth)` is rejected on-chain
+    // ("Returning joint promise is currently prohibited").
+    let mut e = approved();
+    e.advance(30 * DAY);
+    let started = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    assert_eq!(started, 2);
+    assert!(receipts.iter().any(|r| r.receiver_id == acc("amara.testnet")), "NEAR transfer scheduled");
+    assert!(receipts.iter().any(|r| r.receiver_id == acc("v1.signer-prod.testnet")), "MPC sign scheduled");
+}

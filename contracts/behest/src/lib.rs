@@ -13,7 +13,7 @@ mod tests;
 
 use near_sdk::json_types::U128;
 use near_sdk::store::{IterableSet, LookupMap};
-use near_sdk::{env, ext_contract, log, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue};
+use near_sdk::{env, ext_contract, log, near, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise};
 
 pub use errors::Error;
 use errors::fail;
@@ -327,7 +327,10 @@ impl Contract {
 
     /// P8 / T1a. Starts the caller's NEAR transfer. ETH transfers (T1b) are
     /// started by the Chain Signatures path, added in delivery step 4.
-    pub fn claim(&mut self, owner: AccountId) -> PromiseOrValue<()> {
+    /// Returns the number of transfers started. Each transfer is its own
+    /// detached promise chain with its own callback: NEAR forbids returning a
+    /// joint promise, and one transfer's outcome must not depend on another's.
+    pub fn claim(&mut self, owner: AccountId) -> u32 {
         let heir = caller();
         let t = now();
         if self.paused {
@@ -357,21 +360,15 @@ impl Contract {
             .map(|(i, tr)| (i, tr.asset))
             .collect();
 
-        let mut promise: Option<Promise> = None;
+        let started = mine.len() as u32;
         for (i, asset) in mine {
-            let next = match asset {
+            match asset {
                 Asset::Near => self.send_near(&owner, i),
                 Asset::Eth => self.sign_eth(&owner, i),
-            };
-            promise = Some(match promise {
-                Some(prev) => prev.and(next),
-                None => next,
-            });
+            }
+            .detach();
         }
-        match promise {
-            Some(p) => PromiseOrValue::Promise(p),
-            None => PromiseOrValue::Value(()),
-        }
+        started
     }
 
     /// T6. Retry a `Failed` transfer. ETH re-signs the same nonce, recipient
