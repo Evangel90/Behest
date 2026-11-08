@@ -25,7 +25,10 @@ export interface Transfer {
   failure: string | null;
 }
 
-export type Asset = "Near" | "Eth" | { Erc20: string } | { Nep141: string };
+export type Asset = "Near" | "Eth" | "Btc" | { Erc20: string } | { Nep141: string };
+
+/** Paid from the plan's Bitcoin testnet vault (D20). */
+export const isBtc = (a: Asset): a is "Btc" => a === "Btc";
 
 /** Paid from the plan's Ethereum vault (ETH or an allowlisted ERC-20). */
 export const isEvm = (a: Asset): a is "Eth" | { Erc20: string } => a === "Eth" || (typeof a === "object" && "Erc20" in a);
@@ -63,15 +66,15 @@ export interface ReleaseOptions {
   mode: Mode;
   hybrid_grace_ms: number;
   /** First match wins (contract `mode_for`); absent on older contracts. */
-  overrides?: { heir: string | null; assets: "All" | "Near" | "Ethereum"; mode: Mode; hybrid_grace_ms: number }[];
+  overrides?: { heir: string | null; assets: "All" | "Near" | "Ethereum" | "Bitcoin"; mode: Mode; hybrid_grace_ms: number }[];
 }
 
 /** When third parties may start this transfer, or null if never. Mirrors `release`. */
 export function releasableFrom(view: PlanView, opts: ReleaseOptions | null, t: Pick<Transfer, "heir" | "asset">): number | null {
   const end = view.plan.proposal?.waiting_ends_at_ms;
   if (!opts || end == null) return null;
-  const evm = isEvm(t.asset);
-  const o = (opts.overrides ?? []).find((x) => (x.heir == null || x.heir === t.heir) && (x.assets === "All" || (x.assets === "Ethereum") === evm)) ?? opts;
+  const group = isEvm(t.asset) ? "Ethereum" : isBtc(t.asset) ? "Bitcoin" : "Near";
+  const o = (opts.overrides ?? []).find((x) => (x.heir == null || x.heir === t.heir) && (x.assets === "All" || x.assets === group)) ?? opts;
   if (o.mode === "Claim") return null;
   return o.mode === "Automatic" ? end : end + o.hybrid_grace_ms;
 }
@@ -103,6 +106,39 @@ export interface NearPort {
   getReleaseOptions(owner: string): Promise<ReleaseOptions | null>;
   /** Start `heir`'s pending transfers (automatic / hybrid release, D19). */
   release(owner: string, heir: string): Promise<void>;
+  /** Bitcoin (D20); optional so EVM-only deployments and fakes needn't implement it. */
+  getBtcTx?(owner: string, index: number): Promise<BtcTx | null>;
+  getBtcRelease?(owner: string): Promise<{ last: number | null } | null>;
+  btcVaultAddress?(owner: string): Promise<string | null>;
+}
+
+export interface BtcUtxo {
+  txid: string;
+  vout: number;
+  value: string;
+}
+
+/** Mirrors the contract's `BtcTx`. */
+export interface BtcTx {
+  inputs: BtcUtxo[];
+  outputs: { script: string; value: string }[];
+  fee_rate: number;
+  fee: string;
+  seq: number;
+  txid: string;
+  sighashes: string[];
+  raw: string | null;
+}
+
+/** Bitcoin testnet operations (Esplora). */
+export interface BtcPort {
+  /** Returns the txid; throws with the node's message on rejection. */
+  broadcast(raw: string): Promise<string>;
+  /** null when the network doesn't know the tx (never seen or dropped). */
+  status(txid: string): Promise<{ confirmed: boolean; height: number | null } | null>;
+  tipHeight(): Promise<number>;
+  /** "unspent", the spending txid, or null when the output doesn't exist (yet). */
+  outspend(txid: string, vout: number): Promise<string | "unspent" | null>;
 }
 
 export interface Receipt {

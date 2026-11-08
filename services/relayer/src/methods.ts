@@ -11,6 +11,8 @@ export const SPONSORED_METHODS = {
   request_extension: "delay_signer",
   approve_extension: "delay_signer",
   release: "participant",
+  register_btc_vault: "participant",
+  rebase_btc: "guardian",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 export type Role = (typeof SPONSORED_METHODS)[SponsoredMethod];

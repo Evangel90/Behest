@@ -4,10 +4,13 @@
 // Spec: docs/stage0/01-state-machine.md (T3–T6), 03-signing-boundary.md.
 
 import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
-import { VAULT_WITHDRAWAL, expectedCall, isEvm, releasableFrom, type EthPort, type NearPort, type PlanView, type Store, type Transfer } from "./types.js";
+import { checkBtcTx } from "./bitcoin.js";
+import { VAULT_WITHDRAWAL, expectedCall, isBtc, isEvm, releasableFrom, type BtcPort, type EthPort, type NearPort, type PlanView, type Store, type Transfer } from "./types.js";
 
 export interface EngineOptions {
   confirmations: number;
+  /** Bitcoin blocks deep before a payout counts as confirmed (default 1). */
+  btcConfirmations?: number;
   stuckAfterMs: number;
   retryBackoffMs: number;
   now: () => number;
@@ -16,6 +19,8 @@ export interface EngineOptions {
 
 /** Failure reasons the executor retries on its own. Others need a human. */
 export const AUTO_RETRY = new Set(["SignFailed", "Stuck", "Underpriced", "FeeAboveCap", "Dropped", "BadSignature"]);
+// Bitcoin "Conflict" (a vault coin was spent by something else) needs a guardian
+// to rebase the release onto the vault's real coins, so it isn't retried.
 
 export type Outcome =
   | "noop"
@@ -33,6 +38,7 @@ export class Engine {
     private eth: EthPort,
     private store: Store,
     private opts: EngineOptions,
+    private btc?: BtcPort,
   ) {}
 
   async tick(): Promise<Map<string, Outcome>> {
@@ -44,6 +50,15 @@ export class Engine {
       const transfers = view?.plan.proposal?.transfers ?? [];
       const vault = transfers.some((t) => isEvm(t.asset)) ? await this.near.vaultAddress(owner) : null;
       for (const [index, t] of transfers.entries()) {
+        if (isBtc(t.asset)) {
+          const key = `${owner}#${view!.plan.proposal!.id}#${index}`;
+          try {
+            out.set(key, await this.handleBtc(owner, index, t, key));
+          } catch (e) {
+            this.opts.log("transfer error", { key, error: String(e) });
+          }
+          continue;
+        }
         if (!isEvm(t.asset) || !vault) continue;
         const key = `${owner}#${view!.plan.proposal!.id}#${index}`;
         try {
@@ -57,6 +72,15 @@ export class Engine {
     // promptly matters: a release can't be proposed while one is unresolved.
     for (const owner of await this.near.listVaultWithdrawals()) {
       const t = await this.near.getVaultWithdrawal(owner);
+      if (t && isBtc(t.asset)) {
+        const key = `${owner}#withdrawal#btc`;
+        try {
+          out.set(key, await this.handleBtc(owner, VAULT_WITHDRAWAL, t, key));
+        } catch (e) {
+          this.opts.log("withdrawal error", { key, error: String(e) });
+        }
+        continue;
+      }
       if (!t || !isEvm(t.asset)) continue;
       const key = `${owner}#withdrawal#${t.eth_tx?.nonce ?? "unsigned"}`;
       try {
@@ -255,6 +279,120 @@ export class Engine {
     }
     this.opts.log("nonce consumed by an unknown transaction: needs human review", { key });
     return "needs-human";
+  }
+
+  // ------------------------------------------------------------ bitcoin (D20)
+
+  async handleBtc(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
+    if (!this.btc || !this.near.getBtcTx) return "noop";
+    switch (t.state) {
+      case "Signed":
+        return this.btcBroadcast(owner, index, t, key);
+      case "Broadcast":
+        return this.btcTrack(owner, index, t, key);
+      case "Failed":
+        return this.maybeRetry(owner, index, t, key);
+      default:
+        return "noop";
+    }
+  }
+
+  private async btcBroadcast(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
+    const b = await this.near.getBtcTx!(owner, index);
+    const vault = await this.near.btcVaultAddress!(owner);
+    if (!b?.raw || !vault) return "noop";
+    const bad = checkBtcTx(b.raw, b, t, vault);
+    if (bad) {
+      this.opts.log("bitcoin payload mismatch: refusing to broadcast", { key, bad });
+      return "needs-human";
+    }
+    // Inputs: a payout spends the previous payout's change, so that one must
+    // reach the network first (like an earlier ETH nonce). An input someone
+    // else spent means the vault moved under us: a guardian must rebase.
+    for (const i of b.inputs) {
+      const s = await this.btc!.outspend(i.txid, i.vout);
+      if (s === null) return "waiting-for-earlier-nonce";
+      if (s !== "unspent") {
+        if (s === b.txid) return this.btcAdopt(owner, index, b.txid, key);
+        await this.near.reportFailed(owner, index, "Conflict");
+        return "reported-failure";
+      }
+    }
+    try {
+      await this.btc!.broadcast(b.raw);
+    } catch (e) {
+      const msg = String(e).toLowerCase();
+      if (msg.includes("already in") || msg.includes("txn-already-known") || msg.includes("already-in-mempool")) {
+        // fine: it's out there
+      } else if (msg.includes("fee") || msg.includes("insufficient priority")) {
+        await this.near.reportFailed(owner, index, "Underpriced");
+        return "reported-failure";
+      } else if (msg.includes("script-verify") || msg.includes("signature")) {
+        await this.near.reportFailed(owner, index, "BadSignature");
+        return "reported-failure";
+      } else if (msg.includes("missingorspent") || msg.includes("missing-inputs")) {
+        return "waiting-for-earlier-nonce";
+      } else {
+        throw e;
+      }
+    }
+    return this.btcAdopt(owner, index, b.txid, key);
+  }
+
+  private async btcAdopt(owner: string, index: number, txid: string, key: string): Promise<Outcome> {
+    const mem = this.store.get(key);
+    this.store.set(key, { ...mem, hashes: [txid as `0x${string}`], broadcastAt: this.opts.now() });
+    await this.near.reportBroadcast(owner, index, txid);
+    this.opts.log("broadcast", { key, txid });
+    return "broadcast";
+  }
+
+  private async btcTrack(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
+    const txid = t.tx_hash!;
+    const s = await this.btc!.status(txid);
+    if (s?.confirmed && s.height != null) {
+      const depth = (await this.btc!.tipHeight()) - s.height + 1;
+      if (depth < (this.opts.btcConfirmations ?? 1)) return "noop";
+      await this.near.reportConfirmed(owner, index, txid);
+      this.opts.log("confirmed", { key, txid });
+      return "confirmed";
+    }
+    const mem = this.store.get(key);
+    if (mem.broadcastAt === undefined) {
+      this.store.set(key, { ...mem, broadcastAt: this.opts.now() });
+      return "noop";
+    }
+    if (s) {
+      // In the mempool. Only the latest payout can be fee-bumped (nothing
+      // spends its change yet); earlier ones simply wait for a block.
+      if (this.opts.now() - mem.broadcastAt < this.opts.stuckAfterMs) return "noop";
+      const head = index === VAULT_WITHDRAWAL || (await this.near.getBtcRelease?.(owner))?.last === index;
+      if (!head) return "noop";
+      await this.near.reportFailed(owner, index, "Stuck");
+      return "reported-failure";
+    }
+    // Unknown to the network: dropped, or replaced by a conflicting spend.
+    const b = await this.near.getBtcTx!(owner, index);
+    if (!b?.raw) return "noop";
+    for (const i of b.inputs) {
+      const sp = await this.btc!.outspend(i.txid, i.vout);
+      if (sp && sp !== "unspent" && sp !== txid) {
+        // A bumped version of this same payout? Its txid is in the contract only
+        // after re-signing, so anything else is a conflict.
+        await this.near.reportFailed(owner, index, "Conflict");
+        return "reported-failure";
+      }
+    }
+    try {
+      await this.btc!.broadcast(b.raw);
+    } catch (e) {
+      if (!/already/i.test(String(e))) {
+        await this.near.reportFailed(owner, index, "Dropped");
+        return "reported-failure";
+      }
+    }
+    this.store.set(key, { ...mem, broadcastAt: this.opts.now() });
+    return "rebroadcast";
   }
 
   private async maybeRetry(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {

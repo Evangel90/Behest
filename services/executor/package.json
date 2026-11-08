@@ -11,10 +11,13 @@
     "vault": "tsx --env-file-if-exists=../../.env src/vault.ts"
   },
   "dependencies": {
+    "@scure/base": "2.2.0",
+    "@scure/btc-signer": "2.4.1",
     "near-api-js": "7.4.0",
     "viem": "2.57.16"
   },
   "devDependencies": {
+    "@noble/curves": "2.2.0",
     "@types/node": "26.6.6",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
@@ -24,6 +27,7 @@
     "./engine": "./src/engine.ts",
     "./near": "./src/near.ts",
     "./eth": "./src/eth.ts",
-    "./store": "./src/store.ts"
+    "./store": "./src/store.ts",
+    "./bitcoin": "./src/bitcoin.ts"
   }
 }

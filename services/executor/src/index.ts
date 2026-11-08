@@ -1,4 +1,5 @@
 import type { KeyPairString } from "near-api-js";
+import { createBtcPort } from "./bitcoin.js";
 import { Engine } from "./engine.js";
 import { createEthPort } from "./eth.js";
 import { createNearPort } from "./near.js";
@@ -24,11 +25,13 @@ const engine = new Engine(
   fileStore(env("STATE_FILE", ".executor-state.json")),
   {
     confirmations: Number(env("CONFIRMATIONS", "6")),
+    btcConfirmations: Number(env("BTC_CONFIRMATIONS", "1")),
     stuckAfterMs: Number(env("STUCK_AFTER_MS", "600000")),
     retryBackoffMs: Number(env("RETRY_BACKOFF_MS", "120000")),
     now: () => Date.now(),
     log,
   },
+  createBtcPort(env("BTC_ESPLORA_URL", "https://blockstream.info/testnet4/api")),
 );
 
 const interval = Number(env("POLL_INTERVAL_MS", "15000"));

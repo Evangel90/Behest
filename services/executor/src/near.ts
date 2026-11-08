@@ -1,7 +1,7 @@
 import { Account, JsonRpcProvider, baseDecode, teraToGas, type KeyPairString } from "near-api-js";
 import { bytesToHex } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
-import type { ContractConfig, NearPort, PlanView, ReleaseOptions, Transfer } from "./types.js";
+import type { BtcTx, ContractConfig, NearPort, PlanView, ReleaseOptions, Transfer } from "./types.js";
 
 export interface NearOptions {
   rpcUrl: string;
@@ -61,12 +61,15 @@ export function createNearPort(o: NearOptions): NearPort {
     reportBroadcast: (owner, index, tx_hash) => call("report_broadcast", { owner, index, tx_hash }),
     reportConfirmed: (owner, index, tx_hash) => call("report_confirmed", { owner, index, tx_hash }),
     reportFailed: (owner, index, reason) => call("report_failed", { owner, index, reason }),
-    // MPC sign (50 Tgas) + callback (10 Tgas) + headroom.
-    retryTransfer: (owner, index) => call("retry_transfer", { owner, index }, 150),
+    // MPC sign (50 Tgas per signature; a Bitcoin payout signs up to 2 inputs) + callback + headroom.
+    retryTransfer: (owner, index) => call("retry_transfer", { owner, index }, 200),
     listVaultWithdrawals: () => view<string[]>("list_vault_withdrawals"),
     getVaultWithdrawal: (owner) => view<Transfer | null>("get_vault_withdrawal", { owner }),
     cancelVaultWithdrawal: (owner) => call("cancel_vault_withdrawal", { owner }, 150),
     getReleaseOptions: (owner) => view<ReleaseOptions | null>("get_release_options", { owner }),
     release: (owner, heir) => call("release", { owner, heir }, 300),
+    getBtcTx: (owner, index) => view<BtcTx | null>("get_btc_tx", { owner, index }),
+    getBtcRelease: (owner) => view<{ last: number | null } | null>("get_btc_release", { owner }),
+    btcVaultAddress: async (owner) => (await view<{ address: string } | null>("get_btc_vault", { owner }))?.address ?? null,
   };
 }
