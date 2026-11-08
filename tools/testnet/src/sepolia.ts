@@ -5,7 +5,7 @@ import { createNearPort, ethAddressFromMpcKey } from "@behest/executor/near";
 import { memoryStore } from "@behest/executor/store";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createPublicClient, createWalletClient, http, type Hex } from "viem";
+import { createPublicClient, createWalletClient, erc20Abi, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { ROOT, keyOf, log, provider, view } from "./near.js";
@@ -27,6 +27,23 @@ export function loadWallets(): Record<string, HeirKeys> {
 }
 export function saveWallets(owner: string, keys: HeirKeys) {
   writeFileSync(WALLETS_FILE, JSON.stringify({ ...loadWallets(), [owner]: keys }, null, 2), { mode: 0o600 });
+}
+
+/** WETH on Sepolia: a standard ERC-20 that reverts on failed transfers; wrap by sending ETH. */
+export const WETH = "0xfff9976782d46cc05630d1f6ebab18b2324d6b14" as Hex;
+export const WETH_TOKEN = { address: WETH, symbol: "WETH", decimals: 18 };
+
+export const tokenBalance = (token: Hex, owner: Hex) => pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
+
+/** Sends a test wallet's whole token balance to `to` (paid with the wallet's ETH). */
+export async function sweepToken(key: Hex, token: Hex, to: Hex): Promise<bigint> {
+  const acct = privateKeyToAccount(key);
+  const bal = await tokenBalance(token, acct.address);
+  if (bal === 0n) return 0n;
+  const w = createWalletClient({ chain: sepolia, transport, account: acct });
+  const hash = await w.writeContract({ address: token, abi: erc20Abi, functionName: "transfer", args: [to, bal] });
+  await pub.waitForTransactionReceipt({ hash });
+  return bal;
 }
 
 /** Sends a test wallet's whole balance back to `to` (legacy tx: cost is exactly gas × price). */

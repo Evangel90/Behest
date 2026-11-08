@@ -111,8 +111,12 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `insufficient-fee-reserve` | Proposal refused when the ETH vault can't cover the network-fee reserve |
 | `sponsored` | Guardians vote and heirs claim through the relayer, spending exactly 0 NEAR; strangers and non-sponsored methods rejected (needs a running relayer) |
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
-| `e2e-eth` | Two ETH heirs with freshly generated Sepolia wallets: MPC signs nonces 0 and 1 in claim order, a 60 s executor outage loses nothing, the executor holds nonce 1 until nonce 0 is mined, each heir receives exactly its share, and test ETH is swept back to the funder |
+| `e2e-eth` | Two heirs, each receiving ETH and WETH, with freshly generated Sepolia wallets: MPC signs nonces 0–3 in claim order, a 60 s executor outage loses nothing, the executor holds each later nonce until the earlier one is mined, each heir receives exactly its ETH and WETH share, and test ETH and WETH are swept back to the funder |
 | `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
+
+### First ERC-20 release (Stage 2)
+
+On 2026-11-08 the main contract was upgraded in place (no migration; existing plans still decode) and WETH was allowlisted. The vault held 0.015 ETH and 0.002 WETH; the reserve covered 4 vault transactions. Each heir received exact ETH and WETH shares, and the executor sent nonces 0–3 strictly in order after a 60 s outage: Tobi [ETH](https://sepolia.etherscan.io/tx/0x4faae1a9b300c26fc4fbbce8c159d1f498d5fb46cc04e0939e4f104d00c4713f) and [WETH](https://sepolia.etherscan.io/tx/0xeadc257a2ea44f5c9b378703bc1a1ecf2e4ba60176a2ae7f596b82e6d92a7fad), Amara [ETH](https://sepolia.etherscan.io/tx/0x924c1648dcee4cee9c1bffac6664799bf6314234976c4dfbbb74f31610e89fea) and [WETH](https://sepolia.etherscan.io/tx/0x2e66276191dba44a34858b339632af51a371092d49b459acace65ae195e89cb6). About 0.009 ETH of unspent fee reserve stays in that vault. That's the known vault-residual limitation, and it grows with each extra asset until owner vault withdrawal (D7) ships.
 
 ### Clean reproduction (Stage 1 exit gate)
 
@@ -137,3 +141,13 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 7. [x] Gas relayer for heirs and guardians (pulled forward from Stage 2; D14)
 8. [x] Role-based web app with policy and transaction previews
 9. [x] Deploy scripts and live testnet e2e (all scenarios passing; first Sepolia release: [0x38e3…b323](https://sepolia.etherscan.io/tx/0x38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323))
+
+## Stage 2 progress (testnet alpha)
+
+- [x] Allowlisted Sepolia ERC-20 (WETH): token address snapshotted per transfer, `transfer()` calldata signed by MPC, one fee reserve per vault transaction, executor calldata check (D15, threats 21–22)
+- [ ] Partial failure and retry across two assets without replaying the successful transfer (live demo)
+- [ ] Allowlisted NEP-141 token
+- [ ] Bitcoin testnet adapter
+- [ ] Delay-signer quorum; automatic and hybrid release modes
+- [ ] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback
+- [ ] Owner ETH/token withdrawal from the vault (D7)

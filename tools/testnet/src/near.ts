@@ -104,7 +104,11 @@ export async function reclaimScenarioOwners(contract: string, parent: string) {
   const { readdirSync, rmSync } = await import("node:fs");
   const { actions } = await import("near-api-js");
   const dir = join(homedir(), ".near-credentials/testnet");
-  const owners = readdirSync(dir).filter((f) => f.endsWith(`.${parent}.json`)).map((f) => f.slice(0, -5));
+  // Only scenario owners: a short lowercase prefix plus a base-36 timestamp
+  // (e.g. happymw7v6arh). Deployment accounts made by `bootstrap` under the
+  // same parent (behest-<suffix>-…) never match.
+  const scenario = new RegExp(`^[a-z]{2,12}m[0-9a-z]{7}\\.${parent.replace(/\./g, "\\.")}\\.json$`);
+  const owners = readdirSync(dir).filter((f) => scenario.test(f)).map((f) => f.slice(0, -5));
   let n = 0;
   for (const owner of owners) {
     try {

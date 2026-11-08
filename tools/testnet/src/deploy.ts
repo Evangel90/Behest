@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { actions, teraToGas } from "near-api-js";
 import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
+import { WETH_TOKEN } from "./sepolia.js";
 
 const suffix = process.argv[2];
 const parentAt = process.argv.indexOf("--parent");
@@ -60,8 +61,12 @@ if (hasCode && migrate) {
   });
 }
 
-const config = await view<{ executors: string[]; demo_timers: boolean }>(contract, "get_config");
+const config = await view<{ executors: string[]; demo_timers: boolean; erc20_tokens?: { address: string }[] }>(contract, "get_config");
 if (!config.demo_timers) throw new Error("expected a demo-timers build on testnet");
+if (!(config.erc20_tokens ?? []).some((t) => t.address === WETH_TOKEN.address)) {
+  await call(admin, contract, "set_erc20_tokens", { tokens: [WETH_TOKEN] });
+  log("ERC-20 allowlist set", { tokens: [WETH_TOKEN.symbol] });
+}
 if (!config.executors.includes(executor)) {
   await call(admin, contract, "add_executor", { account_id: executor });
   log("executor registered", { executor });

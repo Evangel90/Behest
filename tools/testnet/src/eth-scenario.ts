@@ -13,11 +13,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
-import { createWalletClient, formatEther, parseEther, type Hex } from "viem";
+import { erc20Abi, createWalletClient, formatEther, parseEther, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { account, call, loadDeployment, log, view, reclaimScenarioOwners, waitForKey } from "./near.js";
-import { executor, funderAccount, loadWallets, pub, saveWallets, sweep, transport, vaultOf as vaultFor } from "./sepolia.js";
+import { WETH, executor, funderAccount, loadWallets, pub, saveWallets, sweep, sweepToken, tokenBalance, transport, vaultOf as vaultFor } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -25,7 +25,10 @@ const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];
 const MINUTE = 60_000;
-const FUND = parseEther(process.env.E2E_VAULT_FUND_ETH ?? "0.01");
+// The fee reserve covers one max-fee tx per vault transfer: 2 heirs × (ETH + WETH)
+// × 250k gas × 10 gwei = 0.01 ETH; the remaining 0.005 ETH is split 60/40.
+const FUND = parseEther(process.env.E2E_VAULT_FUND_ETH ?? "0.015");
+const FUND_WETH = parseEther(process.env.E2E_VAULT_FUND_WETH ?? "0.002");
 
 const funder = funderAccount();
 const fundWallet = createWalletClient({ chain: sepolia, transport, account: funder });
@@ -34,10 +37,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
 }
-interface Transfer { heir: string; asset: "Near" | "Eth"; destination: string; amount: string; state: string; tx_hash: string | null; failure: string | null; eth_tx: { nonce: number; gas_limit: number } | null }
+interface Transfer { heir: string; asset: "Near" | "Eth" | { Erc20: string }; destination: string; amount: string; state: string; tx_hash: string | null; failure: string | null; eth_tx: { nonce: number; gas_limit: number } | null }
 interface PlanView { status: string; overdue_at_ms: number; now_ms: number; plan: { proposal: null | { id: number; waiting_ends_at_ms: number | null; transfers: Transfer[] } } }
 const plan = (owner: string) => view<PlanView>(C, "get_plan", { owner });
-const ethTransfers = async (owner: string) => (await plan(owner)).plan.proposal!.transfers.filter((t) => t.asset === "Eth");
+// Every vault transfer: ETH and WETH.
+const ethTransfers = async (owner: string) => (await plan(owner)).plan.proposal!.transfers.filter((t) => t.asset !== "Near");
+const isWeth = (t: Transfer) => typeof t.asset === "object" && t.asset.Erc20 === WETH;
 const vaultOf = (owner: string) => vaultFor(C, owner);
 
 // ------------------------------------------------------------------ setup
@@ -53,7 +58,7 @@ async function setup() {
   const kp = KeyPair.fromRandom("ed25519");
   const sub = `eth${Date.now().toString(36)}`;
   const owner = `${sub}.${d.owner}`;
-  await account(d.owner).createSubAccount({ accountOrPrefix: sub, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("0.6") });
+  await account(d.owner).createSubAccount({ accountOrPrefix: sub, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("0.45") });
   await waitForKey(owner, kp.getPublicKey().toString());
   const dir = join(homedir(), ".near-credentials/testnet");
   mkdirSync(dir, { recursive: true });
@@ -79,11 +84,17 @@ async function setup() {
   log("plan created", { owner, vault, amaraEth: addr.amara, tobiEth: addr.tobi });
   const fundTx = await fundWallet.sendTransaction({ to: vault, value: FUND });
   await pub.waitForTransactionReceipt({ hash: fundTx });
+  // Wrap ETH into WETH (WETH mints on plain ETH sends) and move it to the vault.
+  const wrapTx = await fundWallet.sendTransaction({ to: WETH, value: FUND_WETH });
+  await pub.waitForTransactionReceipt({ hash: wrapTx });
+  const moveTx = await fundWallet.writeContract({ address: WETH, abi: erc20Abi, functionName: "transfer", args: [vault, FUND_WETH] });
+  await pub.waitForTransactionReceipt({ hash: moveTx });
   const vaultBal = await pub.getBalance({ address: vault });
-  log("vault funded", { tx: fundTx, vaultEth: formatEther(vaultBal) });
+  const vaultWeth = await tokenBalance(WETH, vault);
+  log("vault funded", { tx: fundTx, wethTx: moveTx, vaultEth: formatEther(vaultBal), vaultWeth: formatEther(vaultWeth) });
 
   await waitChain(owner, (await plan(owner)).overdue_at_ms);
-  await call(G1, C, "propose_release", { owner, eth_balance: vaultBal.toString() });
+  await call(G1, C, "propose_release", { owner, eth_balance: vaultBal.toString(), erc20_balances: [{ token: WETH, amount: vaultWeth.toString() }] });
   await call(G2, C, "approve_release", { owner, proposal_id: (await plan(owner)).plan.proposal!.id });
   await waitChain(owner, (await plan(owner)).plan.proposal!.waiting_ends_at_ms!);
   log("eligible");
@@ -105,7 +116,7 @@ async function resume(owner: string) {
 
 const funderStart = await pub.getBalance({ address: funder.address });
 log("funder", { address: funder.address, balanceEth: formatEther(funderStart) });
-assert(funderStart > FUND + parseEther("0.002"), `funder needs > ${formatEther(FUND)} ETH plus gas`);
+assert(funderStart > FUND + FUND_WETH + parseEther("0.002"), `funder needs > ${formatEther(FUND + FUND_WETH)} ETH plus gas`);
 
 const resumeOwner = process.env.E2E_RESUME_OWNER?.trim();
 const { owner, vault, vaultBal, keys } = resumeOwner ? await resume(resumeOwner) : await setup();
@@ -122,9 +133,11 @@ while (!eth.every((t) => ["Signed", "Failed"].includes(t.state))) {
   eth = await ethTransfers(owner);
 }
 assert(eth.every((t) => t.state === "Signed"), `MPC signing failed: ${eth.map((t) => t.failure).join(",")}`);
-const nonceOf = (heir: string) => eth.find((t) => t.heir === heir)!.eth_tx!.nonce;
-assert(nonceOf(TOBI) === 0 && nonceOf(AMARA) === 1, "nonces assigned in claim order");
-log("both transfers signed by MPC", { tobiNonce: 0, amaraNonce: 1 });
+// Claim order fixes the nonces: Tobi's ETH 0 and WETH 1, then Amara's ETH 2 and WETH 3.
+const nonces = (heir: string) => eth.filter((t) => t.heir === heir).map((t) => t.eth_tx!.nonce);
+assert(eth.length === 4 && eth.filter(isWeth).length === 2, `expected 2 ETH + 2 WETH transfers, got ${eth.length}`);
+assert(String(nonces(TOBI)) === "0,1" && String(nonces(AMARA)) === "2,3", `nonces in claim order: tobi ${nonces(TOBI)}, amara ${nonces(AMARA)}`);
+log("four transfers signed by MPC", { tobi: nonces(TOBI), amara: nonces(AMARA) });
 
 log("executor offline for 60s (delayed-executor demo)");
 await sleep(MINUTE);
@@ -141,19 +154,27 @@ for (;;) {
   assert(Date.now() < end, `not confirmed in time: ${eth.map((t) => `${t.state}/${t.failure ?? ""}`).join(",")}`);
   await sleep(8_000);
 }
-for (const t of eth) log("confirmed on Sepolia", { heir: t.heir, nonce: t.eth_tx!.nonce, explorer: `https://sepolia.etherscan.io/tx/${t.tx_hash}` });
+for (const t of eth) log("confirmed on Sepolia", { heir: t.heir, asset: isWeth(t) ? "WETH" : "ETH", nonce: t.eth_tx!.nonce, explorer: `https://sepolia.etherscan.io/tx/${t.tx_hash}` });
 log("executor outcomes seen", [...outcomes]);
 
-// Each heir wallet holds exactly its snapshot amount (fresh wallets start at 0).
+// Each heir wallet holds exactly its snapshot amounts (fresh wallets start at 0).
 for (const [heir, key] of [[AMARA, keys.amara], [TOBI, keys.tobi]] as const) {
-  const got = await pub.getBalance({ address: heirAddr(key) });
-  const want = BigInt(eth.find((t) => t.heir === heir)!.amount);
-  assert(got === want, `${heir} received ${got}, expected ${want}`);
+  const mine = eth.filter((t) => t.heir === heir);
+  const gotEth = await pub.getBalance({ address: heirAddr(key) });
+  const gotWeth = await tokenBalance(WETH, heirAddr(key));
+  const wantEth = BigInt(mine.find((t) => t.asset === "Eth")!.amount);
+  const wantWeth = BigInt(mine.find(isWeth)!.amount);
+  assert(gotEth === wantEth, `${heir} received ${gotEth} wei, expected ${wantEth}`);
+  assert(gotWeth === wantWeth, `${heir} received ${gotWeth} WETH units, expected ${wantWeth}`);
 }
 const final = await plan(owner);
 assert(final.status === "Settled", "plan settled");
-log("heirs received exact shares", { amara: formatEther(await pub.getBalance({ address: heirAddr(keys.amara) })), tobi: formatEther(await pub.getBalance({ address: heirAddr(keys.tobi) })) });
+const shares = async (k: Hex) => `${formatEther(await pub.getBalance({ address: heirAddr(k) }))} ETH + ${formatEther(await tokenBalance(WETH, heirAddr(k)))} WETH`;
+log("heirs received exact shares", { amara: await shares(keys.amara), tobi: await shares(keys.tobi) });
 
+// WETH first: moving it is paid from the heir's ETH, which is swept after.
+const sweptWeth = (await sweepToken(keys.amara, WETH, funder.address)) + (await sweepToken(keys.tobi, WETH, funder.address));
+log("test WETH swept back to funder", { weth: formatEther(sweptWeth) });
 const swept = (await sweep(keys.amara, funder.address)) + (await sweep(keys.tobi, funder.address));
 log("test ETH swept back to funder", { eth: formatEther(swept), leftInVault: formatEther(await pub.getBalance({ address: vault })) });
-console.log("✓ two ETH heirs + nonce ordering + delayed executor");
+console.log("✓ two heirs × (ETH + WETH) + nonce ordering + delayed executor");
