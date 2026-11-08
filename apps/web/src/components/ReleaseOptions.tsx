@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { view as viewCall } from "@/lib/contract";
 import { describeOptions, duration, relative, shortName } from "@/lib/plan";
-import type { ExtensionState, PlanView, ReleaseOptions } from "@/lib/types";
+import type { ExtensionState, ModeOverride, PlanView, ReleaseOptions } from "@/lib/types";
 import { Bracket, Button, Card, Field, Notice, inputClass } from "./ui";
 
 type Act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint) => unknown;
@@ -139,12 +139,15 @@ function OptionsEditor({ view, initial, busy, onCancel, onSave }: { view: PlanVi
   const [quorum, setQuorum] = useState(String(initial?.delay_quorum || 1));
   const [maxExt, setMaxExt] = useState(initial?.max_extension_ms ? String(initial.max_extension_ms / MIN) : "1440");
   const [maxTotal, setMaxTotal] = useState(initial?.max_total_extension_ms ? String(initial.max_total_extension_ms / MIN) : "10080");
+  const [overrides, setOverrides] = useState<(Omit<ModeOverride, "hybrid_grace_ms"> & { grace: string })[]>(
+    (initial?.overrides ?? []).map((o) => ({ heir: o.heir, assets: o.assets, mode: o.mode, grace: o.hybrid_grace_ms ? String(o.hybrid_grace_ms / MIN) : "1440" })),
+  );
+  const heirs = view.plan.policy.heirs.map((h) => h.account_id);
   const [error, setError] = useState<string | null>(null);
 
   function save() {
     setError(null);
     const list = signers.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-    const heirs = view.plan.policy.heirs.map((h) => h.account_id);
     if (list.some((s) => s === view.plan.owner || heirs.includes(s))) return setError("Delay signers can't be you or a heir.");
     const q = Number(quorum);
     if (list.length && !(q >= 1 && q <= list.length)) return setError(`Quorum must be between 1 and ${list.length}.`);
@@ -155,6 +158,7 @@ function OptionsEditor({ view, initial, busy, onCancel, onSave }: { view: PlanVi
       delay_quorum: list.length ? q : 0,
       max_extension_ms: list.length ? Math.round(Number(maxExt) * MIN) : 0,
       max_total_extension_ms: list.length ? Math.round(Number(maxTotal) * MIN) : 0,
+      overrides: overrides.map((o) => ({ heir: o.heir, assets: o.assets, mode: o.mode, hybrid_grace_ms: o.mode === "Hybrid" ? Math.round(Number(o.grace) * MIN) : 0 })),
     });
   }
 
@@ -182,6 +186,52 @@ function OptionsEditor({ view, initial, busy, onCancel, onSave }: { view: PlanVi
           </Field>
         )}
       </fieldset>
+      <div className="flex flex-col gap-2">
+        <span className="font-semibold">Exceptions for a heir or asset group (optional)</span>
+        <span className="text-xs text-muted">Checked top to bottom; the first that matches a transfer decides how it starts. Everything else uses the mode above.</span>
+        {overrides.map((o, i) => {
+          const set = (x: Partial<(typeof overrides)[number]>) => setOverrides(overrides.map((y, j) => (j === i ? { ...y, ...x } : y)));
+          return (
+            <div key={i} className="flex flex-wrap items-end gap-2">
+              <Field label="Heir">
+                <select className={inputClass} value={o.heir ?? ""} onChange={(e) => set({ heir: e.target.value || null })}>
+                  <option value="">Every heir</option>
+                  {heirs.map((h) => (
+                    <option key={h} value={h}>
+                      {shortName(h)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Assets">
+                <select className={inputClass} value={o.assets} onChange={(e) => set({ assets: e.target.value as ModeOverride["assets"] })}>
+                  <option value="All">All</option>
+                  <option value="Near">NEAR and NEAR tokens</option>
+                  <option value="Ethereum">ETH and Ethereum tokens</option>
+                </select>
+              </Field>
+              <Field label="Mode">
+                <select className={inputClass} value={o.mode} onChange={(e) => set({ mode: e.target.value as ModeOverride["mode"] })}>
+                  <option value="Claim">Claim</option>
+                  <option value="Automatic">Automatic</option>
+                  <option value="Hybrid">Hybrid</option>
+                </select>
+              </Field>
+              {o.mode === "Hybrid" && (
+                <Field label="Grace (min)">
+                  <input className={`${inputClass} w-24`} inputMode="numeric" value={o.grace} onChange={(e) => set({ grace: e.target.value })} />
+                </Field>
+              )}
+              <Button variant="outline" onClick={() => setOverrides(overrides.filter((_, j) => j !== i))}>
+                Remove
+              </Button>
+            </div>
+          );
+        })}
+        <Button variant="outline" className="self-start" onClick={() => setOverrides([...overrides, { heir: heirs[0] ?? null, assets: "All", mode: "Automatic", grace: "1440" }])}>
+          Add an exception
+        </Button>
+      </div>
       <div className="flex flex-col gap-2">
         <span className="font-semibold">Delay signers (optional)</span>
         <Field label="Accounts, comma separated" hint="They can only lengthen an approved release's waiting period, never approve or move funds. Guardians may be included.">

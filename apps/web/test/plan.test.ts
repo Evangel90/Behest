@@ -156,5 +156,6 @@ describe("release options", () => {
       "Heirs have 7 days after the waiting period to claim; after that, transfers start automatically.",
       "2 of 2 delay signers can extend an approved release's waiting period by up to 1 day at a time, 3 days in total. They can't approve, cancel or move anything.",
     ]);
+    expect(describeOptions({ ...o, delay_signers: [], overrides: [{ heir: "tobi.testnet", assets: "Ethereum", mode: "Automatic", hybrid_grace_ms: 0 }] })[1]).toBe("Except: Tobi's Ethereum shares (ETH and tokens) start automatically.");
   });
 });

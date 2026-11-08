@@ -259,6 +259,12 @@ export function describeOptions(o: ReleaseOptions | null): string[] {
   if (!o || o.mode === "Claim") out.push("Each heir starts their own transfers by claiming.");
   else if (o.mode === "Automatic") out.push("Transfers start automatically as soon as the waiting period ends. Heirs don't need to do anything.");
   else out.push(`Heirs have ${duration(o.hybrid_grace_ms)} after the waiting period to claim; after that, transfers start automatically.`);
+  for (const x of o?.overrides ?? []) {
+    const who = x.heir ? `${shortName(x.heir)}'s` : "Every heir's";
+    const what = x.assets === "All" ? "shares" : x.assets === "Near" ? "NEAR-side shares (NEAR and NEAR tokens)" : "Ethereum shares (ETH and tokens)";
+    const how = x.mode === "Claim" ? "wait for a claim" : x.mode === "Automatic" ? "start automatically" : `start automatically after a ${duration(x.hybrid_grace_ms)} grace period`;
+    out.push(`Except: ${who} ${what} ${how}.`);
+  }
   if (o && o.delay_signers.length)
     out.push(
       `${o.delay_quorum} of ${o.delay_signers.length} delay signers can extend an approved release's waiting period by up to ${duration(o.max_extension_ms)} at a time, ${duration(o.max_total_extension_ms)} in total. They can't approve, cancel or move anything.`,

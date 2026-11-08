@@ -122,6 +122,15 @@ export interface ReleaseOptions {
   delay_quorum: number;
   max_extension_ms: number;
   max_total_extension_ms: number;
+  /** Per heir and/or asset group; first match wins. Absent on older contracts. */
+  overrides?: ModeOverride[];
+}
+
+export interface ModeOverride {
+  heir: string | null;
+  assets: "All" | "Near" | "Ethereum";
+  mode: ReleaseOptions["mode"];
+  hybrid_grace_ms: number;
 }
 
 export interface ExtensionState {
