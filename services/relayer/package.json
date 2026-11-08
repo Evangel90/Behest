@@ -6,7 +6,8 @@
   "description": "Behest gas relayer: pays NEAR gas for NEP-366 meta-transactions that call allowlisted, non-payable Behest methods.",
   "exports": {
     "./policy": "./src/policy.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./methods": "./src/methods.ts"
   },
   "scripts": {
     "start": "tsx --env-file=../../.env src/server.ts",

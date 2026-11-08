@@ -7,18 +7,9 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { deserialize } from "borsh";
 import { SCHEMA, encodeDelegateAction } from "near-api-js";
 
-/** Non-payable Behest methods, and which role in the plan the sender must hold. */
-export const SPONSORED_METHODS = {
-  claim: "heir",
-  retry_transfer: "heir",
-  propose_release: "guardian",
-  approve_release: "guardian",
-  reject_release: "guardian",
-  check_in: "owner",
-  cancel_release: "owner",
-} as const;
-export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
-export type Role = (typeof SPONSORED_METHODS)[SponsoredMethod];
+import { SPONSORED_METHODS, type Role, type SponsoredMethod } from "./methods.js";
+
+export { SPONSORED_METHODS, type Role, type SponsoredMethod };
 
 export const MAX_GAS = 300_000_000_000_000n;
 
