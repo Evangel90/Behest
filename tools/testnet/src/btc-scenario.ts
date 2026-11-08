@@ -143,7 +143,9 @@ const ts = (await plan(owner)).plan.proposal!.transfers;
 const ia = ts.findIndex((t) => t.asset === "Btc" && t.heir === AMARA);
 const it = ts.findIndex((t) => t.asset === "Btc" && t.heir === TOBI);
 const amt = { amara: Number(ts[ia]!.amount), tobi: Number(ts[it]!.amount) };
-assert(amt.amara + amt.tobi === change - Number(rel.reserve), "everything but the fee reserve is split");
+// shares round down; the leftover sats (under one per heir) stay in the vault
+const split = change - Number(rel.reserve);
+assert(amt.amara + amt.tobi <= split && split - (amt.amara + amt.tobi) < 2, "everything but the fee reserve and rounding is split");
 assert(amt.amara === Math.floor(((change - Number(rel.reserve)) * 6000) / 10_000) || amt.amara === Math.ceil(((change - Number(rel.reserve)) * 6000) / 10_000), "60/40");
 log("snapshot", { reserve: rel.reserve, ...amt });
 
