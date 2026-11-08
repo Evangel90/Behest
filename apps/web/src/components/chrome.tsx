@@ -80,14 +80,14 @@ export function ThemeToggle({ dark }: { dark?: boolean }) {
   );
 }
 
-export function AccountButton({ dark }: { dark?: boolean }) {
+export function AccountButton({ dark, full }: { dark?: boolean; full?: boolean }) {
   const { session, ready, signOut } = useSession();
   const [open, setOpen] = useState(false);
   if (!ready) return <span className="h-11 w-24" aria-hidden="true" />;
   if (!session) {
     return (
       <>
-        <Button variant={dark ? "primary" : "ink"} className="min-h-11" onClick={() => setOpen(true)}>
+        <Button variant={dark ? "primary" : "ink"} className={cx("min-h-11", full && "w-full")} onClick={() => setOpen(true)}>
           Sign in
         </Button>
         <SignInDialog open={open} onClose={() => setOpen(false)} />
@@ -96,7 +96,7 @@ export function AccountButton({ dark }: { dark?: boolean }) {
   }
   return (
     <div className="flex items-center gap-1">
-      <Link href="/app" className={cx("flex min-h-11 max-w-[220px] items-center gap-2 rounded-tile px-3", dark ? "text-white hover:bg-white/10" : "hover:bg-subtle")} title={session.accountId}>
+      <Link href="/app" className={cx("flex min-h-11 min-w-0 max-w-[132px] items-center gap-2 rounded-tile px-2 sm:max-w-[220px] sm:px-3", dark ? "text-white hover:bg-white/10" : "hover:bg-subtle")} title={session.accountId}>
         <span className="h-2 w-2 shrink-0 rounded-full bg-signal" aria-hidden="true" />
         <span className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-sm">{session.kind === "persona" ? session.label : session.accountId}</span>
@@ -168,8 +168,9 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
         <aside className="flex min-w-0 flex-col text-[#D4D4D4] lg:min-h-0 lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3 lg:px-6 lg:py-5">
             <Logo dark />
-            <div className="flex items-center lg:hidden">
+            <div className="flex items-center gap-1 lg:hidden">
               <ThemeToggle dark />
+              <AccountButton dark />
             </div>
           </div>
           <nav aria-label="Main" className="flex gap-0.5 overflow-x-auto p-2 lg:flex-col lg:p-3">
@@ -186,14 +187,11 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
               <ThemeToggle dark />
             </div>
             <div className="rounded-tile bg-white/[0.06] p-1">
-              <AccountButton dark />
+              <AccountButton dark full />
             </div>
           </div>
-          <div className="flex justify-end px-2 pb-2 lg:hidden">
-            <AccountButton dark />
-          </div>
         </aside>
-        <div className="relative min-w-0 rounded-tile bg-paper lg:my-2 lg:mr-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+        <div className="relative min-w-0 rounded-tile bg-paper dark-panel lg:my-2 lg:mr-2 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
           <main className={cx("mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-8 sm:py-8", narrow ? "max-w-[560px]" : "max-w-[1040px]", mainClassName)}>{children}</main>
         </div>
       </div>

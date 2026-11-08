@@ -42,7 +42,7 @@
 :root[data-theme="dark"] {
   --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
   --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
-  --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #70FFCD; --ok-bg: #053B2A;
+  --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #7EE2B8; --ok-bg: #11291F;
   --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
   --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
   --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
@@ -53,7 +53,7 @@
   :root:not([data-theme="light"]) {
     --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
     --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
-    --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #70FFCD; --ok-bg: #053B2A;
+    --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #7EE2B8; --ok-bg: #11291F;
     --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
     --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
     --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
@@ -114,6 +114,8 @@
 
 html { background: var(--paper); color: var(--ink); overscroll-behavior: none; }
 html:has([data-app-shell]) { background: var(--frame); }
+/* In dark mode the panel and frame are close greys: a hairline keeps the panel distinct. */
+.dark-panel { box-shadow: inset 0 0 0 1px var(--hairline); }
 body { min-width: 0; overflow-x: clip; }
 body { font-family: var(--font-sans); font-weight: 500; -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
