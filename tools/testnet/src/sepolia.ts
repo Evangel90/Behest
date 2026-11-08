@@ -1,4 +1,5 @@
 // Shared Sepolia helpers for the live scenarios and admin tools.
+import { createBtcPort } from "@behest/executor/bitcoin";
 import { Engine } from "@behest/executor/engine";
 import { createEthPort } from "@behest/executor/eth";
 import { createNearPort, ethAddressFromMpcKey } from "@behest/executor/near";
@@ -79,7 +80,8 @@ export function executor(contract: string, executorAccountId: string) {
     }),
     createEthPort(process.env.SEPOLIA_RPC_URL?.trim() || "https://ethereum-sepolia-rpc.publicnode.com"),
     memoryStore(),
-    { confirmations: 3, stuckAfterMs: 10 * 60_000, retryBackoffMs: 60_000, now: Date.now, log: (m, x) => log(`executor: ${m}`, x) },
+    { confirmations: 3, btcConfirmations: 1, stuckAfterMs: 10 * 60_000, retryBackoffMs: 60_000, now: Date.now, log: (m, x) => log(`executor: ${m}`, x) },
+    createBtcPort(process.env.BTC_ESPLORA_URL || "https://blockstream.info/testnet4/api"),
   );
 }
 

@@ -12,16 +12,22 @@
     "reissue": "tsx --env-file=../../.env src/reissue.ts",
     "bootstrap": "tsx --env-file=../../.env src/bootstrap.ts",
     "e2e-partial": "tsx --env-file=../../.env src/partial-scenario.ts",
+    "btc-funder": "tsx --env-file=../../.env src/btc-funder.ts",
     "e2e-auto": "tsx --env-file=../../.env src/auto-scenario.ts",
     "e2e-rules": "tsx --env-file=../../.env src/rules-scenario.ts",
     "e2e-nep141": "tsx --env-file=../../.env src/nep141-scenario.ts",
+    "e2e-btc": "tsx --env-file=../../.env src/btc-scenario.ts",
     "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
   },
   "dependencies": {
-    "near-api-js": "7.4.0",
-    "viem": "2.57.16",
     "@behest/executor": "workspace:*",
-    "@behest/relayer": "workspace:*"
+    "@behest/relayer": "workspace:*",
+    "@noble/curves": "2.2.0",
+    "@noble/hashes": "2.2.0",
+    "@scure/base": "2.2.0",
+    "@scure/btc-signer": "2.4.1",
+    "near-api-js": "7.4.0",
+    "viem": "2.57.16"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
