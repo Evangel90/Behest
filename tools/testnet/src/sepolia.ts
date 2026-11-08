@@ -5,11 +5,10 @@ import { createNearPort, ethAddressFromMpcKey } from "@behest/executor/near";
 import { memoryStore } from "@behest/executor/store";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { KeyPairString } from "near-api-js";
 import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { ROOT, log, provider, view } from "./near.js";
+import { ROOT, keyOf, log, provider, view } from "./near.js";
 
 export const transport = http(process.env.SEPOLIA_RPC_URL?.trim() || undefined);
 export const pub = createPublicClient({ chain: sepolia, transport });
@@ -59,7 +58,7 @@ export function executor(contract: string, executorAccountId: string) {
       rpcUrl: process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com",
       contractId: contract,
       executorAccountId,
-      executorPrivateKey: process.env.EXECUTOR_PRIVATE_KEY as KeyPairString,
+      executorPrivateKey: keyOf(executorAccountId),
     }),
     createEthPort(process.env.SEPOLIA_RPC_URL?.trim() || "https://ethereum-sepolia-rpc.publicnode.com"),
     memoryStore(),

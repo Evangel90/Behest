@@ -16,10 +16,11 @@ import { KeyPair, nearToYocto } from "near-api-js";
 import { createWalletClient, formatEther, parseEther, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { account, call, loadDeployment, log, view, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, view, reclaimScenarioOwners, waitForKey } from "./near.js";
 import { executor, funderAccount, loadWallets, pub, saveWallets, sweep, transport, vaultOf as vaultFor } from "./sepolia.js";
 
 const d = loadDeployment();
+await reclaimScenarioOwners(d.contract, d.owner);
 const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];

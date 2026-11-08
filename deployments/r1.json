@@ -1,0 +1,17 @@
+{
+  "contract": "behest-r1.behest-ekkr6-owner.testnet",
+  "admin": "behest-r1-admin.behest-ekkr6-owner.testnet",
+  "executor": "behest-r1-exec.behest-ekkr6-owner.testnet",
+  "owner": "behest-r1-owner.behest-ekkr6-owner.testnet",
+  "guardians": [
+    "behest-r1-g1.behest-ekkr6-owner.testnet",
+    "behest-r1-g2.behest-ekkr6-owner.testnet",
+    "behest-r1-g3.behest-ekkr6-owner.testnet"
+  ],
+  "heirs": [
+    "behest-r1-amara.behest-ekkr6-owner.testnet",
+    "behest-r1-tobi.behest-ekkr6-owner.testnet"
+  ],
+  "wasmSha256": "0e2c65ea2402244383203edbb6c407ba53ee3cdf1a283f07cf67c079ec44874b",
+  "deployedAt": "2026-11-08T14:15:37.895Z"
+}

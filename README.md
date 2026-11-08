@@ -86,13 +86,22 @@ Current deployment: see `deployments/testnet.json` (contract `behest-ekkr6.testn
 
 ```sh
 cp .env.example .env    # fill SEPOLIA_FUNDER_KEY (test-only private key) and SEPOLIA_RPC_URL
-# accounts behest-<suffix>[-admin|-exec|-owner|-g1|-g2|-g3|-amara|-tobi].testnet, via the faucet:
-near account create-account sponsor-by-faucet-service behest-<suffix>-owner.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
 (cd contracts/behest && cargo near build non-reproducible-wasm --features demo-timers --out-dir ../../target/near-demo)
+
+# Accounts: either nine faucet accounts behest-<suffix>[-admin|-exec|-owner|-g1|-g2|-g3|-amara|-tobi].testnet …
+near account create-account sponsor-by-faucet-service behest-<suffix>-owner.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
 pnpm --filter @behest/testnet deploy-contract <suffix>   # deploy + init + register executor; writes .env NEAR fields
-pnpm --filter @behest/testnet e2e                        # NEAR-side scenarios (≈ 8 min, demo timers)
+
+# … or, when the faucet rate-limits, sub-accounts of one funded account (≈ 10.3 NEAR; resumable):
+pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet>
+BEHEST_DEPLOYMENT=<name> pnpm --filter @behest/testnet deploy-contract <suffix> --parent <funded.testnet>
+
+pnpm --filter @behest/testnet e2e                        # NEAR-side scenarios (≈ 15 min, demo timers)
 pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → executor → Sepolia (needs funded key)
+pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --teardown   # return the NEAR (all but the contract's storage)
 ```
+
+`BEHEST_DEPLOYMENT=<name>` makes every script read and write `deployments/<name>.json` instead of the main `testnet.json`, and stops `deploy-contract` writing the main deployment's `.env` fields. The `sponsored` scenario needs a relayer for that contract: `BEHEST_CONTRACT_ID=<contract> RELAYER_PORT=8788 pnpm --filter @behest/relayer start`, then set `RELAYER_URL=http://localhost:8788` for the run.
 
 | Scenario | Shows |
 |---|---|
@@ -104,6 +113,10 @@ pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → 
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | Two ETH heirs with freshly generated Sepolia wallets: MPC signs nonces 0 and 1 in claim order, a 60 s executor outage loses nothing, the executor holds nonce 1 until nonce 0 is mined, each heir receives exactly its share, and test ETH is swept back to the funder |
 | `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
+
+### Clean reproduction (Stage 1 exit gate)
+
+On 2026-11-08 a second deployment was built from scratch with no faucet: `bootstrap r1`, a source rebuild (same wasm sha256 `0e2c65ea…` as the main deployment), then `deploy-contract r1 --parent` (`deployments/r1.json`). Every NEAR scenario passed on it. So did `e2e-eth`: [Tobi, nonce 0](https://sepolia.etherscan.io/tx/0x5f1abb07f7b96c33cbc22676dc0b0cf959fba10519beff9d1875def09035de21) and [Amara, nonce 1](https://sepolia.etherscan.io/tx/0x020eccf530488d8991f0e8db5d91d23ba7176c1ae9230497fca055d46f743e85), each with its exact share. The run surfaced two tooling issues, both fixed: scenario owners were never reclaimed, and an error check crashed on BigInt fields.
 
 ### Found by the live runs: Sepolia gas rules changed
 

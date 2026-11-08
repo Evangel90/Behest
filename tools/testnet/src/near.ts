@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { Account, JsonRpcProvider, teraToGas, type KeyPairString } from "near-api-js";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
-export const DEPLOYMENT_FILE = join(ROOT, "deployments/testnet.json");
+/** BEHEST_DEPLOYMENT selects deployments/<name>.json (default "testnet", the main one). */
+export const DEPLOYMENT_NAME = process.env.BEHEST_DEPLOYMENT || "testnet";
+export const DEPLOYMENT_FILE = join(ROOT, `deployments/${DEPLOYMENT_NAME}.json`);
 
 export const provider = new JsonRpcProvider({ url: process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com" });
 
@@ -64,6 +66,10 @@ export async function call(
 /** Rewrites KEY=value lines in the root .env, leaving every other line untouched. */
 export function setEnv(values: Record<string, string>) {
   const file = join(ROOT, ".env");
+  if (DEPLOYMENT_NAME !== "testnet" && Object.keys(values).some((k) => k.startsWith("BEHEST_") || k.startsWith("ADMIN_") || k.startsWith("EXECUTOR_"))) {
+    log(`not writing .env for deployment "${DEPLOYMENT_NAME}" (only the main deployment owns those values)`);
+    return;
+  }
   let text = readFileSync(file, "utf8");
   for (const [k, v] of Object.entries(values)) {
     const re = new RegExp(`^${k}=.*$`, "m");
@@ -86,4 +92,30 @@ export async function waitForKey(accountId: string, publicKey: string, timeoutMs
       await new Promise((r) => setTimeout(r, 1_000));
     }
   }
+}
+
+/**
+ * Returns the NEAR held by earlier scenario owners (<prefix><ts>.<parent>) to
+ * `parent`: withdraws idle escrow where no release is open, then deletes the
+ * account. Their plans stay in the contract as history. Keeps repeated suite
+ * runs from draining the deployment owner.
+ */
+export async function reclaimScenarioOwners(contract: string, parent: string) {
+  const { readdirSync, rmSync } = await import("node:fs");
+  const { actions } = await import("near-api-js");
+  const dir = join(homedir(), ".near-credentials/testnet");
+  const owners = readdirSync(dir).filter((f) => f.endsWith(`.${parent}.json`)).map((f) => f.slice(0, -5));
+  let n = 0;
+  for (const owner of owners) {
+    try {
+      const p = await view<{ plan: { escrow: string; proposal: unknown } } | null>(contract, "get_plan", { owner }).catch(() => null);
+      if (p && !p.plan.proposal && BigInt(p.plan.escrow) > 0n) await call(owner, contract, "withdraw", { amount: p.plan.escrow });
+      await account(owner).signAndSendTransaction({ receiverId: owner, actions: [actions.deleteAccount(parent)] });
+      rmSync(join(dir, `${owner}.json`));
+      n++;
+    } catch (e) {
+      log("could not reclaim", { owner, error: String(e).slice(0, 120) });
+    }
+  }
+  if (n) log("reclaimed earlier scenario owners", { count: n });
 }

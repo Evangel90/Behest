@@ -5,7 +5,8 @@
 // --migrate replaces the code and calls `migrate` in the same transaction
 // (v0.1 → configurable ETH gas limit; plans convert lazily).
 // Accounts behest-<suffix>[-admin|-exec|-owner|-g1..3|-amara|-tobi].testnet
-// must already exist in the legacy keychain (created via the faucet).
+// must already exist in the legacy keychain (created via the faucet), or pass
+// --parent <account> after `bootstrap` created them as its sub-accounts.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,10 +14,12 @@ import { actions, teraToGas } from "near-api-js";
 import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
 
 const suffix = process.argv[2];
+const parentAt = process.argv.indexOf("--parent");
+const parent = parentAt > 0 ? process.argv[parentAt + 1] : "testnet";
 const migrate = process.argv.includes("--migrate");
 const upgrade = migrate || process.argv.includes("--upgrade");
 if (!suffix) throw new Error("usage: deploy <suffix>");
-const id = (n?: string) => `behest-${suffix}${n ? `-${n}` : ""}.testnet`;
+const id = (n?: string) => `behest-${suffix}${n ? `-${n}` : ""}.${parent}`;
 
 const wasm = readFileSync(join(ROOT, "target/near-demo/behest.wasm"));
 const sha = createHash("sha256").update(wasm).digest("hex");

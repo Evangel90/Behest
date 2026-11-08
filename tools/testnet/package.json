@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "e2e": "tsx --env-file=../../.env src/scenarios.ts",
     "e2e-eth": "tsx --env-file=../../.env src/eth-scenario.ts",
-    "reissue": "tsx --env-file=../../.env src/reissue.ts"
+    "reissue": "tsx --env-file=../../.env src/reissue.ts",
+    "bootstrap": "tsx --env-file=../../.env src/bootstrap.ts"
   },
   "dependencies": {
     "near-api-js": "7.4.0",
