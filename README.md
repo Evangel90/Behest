@@ -61,6 +61,10 @@ pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → 
 | `authorization` | Live negative checks: non-guardian propose, frozen edits/withdrawals, executor-only reports, admin-only pause |
 | `e2e-eth` | MPC-signed Sepolia transfer, 60 s executor outage with nothing lost, then broadcast and confirmation |
 
+### Known MVP limitation surfaced by the live run
+
+After a release, the vault keeps the unused network-fee reserve, the rounding remainder, and the ETH share of any heir without an ETH destination (D12, 04-policy-schema). The owner can't withdraw ETH yet (D7), so that balance stays in the vault. Owner ETH withdrawal and an explicit residual rule are Stage 2 must-haves before any mainnet use.
+
 ## MVP delivery progress
 
 1. [x] Policy schema, state machine, permissions, invariants, timer profiles
@@ -70,4 +74,4 @@ pnpm --filter @behest/testnet e2e-eth                    # Chain Signatures → 
 5. [x] Executor: broadcast, idempotency, confirmation tracking, retry
 6. [x] Fee cap and reserve enforcement on retry
 7. [ ] Role-based web app with policy and transaction previews
-8. [ ] near-workspaces end-to-end tests, deploy scripts, demo docs
+8. [x] Deploy scripts and live testnet e2e (all scenarios passing; first Sepolia release: [0x38e3…b323](https://sepolia.etherscan.io/tx/0x38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323))
