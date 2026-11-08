@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, assetLabel, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import { actionsFor, assetLabel, btcSplit, formatBtc, looksLikeBtcAddress, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView, Transfer } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -157,5 +157,20 @@ describe("release options", () => {
       "2 of 2 delay signers can extend an approved release's waiting period by up to 1 day at a time, 3 days in total. They can't approve, cancel or move anything.",
     ]);
     expect(describeOptions({ ...o, delay_signers: [], overrides: [{ heir: "tobi.testnet", assets: "Ethereum", mode: "Automatic", hybrid_grace_ms: 0 }] })[1]).toBe("Except: Tobi's Ethereum shares (ETH and tokens) start automatically.");
+  });
+});
+
+describe("btcSplit (D20)", () => {
+  it("matches the contract's reserve: first payout spends the coins, later ones one change output", () => {
+    // contract test split_reserves_fees_and_chains_payouts: 2 heirs, 1 coin, cap 5 → 1530 sats
+    expect(btcSplit({ heirs: 2, inputs: 1, total: 100_000n, maxFeeRate: 5 })).toEqual({ reserve: 1530n, toSplit: 98_470n });
+    expect(btcSplit({ heirs: 1, inputs: 2, total: 100_000n, maxFeeRate: 5 }).reserve).toBe(221n * 5n);
+    expect(btcSplit({ heirs: 2, inputs: 1, total: 1_000n, maxFeeRate: 5 })).toMatchObject({ error: "E_INSUFFICIENT_FEE_RESERVE" });
+    expect(btcSplit({ heirs: 0, inputs: 1, total: 1_000n, maxFeeRate: 5 }).reserve).toBe(0n);
+  });
+  it("formats sats and checks testnet addresses", () => {
+    expect(formatBtc(59_082)).toBe("0.00059082");
+    expect(looksLikeBtcAddress("tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla")).toBe(true);
+    expect(looksLikeBtcAddress("bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla")).toBe(false);
   });
 });

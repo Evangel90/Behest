@@ -148,15 +148,19 @@ export const formatEth = (wei: string | bigint, digits = 6) => fmt(BigInt(wei), 
 let TOKENS: Erc20Token[] = [];
 let FTS: Nep141Token[] = [];
 export const registerTokens = (tokens: Erc20Token[], fts: Nep141Token[] = []) => void ((TOKENS = tokens), (FTS = fts));
+export const BTC = { symbol: "BTC", decimals: 8 } as const;
 export const tokenOf = (asset: Asset): Pick<Erc20Token, "symbol" | "decimals"> | undefined => {
+  if (asset === "Btc") return BTC;
   if (typeof asset !== "object") return undefined;
   if ("Erc20" in asset) return TOKENS.find((t) => t.address === asset.Erc20.toLowerCase());
   return FTS.find((t) => t.account_id === asset.Nep141);
 };
 export const isEvm = (asset: Asset) => asset === "Eth" || (typeof asset === "object" && "Erc20" in asset);
+export const isBtc = (asset: Asset) => asset === "Btc";
 export function assetLabel(asset: Asset): string {
   if (asset === "Near") return "NEAR";
   if (asset === "Eth") return "ETH";
+  if (asset === "Btc") return "BTC";
   const id = "Erc20" in asset ? asset.Erc20.slice(0, 8) + "…" : asset.Nep141;
   return tokenOf(asset)?.symbol ?? `token ${id}`;
 }
@@ -190,6 +194,24 @@ export function vaultSplit(opts: { ethHeirs: number; ethBalance: bigint; tokenBa
   return { reserve: tokenReserve, ethToSplit: 0n, transfers: Number(tokenTxs) };
 }
 
+export const formatBtc = (sats: string | bigint | number) => fmt(BigInt(sats), 100_000_000n, 8);
+
+/** Testnet SegWit address check (format only; the contract verifies the checksum). */
+export const looksLikeBtcAddress = (a: string) => /^tb1[qp][02-9ac-hj-np-z]{38,58}$/.test(a.trim());
+
+/**
+ * Bitcoin vault payouts a proposal would make. Mirrors `propose_release`:
+ * the reserve pays every payout at the fee-rate cap (the first spends the
+ * reported coins, each later one a single change output); the rest is split.
+ */
+export function btcSplit(opts: { heirs: number; inputs: number; total: bigint; maxFeeRate: number }) {
+  if (opts.heirs === 0 || opts.inputs === 0) return { reserve: 0n, toSplit: 0n };
+  const vsize = (n: number) => BigInt(Math.ceil(((10 + 41 * n + 43 + 31) * 4 + 2 + 108 * n) / 4));
+  const reserve = (vsize(opts.inputs) + BigInt(opts.heirs - 1) * vsize(1)) * BigInt(opts.maxFeeRate);
+  if (opts.total <= reserve) return { reserve, toSplit: 0n, error: "E_INSUFFICIENT_FEE_RESERVE" as const };
+  return { reserve, toSplit: opts.total - reserve };
+}
+
 export function parseNear(text: string): bigint {
   const [w = "0", f = ""] = text.trim().split(".");
   if (!/^\d*$/.test(w) || !/^\d*$/.test(f) || f.length > 24) throw new Error("not a NEAR amount");
@@ -221,7 +243,8 @@ export function validateDraft(p: PlanInput, owner: string): string[] {
 
 // ------------------------------------------------------------ release rules
 
-const receives = (r: Recipient, asset: Asset) => (isEvm(asset) ? r.eth_destination : r.near_destination) != null;
+const receives = (r: Recipient, asset: Asset, btcDests: string[] = []) =>
+  isBtc(asset) ? btcDests.includes(r.account_id) : (isEvm(asset) ? r.eth_destination : r.near_destination) != null;
 
 /**
  * Who an unclaimed transfer can be moved to, and from when. Mirrors
@@ -229,13 +252,13 @@ const receives = (r: Recipient, asset: Asset) => (isEvm(asset) ? r.eth_destinati
  * fallback if the alternate can't receive this asset) one claim window after
  * the plan became claimable; an alternate's goes to the fallback a window later.
  */
-export function nextHolder(view: PlanView, rules: ReleaseRules | null, t: Transfer): { to: Recipient; from_ms: number } | null {
+export function nextHolder(view: PlanView, rules: ReleaseRules | null, t: Transfer, btcDests: string[] = []): { to: Recipient; from_ms: number } | null {
   const start = view.plan.proposal?.waiting_ends_at_ms;
   if (!rules || start == null || t.state !== "Pending") return null;
-  const fallback = rules.fallback && receives(rules.fallback, t.asset) ? rules.fallback : null;
+  const fallback = rules.fallback && receives(rules.fallback, t.asset, btcDests) ? rules.fallback : null;
   if (view.plan.policy.heirs.some((h) => h.account_id === t.heir)) {
     const alt = rules.alternates.find((a) => a.heir === t.heir)?.recipient;
-    const to = alt && receives(alt, t.asset) ? alt : fallback;
+    const to = alt && receives(alt, t.asset, btcDests) ? alt : fallback;
     return to ? { to, from_ms: start + rules.claim_window_ms } : null;
   }
   if (rules.alternates.some((a) => a.recipient.account_id === t.heir) && fallback) return { to: fallback, from_ms: start + 2 * rules.claim_window_ms };
@@ -261,7 +284,8 @@ export function describeOptions(o: ReleaseOptions | null): string[] {
   else out.push(`Heirs have ${duration(o.hybrid_grace_ms)} after the waiting period to claim; after that, transfers start automatically.`);
   for (const x of o?.overrides ?? []) {
     const who = x.heir ? `${shortName(x.heir)}'s` : "Every heir's";
-    const what = x.assets === "All" ? "shares" : x.assets === "Near" ? "NEAR-side shares (NEAR and NEAR tokens)" : "Ethereum shares (ETH and tokens)";
+    const what =
+      x.assets === "All" ? "shares" : x.assets === "Near" ? "NEAR-side shares (NEAR and NEAR tokens)" : x.assets === "Bitcoin" ? "Bitcoin shares" : "Ethereum shares (ETH and tokens)";
     const how = x.mode === "Claim" ? "wait for a claim" : x.mode === "Automatic" ? "start automatically" : `start automatically after a ${duration(x.hybrid_grace_ms)} grace period`;
     out.push(`Except: ${who} ${what} ${how}.`);
   }

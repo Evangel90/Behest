@@ -20,7 +20,7 @@ export interface PlanInput {
 }
 
 /** ERC-20 transfers carry the lowercase token address. */
-export type Asset = "Near" | "Eth" | { Erc20: string } | { Nep141: string };
+export type Asset = "Near" | "Eth" | "Btc" | { Erc20: string } | { Nep141: string };
 
 export interface Nep141Token {
   account_id: string;
@@ -93,6 +93,8 @@ export interface ContractConfig {
   eth_gas_limit: number;
   erc20_tokens: Erc20Token[];
   nep141_tokens?: Nep141Token[];
+  /** Bitcoin fee rates in sat/vB (contract D20; absent on older contracts). */
+  btc?: { fee_rate: number; max_fee_rate: number };
   paused: boolean;
   executors: string[];
   demo_timers: boolean;
@@ -128,7 +130,7 @@ export interface ReleaseOptions {
 
 export interface ModeOverride {
   heir: string | null;
-  assets: "All" | "Near" | "Ethereum";
+  assets: "All" | "Near" | "Ethereum" | "Bitcoin";
   mode: ReleaseOptions["mode"];
   hybrid_grace_ms: number;
 }
@@ -138,4 +140,41 @@ export interface ExtensionState {
   total_ms: number;
   count: number;
   pending: { extension_ms: number; reason: string | null; votes: string[] } | null;
+}
+
+/** Bitcoin (contract D20). */
+export interface BtcUtxo {
+  txid: string;
+  vout: number;
+  value: string;
+}
+
+export interface BtcDestination {
+  account_id: string;
+  address: string;
+}
+
+export interface BtcVault {
+  path: string;
+  pubkey: string;
+  address: string;
+}
+
+export interface BtcTx {
+  inputs: BtcUtxo[];
+  outputs: { script: string; value: string }[];
+  fee_rate: number;
+  fee: string;
+  seq: number;
+  txid: string;
+  raw: string | null;
+}
+
+export interface BtcRelease {
+  proposal_id: number;
+  snapshot: BtcUtxo[];
+  reserve: string;
+  head: BtcUtxo[];
+  signed: number;
+  last: number | null;
 }

@@ -4,12 +4,19 @@
 // release is open; anyone can move a share nobody claimed in time.
 import { useCallback, useEffect, useState } from "react";
 import { parseEther, parseUnits } from "viem";
-import { getConfig, view as viewCall } from "@/lib/contract";
+import { getBtcDestinations, getConfig, view as viewCall } from "@/lib/contract";
 import { describeRules, formatAmount, nextHolder, parseNear, relative, shortName, tokenOf } from "@/lib/plan";
 import type { Asset, ContractConfig, PlanView, Recipient, ReleaseRules } from "@/lib/types";
 import { Bracket, Button, Card, Field, Notice, inputClass } from "./ui";
 
 type Act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint) => unknown;
+
+/** Accounts with a Bitcoin destination in this plan (D20). */
+export function useBtcDests(owner: string) {
+  const [d, setD] = useState<string[]>([]);
+  useEffect(() => void getBtcDestinations(owner).then((x) => setD(x.map((y) => y.account_id))).catch(() => {}), [owner]);
+  return d;
+}
 
 export function useRules(owner: string) {
   const [rules, setRules] = useState<ReleaseRules | null | undefined>(undefined);
@@ -21,7 +28,8 @@ export function useRules(owner: string) {
 /** Unclaimed shares that can be moved now, with a button for each. */
 export function Reassign({ view, now, rules, act, busy, signedIn }: { view: PlanView; now: number; rules: ReleaseRules | null | undefined; act: Act; busy: boolean; signedIn: boolean }) {
   const transfers = view.plan.proposal?.transfers ?? [];
-  const moves = transfers.map((t, i) => ({ t, i, next: nextHolder(view, rules ?? null, t) })).filter((m) => m.next);
+  const btcDests = useBtcDests(view.plan.owner);
+  const moves = transfers.map((t, i) => ({ t, i, next: nextHolder(view, rules ?? null, t, btcDests) })).filter((m) => m.next);
   if (moves.length === 0) return null;
   return (
     <div className="flex flex-col gap-2 border-t border-line pt-3">
@@ -82,7 +90,7 @@ const fromDraft = (d: RecipientDraft): Recipient | null =>
   d.account_id.trim() ? { account_id: d.account_id.trim(), near_destination: d.near_destination.trim() || null, eth_destination: d.eth_destination.trim().toLowerCase() || null } : null;
 
 const assetKey = (a: Asset) => (typeof a === "string" ? a : "Erc20" in a ? `erc20:${a.Erc20}` : `nep141:${a.Nep141}`);
-const keyAsset = (k: string): Asset => (k === "Near" || k === "Eth" ? k : k.startsWith("erc20:") ? { Erc20: k.slice(6) } : { Nep141: k.slice(7) });
+const keyAsset = (k: string): Asset => (k === "Near" || k === "Eth" || k === "Btc" ? k : k.startsWith("erc20:") ? { Erc20: k.slice(6) } : { Nep141: k.slice(7) });
 
 function parseAmount(text: string, asset: Asset): bigint {
   if (asset === "Near") return parseNear(text);
@@ -98,6 +106,7 @@ function unitsToText(amount: string, asset: Asset) {
 
 function RulesEditor({ view, initial, busy, onCancel, onSave }: { view: PlanView; initial: ReleaseRules | null; busy: boolean; onCancel: () => void; onSave: (r: ReleaseRules | null) => void }) {
   const heirs = view.plan.policy.heirs;
+  const btcDests = useBtcDests(view.plan.owner);
   const [config, setConfig] = useState<ContractConfig | null>(null);
   useEffect(() => void getConfig().then(setConfig).catch(() => setConfig(null)), []);
   const [fixed, setFixed] = useState(initial?.fixed.map((f) => ({ heir: f.heir, asset: assetKey(f.asset), amount: unitsToText(f.amount, f.asset) })) ?? []);
@@ -118,6 +127,7 @@ function RulesEditor({ view, initial, busy, onCancel, onSave }: { view: PlanView
       out.push({ key: "Eth", label: "ETH" });
       for (const t of config?.erc20_tokens ?? []) out.push({ key: `erc20:${t.address}`, label: t.symbol });
     }
+    if (btcDests.includes(heir)) out.push({ key: "Btc", label: "BTC" });
     return out;
   };
 

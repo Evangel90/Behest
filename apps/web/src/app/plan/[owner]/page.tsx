@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { parseUnits, type Hex } from "viem";
 import { AppHeader, TestnetBar } from "@/components/chrome";
+import { BtcOwnerCard, BtcRebase, btcProposal, useBtc } from "@/components/Bitcoin";
 import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
 import { Pulse } from "@/components/Pulse";
 import { OptionsCard } from "@/components/ReleaseOptions";
@@ -13,7 +14,7 @@ import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
 import { ethBalance, getConfig, getVaultWithdrawal, tokenBalances, vaultAddress } from "@/lib/contract";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
-import { actionsFor, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, vaultSplit, type Role } from "@/lib/plan";
+import { actionsFor, assetLabel, describePlan, formatBtc, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, vaultSplit, type Role } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import type { Asset, ContractConfig, Erc20Token, PlanView, Transfer } from "@/lib/types";
 
@@ -201,6 +202,7 @@ function OwnerView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
   const vault = useVault(view.plan.owner);
+  const btc = useBtc(view.plan.owner);
   const rules = useRules(view.plan.owner);
   const [amount, setAmount] = useState("0.1");
   const p = view.plan.policy;
@@ -273,7 +275,7 @@ function OwnerView({ view, now, refresh }: Props) {
         </Card>
       </div>
 
-      <section aria-label="Assets" className="grid gap-3 md:grid-cols-2">
+      <section aria-label="Assets" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <Card className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <span className="rounded-full bg-mint px-2.5 py-1 font-mono text-xs font-bold">NEAR</span>
@@ -315,6 +317,7 @@ function OwnerView({ view, now, refresh }: Props) {
           <span className="text-sm text-muted">Send Sepolia ETH or an allowed token to this address to include it. It's controlled only by this plan through Chain Signatures.</span>
           {vault && <VaultWithdraw owner={view.plan.owner} vault={vault} locked={!!view.plan.proposal && s !== "Settled"} act={act} busy={!!busy} />}
         </Card>
+        <BtcOwnerCard view={view} btc={btc} locked={!!view.plan.proposal && s !== "Settled"} />
       </section>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -367,7 +370,7 @@ function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vau
   }, [owner]);
 
   const token = vault.tokens.find((t) => t.token.address === asset)?.token;
-  const pending = w && w.state !== "Confirmed" && !(w.state === "Failed" && w.failure === "Reverted");
+  const pending = w && w.state !== "Confirmed" && !(w.state === "Failed" && (w.failure === "Reverted" || w.failure === "Cancelled"));
   const maxEth = vault.balance != null && vault.feePerTx != null && vault.balance > vault.feePerTx ? vault.balance - vault.feePerTx : 0n;
 
   function submit() {
@@ -394,7 +397,7 @@ function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vau
           {w.tx_hash && (
             <>
               {" · "}
-              <ExtLink href={`${ETH_EXPLORER}/tx/${w.tx_hash}`}>receipt</ExtLink>
+              <ExtLink href={receiptUrl(w) ?? `${ETH_EXPLORER}/tx/${w.tx_hash}`}>receipt</ExtLink>
             </>
           )}
         </span>
@@ -437,6 +440,8 @@ function GuardianView({ view, now, refresh }: Props) {
   const { session } = useSession();
   const { busy, result, run } = useAction();
   const vault = useVault(view.plan.owner);
+  const btc = useBtc(view.plan.owner);
+  const bp = btcProposal(view, btc);
   const rules = useRules(view.plan.owner);
   const [cfg, setCfg] = useState<ContractConfig | null>(null);
   useEffect(() => void getConfig().then(setCfg).catch(() => {}), []);
@@ -498,15 +503,28 @@ function GuardianView({ view, now, refresh }: Props) {
                 {split?.error && <Notice tone="error">The vault doesn't hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
               </>
             )}
+            {bp.heirs > 0 && btc.vault && (
+              <>
+                <Row k="BTC in vault (used)" v={btc.utxos ? `${formatBtc(bp.coins.reduce((a, c) => a + BigInt(c.value), 0n))} BTC · ${bp.coins.length} coin${bp.coins.length === 1 ? "" : "s"}` : "reading…"} />
+                {bp.coins.length > 0 && (
+                  <>
+                    <Row k="Bitcoin fee reserve" v={`${formatBtc(bp.split.reserve)} BTC (${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
+                    <Row k="BTC to distribute" v={`${formatBtc(bp.split.toSplit)} BTC`} />
+                  </>
+                )}
+                {"error" in bp.split && <Notice tone="error">The Bitcoin vault's coins don't cover the network fees for these payouts. Add BTC to the vault first.</Notice>}
+              </>
+            )}
           </div>
           <Button
             className="self-start"
-            disabled={!!busy || (ethHeirs > 0 && (vault?.balance == null || vault.tokens.some((t) => t.balance == null) || !!split?.error))}
+            disabled={!!busy || !bp.ready || "error" in bp.split || (ethHeirs > 0 && (vault?.balance == null || vault.tokens.some((t) => t.balance == null) || !!split?.error))}
             onClick={() =>
               act("Propose release", "propose_release", {
                 owner: view.plan.owner,
                 eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null,
                 erc20_balances: ethHeirs > 0 && heldTokens.length ? heldTokens.map((t) => ({ token: t.token.address, amount: t.balance!.toString() })) : null,
+                btc_utxos: bp.coins.length ? bp.coins : null,
               })
             }
           >
@@ -541,6 +559,7 @@ function GuardianView({ view, now, refresh }: Props) {
           )}
         </Card>
       )}
+      <BtcRebase view={view} btc={btc} />
       <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
       <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} />
       <GuardianList view={view} />

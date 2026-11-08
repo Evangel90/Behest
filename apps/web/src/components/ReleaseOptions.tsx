@@ -208,6 +208,7 @@ function OptionsEditor({ view, initial, busy, onCancel, onSave }: { view: PlanVi
                   <option value="All">All</option>
                   <option value="Near">NEAR and NEAR tokens</option>
                   <option value="Ethereum">ETH and Ethereum tokens</option>
+                  <option value="Bitcoin">BTC</option>
                 </select>
               </Field>
               <Field label="Mode">

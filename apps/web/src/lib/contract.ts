@@ -3,9 +3,9 @@ import { JsonRpcProvider, baseDecode } from "near-api-js";
 import { bytesToHex, createPublicClient, erc20Abi, http, type Hex } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { CONTRACT_ID, MPC_CONTRACT, NEAR_RPC, SEPOLIA_RPC } from "./config";
+import { BTC_ESPLORA, CONTRACT_ID, MPC_CONTRACT, NEAR_RPC, SEPOLIA_RPC } from "./config";
 import { registerTokens } from "./plan";
-import type { ContractConfig, Erc20Token, PlanView, Transfer } from "./types";
+import type { BtcDestination, BtcRelease, BtcTx, BtcUtxo, BtcVault, ContractConfig, Erc20Token, PlanView, Transfer } from "./types";
 
 export const provider = new JsonRpcProvider({ url: NEAR_RPC });
 export const sepoliaClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
@@ -49,3 +49,24 @@ export function tokenBalances(address: Hex, tokens: Erc20Token[]) {
     tokens.map((t) => sepoliaClient.readContract({ address: t.address as Hex, abi: erc20Abi, functionName: "balanceOf", args: [address] }).catch(() => null)),
   );
 }
+
+// ------------------------------------------------------------ bitcoin (D20)
+
+export const getBtcVault = (owner: string) => view<BtcVault | null>("get_btc_vault", { owner });
+export const getBtcDestinations = (owner: string) => view<BtcDestination[]>("get_btc_destinations", { owner });
+export const getBtcRelease = (owner: string) => view<BtcRelease | null>("get_btc_release", { owner });
+export const getBtcTx = (owner: string, index: number) => view<BtcTx | null>("get_btc_tx", { owner, index });
+
+/** Confirmed coins at a testnet address, largest first. */
+export async function btcUtxos(address: string): Promise<BtcUtxo[]> {
+  const r = await fetch(`${BTC_ESPLORA}/address/${address}/utxo`);
+  if (!r.ok) throw new Error(`Bitcoin API: ${r.status}`);
+  const list = (await r.json()) as { txid: string; vout: number; value: number; status: { confirmed: boolean } }[];
+  return list
+    .filter((u) => u.status.confirmed)
+    .sort((a, b) => b.value - a.value)
+    .map((u) => ({ txid: u.txid, vout: u.vout, value: String(u.value) }));
+}
+
+/** At most this many coins per payout (each needs its own MPC signature). */
+export const MAX_BTC_INPUTS = 2;

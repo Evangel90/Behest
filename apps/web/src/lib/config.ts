@@ -5,3 +5,5 @@ export const SEPOLIA_RPC = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://e
 export const MPC_CONTRACT = "v1.signer-prod.testnet";
 export const NEAR_EXPLORER = "https://testnet.nearblocks.io";
 export const ETH_EXPLORER = "https://sepolia.etherscan.io";
+export const BTC_ESPLORA = process.env.NEXT_PUBLIC_BTC_ESPLORA_URL ?? "https://blockstream.info/testnet4/api";
+export const BTC_EXPLORER = "https://mempool.space/testnet4";

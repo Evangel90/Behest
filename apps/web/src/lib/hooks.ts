@@ -78,6 +78,11 @@ const ERRORS: Record<string, string> = {
   E_DURATION_OUT_OF_BOUNDS: "One of the timers is outside the allowed range.",
   E_CONFLICTING_ROLE: "Someone can't be both an heir and a guardian, or guard their own plan.",
   E_UNAUTHORIZED: "This account isn't allowed to do that.",
+  E_BTC_VAULT_UNKNOWN: "Set up the plan's Bitcoin vault first.",
+  E_INVALID_BTC_ADDRESS: "That isn't a testnet SegWit Bitcoin address (tb1q… or tb1p…).",
+  E_INVALID_UTXOS: "The Bitcoin coins reported don't match the vault. Refresh and try again.",
+  E_BTC_NOT_HEAD: "Only the latest Bitcoin payout can be re-sent with a higher fee; this one confirms once the network catches up.",
+  E_FEE_AT_CAP: "The network fee is already at the cap.",
 };
 
 export function humanError(e: unknown): string {
