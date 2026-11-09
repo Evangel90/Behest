@@ -50,6 +50,9 @@ pub enum Error {
     InvalidUtxos,
     BtcNotHead,
     FeeAtCap,
+    NoLightClient,
+    InvalidProof,
+    RevertNotProven,
 }
 
 impl Error {
@@ -102,6 +105,9 @@ impl Error {
             Error::InvalidUtxos => "E_INVALID_UTXOS",
             Error::BtcNotHead => "E_BTC_NOT_HEAD",
             Error::FeeAtCap => "E_FEE_AT_CAP",
+            Error::NoLightClient => "E_NO_LIGHT_CLIENT",
+            Error::InvalidProof => "E_INVALID_PROOF",
+            Error::RevertNotProven => "E_REVERT_NOT_PROVEN",
         }
     }
 }

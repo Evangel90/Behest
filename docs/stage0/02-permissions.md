@@ -15,6 +15,8 @@
 | Claim own share | ✗ | ✗ | ✓ (own only, after `waiting_ends_at`) | ✗ | ✗ | ✗ |
 | Retry a failed ETH transfer | ✗ | ✗ | ✓ (own) | ✓ | ✗ | ✗ |
 | Report broadcast / confirmed / failed | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| Prove a Sepolia outcome (`prove_eth_outcome`); re-issue a **proven** revert (D22) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (the proof is checked against the Ethereum light client, so the caller isn't trusted) |
+| Set the Ethereum light client | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ |
 | Add / remove executors, set global fee cap, pause new plans and new signing | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ |
 | Read any plan, proposal or transfer | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 

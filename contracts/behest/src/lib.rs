@@ -6,6 +6,7 @@
 mod errors;
 pub mod btc;
 pub mod eth;
+pub mod ethproof;
 mod legacy;
 mod policy;
 mod types;
@@ -58,6 +59,12 @@ const FT_GAS: Gas = Gas::from_tgas(15);
 /// `btcd:` destinations, `btcpk:` vault key, `btcp:` release, `btx:` txs.
 const MAX_BTC_INPUTS: usize = 2;
 const BTC_CONFIG_KEY: &[u8] = b"btc_config";
+/// D22: the Ethereum light client on NEAR (`block_hash_safe`), and per
+/// transfer the hash of a transaction proven to have reverted (`rvp:`).
+const ETH_LIGHT_CLIENT_KEY: &[u8] = b"eth_light_client";
+const LIGHT_CLIENT_GAS: Gas = Gas::from_tgas(10);
+const PROOF_CALLBACK_GAS: Gas = Gas::from_tgas(20);
+const MAX_PROOF_NODES: usize = 16;
 
 /// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
 #[near(serializers = [json])]
@@ -149,6 +156,7 @@ pub struct ConfigView {
     pub erc20_tokens: Vec<Erc20Token>,
     pub nep141_tokens: Vec<Nep141Token>,
     pub btc: BtcConfig,
+    pub eth_light_client: Option<AccountId>,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -1358,15 +1366,16 @@ impl Contract {
         self.eth_gas_limit = gas_limit;
     }
 
-    /// Re-issue an ETH transfer whose transaction was mined but reverted, on a
-    /// fresh nonce with the current gas limit and starting fees.
-    ///
-    /// Trust assumption (05-threat-model): the contract cannot see Ethereum, so
-    /// it relies on the admin having checked the revert on-chain. Without that
-    /// check a still-pending original could be mined alongside the re-issue.
+/// Re-issues an ETH/ERC-20 transfer whose transaction was mined but
+    /// reverted, under the next nonce. Allowed only after `prove_eth_outcome`
+    /// proved the revert (D22, threat 20), so anyone may call it: nobody's word
+    /// is needed that the old nonce paid nothing.
     pub fn reissue_reverted_transfer(&mut self, owner: AccountId, index: u32) -> Promise {
-        self.assert_admin();
+        if self.paused {
+            fail(Error::Paused);
+        }
         let gas_limit = self.eth_gas_limit;
+        let proven = env::storage_read(&revert_proof_key(&owner, index));
         let plan = self.plan_mut(&owner);
         let next_nonce = plan.eth_next_nonce;
         let p = plan.proposal.as_mut().unwrap_or_else(|| fail(Error::NoProposal));
@@ -1374,6 +1383,10 @@ impl Contract {
         if !tr.asset.is_evm() || tr.state != TransferState::Failed || tr.failure.as_deref() != Some("Reverted") {
             fail(Error::InvalidTransferState);
         }
+        if proven.is_none() || proven.as_deref().map(|h| eth::hex_encode(h)) != tr.tx_hash.as_deref().map(|h| h.trim_start_matches("0x").to_ascii_lowercase()) {
+            fail(Error::RevertNotProven);
+        }
+        env::storage_remove(&revert_proof_key(&owner, index));
         let old_nonce = tr.eth_tx.as_ref().map(|t| t.nonce);
         tr.eth_tx = None; // sign_eth assigns the next nonce and initial fees
         p.eth_gas_limit = p.eth_gas_limit.max(gas_limit);
@@ -1382,6 +1395,96 @@ impl Contract {
             near_sdk::serde_json::json!({"owner": owner, "index": index, "old_nonce": old_nonce, "new_nonce": next_nonce}),
         );
         self.sign_eth(&owner, index as usize)
+    }
+
+    /// D22. Proves how an ETH/ERC-20 transfer's transaction ended on Sepolia:
+    /// the block header, the transaction's index and Merkle-Patricia proofs of
+    /// the transaction and its receipt (built by any Sepolia node; see the
+    /// executor's `ethproof.ts`). The contract checks the proofs, that the
+    /// transaction is one this contract signed for the transfer's current
+    /// nonce, and asks the Ethereum light client whether the header is final.
+    /// Success confirms the transfer; a revert marks it Failed("Reverted") and
+    /// unlocks `reissue_reverted_transfer`. Anyone may call it.
+    pub fn prove_eth_outcome(&mut self, owner: AccountId, index: u32, proof: EthOutcomeProof) -> Promise {
+        let lc = eth_light_client().unwrap_or_else(|| fail(Error::NoLightClient));
+        let tr = self.tr_get(&owner, index);
+        if !tr.asset.is_evm() || tr.state == TransferState::Confirmed {
+            fail(Error::InvalidTransferState);
+        }
+        let dec = |v: &str| eth::hex_decode(v.trim_start_matches("0x")).unwrap_or_else(|| fail(Error::InvalidProof));
+        if proof.tx_proof.len() > MAX_PROOF_NODES || proof.receipt_proof.len() > MAX_PROOF_NODES {
+            fail(Error::InvalidProof);
+        }
+        let header = dec(&proof.header);
+        let txp: Vec<Vec<u8>> = proof.tx_proof.iter().map(|n| dec(n)).collect();
+        let rp: Vec<Vec<u8>> = proof.receipt_proof.iter().map(|n| dec(n)).collect();
+        let out = ethproof::verify_outcome(&header, proof.tx_index as u64, &txp, &rp).unwrap_or_else(|e| {
+            log!("proof: {}", e);
+            fail(Error::InvalidProof)
+        });
+        let tx_hash = format!("0x{}", eth::hex_encode(&out.tx_hash));
+        if signed_nonce_of(&tr, &tx_hash) != Some(tr.eth_tx.as_ref().map(|t| t.nonce).unwrap_or(u64::MAX)) {
+            fail(Error::InvalidProof); // not ours, or a nonce this transfer no longer uses
+        }
+        Promise::new(lc)
+            .function_call("block_hash_safe".to_string(), out.block_number.to_le_bytes().to_vec(), NearToken::from_yoctonear(0), LIGHT_CLIENT_GAS)
+            .then(Self::ext(env::current_account_id()).with_static_gas(PROOF_CALLBACK_GAS).on_eth_outcome_checked(
+                owner,
+                index,
+                tx_hash,
+                format!("0x{}", eth::hex_encode(&out.block_hash)),
+                out.success,
+            ))
+    }
+
+    #[private]
+    pub fn on_eth_outcome_checked(&mut self, owner: AccountId, index: u32, tx_hash: String, block_hash: String, success: bool) -> bool {
+        // block_hash_safe returns borsh Option<[u8; 32]>: Some only for finalized blocks it still keeps
+        let finalized = env::promise_result_checked(0, 64)
+            .ok()
+            .filter(|b| b.len() == 33 && b[0] == 1)
+            .map(|b| format!("0x{}", eth::hex_encode(&b[1..])));
+        if finalized.as_deref() != Some(block_hash.as_str()) {
+            log!("block {} is not final in the light client", block_hash);
+            return false;
+        }
+        let Some(mut tr) = self.tr_read(&owner, index) else { return false };
+        let nonce = tr.eth_tx.as_ref().map(|t| t.nonce);
+        if tr.state == TransferState::Confirmed || signed_nonce_of(&tr, &tx_hash) != nonce || nonce.is_none() {
+            return false; // changed while the light client answered
+        }
+        tr.tx_hash = Some(tx_hash.clone());
+        if success {
+            tr.state = TransferState::Confirmed;
+            tr.failure = None;
+        } else {
+            tr.state = TransferState::Failed;
+            tr.failure = Some("Reverted".into());
+            if index != VAULT_WITHDRAWAL {
+                env::storage_write(&revert_proof_key(&owner, index), &eth::hex_decode(tx_hash.trim_start_matches("0x")).expect("hex"));
+            }
+        }
+        let state = tr.state;
+        self.tr_put(&owner, index, tr);
+        emit("eth_outcome_proven", near_sdk::serde_json::json!({"owner": owner, "index": index, "tx_hash": tx_hash, "block_hash": block_hash, "success": success}));
+        emit_transfer(&owner, index, state);
+        if success && index != VAULT_WITHDRAWAL {
+            self.close_if_settled(&owner);
+        }
+        true
+    }
+
+    /// The transaction hash proven to have reverted for a transfer, if any.
+    pub fn get_revert_proof(&self, owner: AccountId, index: u32) -> Option<String> {
+        env::storage_read(&revert_proof_key(&owner, index)).map(|h| format!("0x{}", eth::hex_encode(&h)))
+    }
+
+    pub fn set_eth_light_client(&mut self, account_id: Option<AccountId>) {
+        self.assert_admin();
+        match account_id {
+            Some(a) => env::storage_write(ETH_LIGHT_CLIENT_KEY, a.as_bytes()),
+            None => env::storage_remove(ETH_LIGHT_CLIENT_KEY),
+        };
     }
 
     /// Replaces the ERC-20 allowlist. Open proposals keep the token addresses
@@ -1517,6 +1620,7 @@ impl Contract {
             erc20_tokens: erc20_tokens(),
             nep141_tokens: nep141_tokens(),
             btc: btc_config(),
+            eth_light_client: eth_light_client(),
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
@@ -1861,6 +1965,24 @@ fn evm_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
         Asset::Erc20(token) => Some((eth::parse_address(token)?, 0, eth::erc20_transfer_data(&dest, tr.amount.0))),
         Asset::Near | Asset::Nep141(_) | Asset::Btc => None,
     }
+}
+
+fn eth_light_client() -> Option<AccountId> {
+    env::storage_read(ETH_LIGHT_CLIENT_KEY).and_then(|b| String::from_utf8(b).ok()).and_then(|s| s.parse().ok())
+}
+
+fn revert_proof_key(owner: &AccountId, index: u32) -> Vec<u8> {
+    format!("rvp:{}:{}", owner, index).into_bytes()
+}
+
+/// The nonce of the signed version of `tr` whose hash is `tx_hash`, if any.
+fn signed_nonce_of(tr: &Transfer, tx_hash: &str) -> Option<u64> {
+    let want = tx_hash.trim_start_matches("0x").to_ascii_lowercase();
+    tr.signed_versions.iter().find_map(|v| {
+        let raw = raw_signed_tx(tr, &v.eth_tx, &v.signature)?;
+        let bytes = eth::hex_decode(raw.trim_start_matches("0x"))?;
+        (eth::hex_encode(&env::keccak256_array(&bytes)) == want).then_some(v.eth_tx.nonce)
+    })
 }
 
 fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Option<String> {

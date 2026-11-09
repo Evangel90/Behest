@@ -731,17 +731,47 @@ fn eth_reverted() -> Env {
     let mut e = eth_signed();
     e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
     let i = e.eth_index();
-    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), i, "0xabc".into());
+    let h = e.signed_hash(i);
+    e.as_("exec.testnet", 0).report_broadcast(acc("owner.testnet"), i, h);
     e.as_("exec.testnet", 0).report_failed(acc("owner.testnet"), i, "Reverted".into());
+    e
+}
+
+const BLOCK: &str = "0x190ca72931856dac06c846b56cc36c7b2a17a413f10674e2cc4875c09346942b";
+
+impl Env {
+    /// Hash of the transfer's current signed transaction.
+    fn signed_hash(&mut self, i: u32) -> String {
+        let raw = self.c.get_signed_tx(acc("owner.testnet"), i).unwrap();
+        let b = crate::eth::hex_decode(raw.trim_start_matches("0x")).unwrap();
+        format!("0x{}", crate::eth::hex_encode(&env::keccak256_array(&b)))
+    }
+    /// The light-client callback of `prove_eth_outcome`, as if the proofs
+    /// checked out; `final_hash` is what `block_hash_safe` answered.
+    fn proven(&mut self, i: u32, tx: String, success: bool, final_hash: Option<&str>) -> bool {
+        let answer = match final_hash {
+            Some(h) => [vec![1u8], crate::eth::hex_decode(h.trim_start_matches("0x")).unwrap()].concat(),
+            None => vec![0u8],
+        };
+        self.callback(vec![PromiseResult::Successful(answer)]).on_eth_outcome_checked(acc("owner.testnet"), i, tx, BLOCK.into(), success)
+    }
+}
+
+fn eth_proven_revert() -> Env {
+    let mut e = eth_reverted();
+    let i = e.eth_index();
+    let h = e.signed_hash(i);
+    assert!(e.proven(i, h, false, Some(BLOCK)));
     e
 }
 
 #[test]
 fn reverted_transfer_is_reissued_on_a_fresh_nonce_with_current_gas() {
-    let mut e = eth_reverted();
+    let mut e = eth_proven_revert();
     e.as_("admin.testnet", 0).set_eth_gas_limit(250_000);
     let i = e.eth_index();
-    let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+    // once proven, anyone may re-issue: an heir here
+    let _ = e.as_("amara.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
     let tr = e.eth_transfer();
     let p = tr.eth_tx.unwrap();
     assert_eq!((tr.state, p.nonce, p.gas_limit, p.max_fee_per_gas.0), (TransferState::Signing, 1, 250_000, 20 * GWEI));
@@ -751,11 +781,12 @@ fn reverted_transfer_is_reissued_on_a_fresh_nonce_with_current_gas() {
 }
 
 #[test]
-#[should_panic(expected = "E_UNAUTHORIZED")]
-fn only_admin_reissues() {
+#[should_panic(expected = "E_REVERT_NOT_PROVEN")]
+fn reissue_needs_a_proven_revert() {
+    // the executor's (or anyone's) report of a revert isn't enough (D22, threat 20)
     let mut e = eth_reverted();
     let i = e.eth_index();
-    let _ = e.as_("exec.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+    let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
 }
 
 #[test]
@@ -815,7 +846,7 @@ fn v1_state_migrates_lazily() {
                     signature: None,
                     signed_versions: vec![],
                     attempts: 1,
-                    tx_hash: Some("0xabc".into()),
+                    tx_hash: Some("0xabcd".into()),
                     failure: Some("Reverted".into()),
                 }],
             }),
@@ -849,6 +880,8 @@ fn v1_state_migrates_lazily() {
     assert_eq!(view.plan.proposal.as_ref().unwrap().eth_gas_limit, 21_000);
 
     // first write moves it, and a reissue picks up the new gas limit and nonce 2
+    // a v0.1 transfer has no signed versions to prove against; record the proof directly
+    env::storage_write(b"rvp:owner.testnet:0", &[0xab, 0xcd]);
     let _ = e.as_("admin.testnet", 0).reissue_reverted_transfer(owner.clone(), 0);
     let p = e.plan().proposal.unwrap();
     assert_eq!((p.eth_gas_limit, p.transfers[0].eth_tx.as_ref().unwrap().nonce), (250_000, 2));
@@ -2511,5 +2544,172 @@ mod follow_up {
         let mut e = settle(e);
         assert_eq!(ft_deposit(&mut e, WNEAR, "friend.testnet", 500, "owner.testnet"), 0);
         assert_eq!(ft_escrow_of(&mut e), 500);
+    }
+}
+
+// ------------------------------------------- D22 Sepolia outcome proofs
+
+mod ethproof_vectors {
+    use crate::eth::{hex_decode, hex_encode};
+    use crate::ethproof::{decode, rlp_index, verify_outcome, verify_proof, Rlp};
+
+    struct V {
+        header: Vec<u8>,
+        index: u64,
+        tx: Vec<Vec<u8>>,
+        receipt: Vec<Vec<u8>>,
+    }
+
+    fn load(json: &str) -> V {
+        let j: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(json).unwrap();
+        let hx = |v: &near_sdk::serde_json::Value| hex_decode(v.as_str().unwrap().trim_start_matches("0x")).unwrap();
+        let list = |k: &str| j[k].as_array().unwrap().iter().map(hx).collect::<Vec<_>>();
+        V { header: hx(&j["header"]), index: j["tx_index"].as_u64().unwrap(), tx: list("tx_proof"), receipt: list("receipt_proof") }
+    }
+
+    const OK: &str = include_str!("testdata/sepolia-success.json");
+    const REV_TYPED: &str = include_str!("testdata/sepolia-revert-typed.json");
+    const REV_LEGACY: &str = include_str!("testdata/sepolia-revert-legacy.json");
+
+    #[test]
+    fn proves_a_real_successful_transfer() {
+        let v = load(OK);
+        let o = verify_outcome(&v.header, v.index, &v.tx, &v.receipt).unwrap();
+        assert_eq!(o.block_number, 12_090_627);
+        assert_eq!(hex_encode(&o.block_hash), "552618535dd77310eae483baca65cb663c590b2f667b70eec692ff5d37a6381d");
+        // Behest's first Sepolia release
+        assert_eq!(hex_encode(&o.tx_hash), "38e3a54ce63bba4b1a1940981bee6fe15e3f7c5cfac17b23ff14e9314381b323");
+        assert!(o.success);
+    }
+
+    #[test]
+    fn proves_real_reverts_typed_and_legacy() {
+        let v = load(REV_TYPED);
+        let o = verify_outcome(&v.header, v.index, &v.tx, &v.receipt).unwrap();
+        assert_eq!((o.block_number, o.success), (12_093_650, false));
+        assert_eq!(hex_encode(&o.block_hash), "187877b8bb8ece7337924544952b66b3e1fcc5c235fd62ac591bfd453f2c3a61");
+        assert_eq!(hex_encode(&o.tx_hash), "7478c4451524b6847b4b5498dfe35de9660c71dc84804324b3eda3c01a3aca91");
+        let v = load(REV_LEGACY);
+        let o = verify_outcome(&v.header, v.index, &v.tx, &v.receipt).unwrap();
+        assert_eq!((o.block_number, o.success), (12_093_700, false));
+        assert_eq!(hex_encode(&o.tx_hash), "dcc96e62159831aec3f08fad78dc938436d197b6019d2f6821afea6504bb782f");
+    }
+
+    #[test]
+    fn rejects_tampered_or_mismatched_proofs() {
+        let v = load(OK);
+        // another index: the proofs don't lead there
+        assert!(verify_outcome(&v.header, v.index + 1, &v.tx, &v.receipt).is_err());
+        // receipt proof swapped for the transaction proof
+        assert!(verify_outcome(&v.header, v.index, &v.tx, &v.tx).is_err());
+        // one flipped byte in the last receipt node (the leaf with the status)
+        let mut r = v.receipt.clone();
+        let last = r.last_mut().unwrap();
+        let k = last.len() - 1;
+        last[k] ^= 1;
+        assert!(verify_outcome(&v.header, v.index, &v.tx, &r).is_err());
+        // a node added at the end
+        let mut t = v.tx.clone();
+        t.push(v.tx[0].clone());
+        assert!(verify_outcome(&v.header, v.index, &t, &v.receipt).is_err());
+        // a different header (another block's roots)
+        let other = load(REV_TYPED);
+        assert!(verify_outcome(&other.header, v.index, &v.tx, &v.receipt).is_err());
+        // truncated header
+        assert!(verify_outcome(&v.header[..v.header.len() - 1], v.index, &v.tx, &v.receipt).is_err());
+    }
+
+    #[test]
+    fn rlp_and_keys() {
+        assert_eq!(rlp_index(0), vec![0x80]);
+        assert_eq!(rlp_index(42), vec![42]);
+        assert_eq!(rlp_index(127), vec![0x7f]);
+        assert_eq!(rlp_index(128), vec![0x81, 0x80]);
+        assert_eq!(rlp_index(300), vec![0x82, 0x01, 0x2c]);
+        assert_eq!(decode(&[0xc2, 0x01, 0x80]), Some(Rlp::List(vec![Rlp::Bytes(&[1]), Rlp::Bytes(&[])], &[0xc2, 0x01, 0x80])));
+        assert_eq!(decode(&[0x81, 0x05]), None); // non-canonical single byte
+        assert_eq!(decode(&[0xc2, 0x01]), None); // short
+        assert!(verify_proof(&[0u8; 32], &[0x80], &[]).is_none());
+    }
+}
+
+// ------------------------------------------- D22 outcome proofs (contract)
+
+mod outcome_proofs {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "E_NO_LIGHT_CLIENT")]
+    fn proving_needs_a_light_client() {
+        let mut e = eth_reverted();
+        let i = e.eth_index();
+        let proof = EthOutcomeProof { header: "0x".into(), tx_index: 0, tx_proof: vec![], receipt_proof: vec![] };
+        let _ = e.as_("amara.testnet", 0).prove_eth_outcome(acc("owner.testnet"), i, proof);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_PROOF")]
+    fn a_valid_proof_of_someone_elses_transaction_is_rejected() {
+        let mut e = eth_reverted();
+        e.as_("admin.testnet", 0).set_eth_light_client(Some(acc("client-eth2.sepolia.testnet")));
+        let i = e.eth_index();
+        // a real, valid Sepolia revert proof, but not a transaction this contract signed
+        let j: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(include_str!("testdata/sepolia-revert-typed.json")).unwrap();
+        let proof: EthOutcomeProof = near_sdk::serde_json::from_value(j).unwrap();
+        let _ = e.as_("amara.testnet", 0).prove_eth_outcome(acc("owner.testnet"), i, proof);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_INVALID_PROOF")]
+    fn a_tampered_proof_is_rejected() {
+        let mut e = eth_reverted();
+        e.as_("admin.testnet", 0).set_eth_light_client(Some(acc("client-eth2.sepolia.testnet")));
+        let i = e.eth_index();
+        let j: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(include_str!("testdata/sepolia-success.json")).unwrap();
+        let mut proof: EthOutcomeProof = near_sdk::serde_json::from_value(j).unwrap();
+        proof.tx_index += 1;
+        let _ = e.as_("amara.testnet", 0).prove_eth_outcome(acc("owner.testnet"), i, proof);
+    }
+
+    #[test]
+    fn a_block_the_light_client_does_not_hold_as_final_proves_nothing() {
+        let mut e = eth_reverted();
+        let i = e.eth_index();
+        let h = e.signed_hash(i);
+        assert!(!e.proven(i, h.clone(), false, None));
+        let other = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        assert!(!e.proven(i, h, false, Some(other)));
+        assert_eq!(e.c.get_revert_proof(acc("owner.testnet"), i), None);
+    }
+
+    #[test]
+    fn a_proven_revert_unlocks_one_reissue() {
+        let mut e = eth_proven_revert();
+        let i = e.eth_index();
+        let h = e.signed_hash(i);
+        assert_eq!(e.c.get_revert_proof(acc("owner.testnet"), i), Some(h.clone()));
+        let _ = e.as_("tobi.testnet", 0).reissue_reverted_transfer(acc("owner.testnet"), i);
+        assert_eq!(e.c.get_revert_proof(acc("owner.testnet"), i), None);
+        assert_eq!(e.eth_transfer().eth_tx.unwrap().nonce, 1);
+        // the old nonce's revert can't be proven again against the new nonce
+        assert!(!e.proven(i, h, false, Some(BLOCK)));
+    }
+
+    #[test]
+    fn a_proven_success_confirms_even_after_a_false_failure_report() {
+        let mut e = eth_reverted(); // the executor said "Reverted"; it wasn't
+        let i = e.eth_index();
+        let h = e.signed_hash(i);
+        assert!(e.proven(i, h.clone(), true, Some(BLOCK)));
+        let tr = e.eth_transfer();
+        assert_eq!((tr.state, tr.failure, tr.tx_hash), (TransferState::Confirmed, None, Some(h)));
+        assert_eq!(e.c.get_revert_proof(acc("owner.testnet"), i), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "E_UNAUTHORIZED")]
+    fn only_admin_sets_the_light_client() {
+        let mut e = eth_reverted();
+        e.as_("amara.testnet", 0).set_eth_light_client(Some(acc("evil.testnet")));
     }
 }

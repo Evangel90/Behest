@@ -426,3 +426,13 @@ pub struct PlanView {
     /// NEP-141 balances held for this plan (allowlisted tokens only).
     pub ft_escrow: Vec<TokenBalance>,
 }
+
+/// D22: proof of a Sepolia transaction's outcome (hex strings, `0x` optional).
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct EthOutcomeProof {
+    pub header: String,
+    pub tx_index: u32,
+    pub tx_proof: Vec<String>,
+    pub receipt_proof: Vec<String>,
+}
