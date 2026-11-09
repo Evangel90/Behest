@@ -95,15 +95,15 @@ export function AccountButton({ dark, full }: { dark?: boolean; full?: boolean }
     );
   }
   return (
-    <div className="flex items-center gap-1">
-      <Link href="/app" className={cx("flex min-h-11 min-w-0 max-w-[132px] items-center gap-2 rounded-tile px-2 sm:max-w-[220px] sm:px-3", dark ? "text-white hover:bg-white/10" : "hover:bg-subtle")} title={session.accountId}>
+    <div className={cx("flex min-w-0 items-center gap-1", full && "w-full")}>
+      <Link href="/app" className={cx("flex min-h-11 min-w-0 items-center gap-2 rounded-tile px-2 sm:px-3", full ? "flex-1" : "max-w-[132px] sm:max-w-[220px]", dark ? "text-white hover:bg-white/10" : "hover:bg-subtle")} title={session.accountId}>
         <span className="h-2 w-2 shrink-0 rounded-full bg-signal" aria-hidden="true" />
         <span className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-sm">{session.kind === "persona" ? session.label : session.accountId}</span>
           <span className={cx("truncate text-xs", dark ? "text-muted-dark" : "text-muted")}>{session.via}</span>
         </span>
       </Link>
-      <button onClick={() => void signOut()} className={cx("min-h-11 rounded-tile px-2.5 text-sm", dark ? "text-muted-dark hover:bg-white/10" : "text-muted hover:bg-subtle")}>
+      <button onClick={() => void signOut()} className={cx("min-h-11 shrink-0 whitespace-nowrap rounded-tile px-2.5 text-sm", dark ? "text-muted-dark hover:bg-white/10" : "text-muted hover:bg-subtle")}>
         Sign out
       </button>
     </div>

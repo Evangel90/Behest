@@ -3,10 +3,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/chrome";
 import { SignInDialog } from "@/components/SignIn";
-import { Bracket, Button, ButtonLink, Card, StatusPill } from "@/components/ui";
+import { Bracket, Button, ButtonLink, Card, Notice, StatusPill } from "@/components/ui";
 import { getPlan, listOpenReleases } from "@/lib/contract";
 import { watched } from "@/lib/demo";
-import { actionsFor, describePlan, rolesOf, shortName, type Role } from "@/lib/plan";
+import { useAction } from "@/lib/hooks";
+import { actionsFor, formatNear, relative, rolesOf, shortName, when, type Role } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import type { PlanView } from "@/lib/types";
 
@@ -87,12 +88,7 @@ export default function Home() {
             </ButtonLink>
           </div>
         )}
-        {mine && (
-          <Link href={`/plan/${mine.plan.owner}`} className="flex flex-col gap-2 rounded-tile border border-line p-4 hover:border-line-strong">
-            <StatusPill status={mine.status} />
-            <span className="text-base leading-relaxed">{describePlan(mine.plan.policy)}</span>
-          </Link>
-        )}
+        {mine && session && <MyPlan view={mine} onChange={() => getPlan(session.accountId).then(setMine).catch(() => {})} />}
       </Card>
 
       {others.length > 0 && (
@@ -104,6 +100,49 @@ export default function Home() {
         </Card>
       )}
     </Shell>
+  );
+}
+
+/** The owner's own plan: where it stands, and the one thing to do about it. */
+function MyPlan({ view, onChange }: { view: PlanView; onChange: () => void }) {
+  const { session } = useSession();
+  const { busy, result, run } = useAction();
+  const p = view.plan;
+  const now = view.now_ms;
+  const open = !!p.proposal && view.status !== "Settled";
+  const canCheckIn = view.status === "Active" || view.status === "Overdue" || open;
+  const due = view.status === "Active" ? `Next check-in due ${relative(view.overdue_at_ms, now)}` : view.status === "Overdue" ? `Check-in overdue since ${when(view.overdue_at_ms)}` : null;
+  const facts = [
+    `${p.policy.heirs.length} heir${p.policy.heirs.length === 1 ? "" : "s"}`,
+    `${p.policy.quorum} of ${p.policy.guardians.length} guardians`,
+    `${formatNear(p.escrow)} NEAR held`,
+    `version ${p.version}`,
+  ];
+  return (
+    <div className="flex flex-col gap-4 rounded-tile border border-line p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <StatusPill status={view.status} />
+        <span className="text-sm text-muted">last check-in {relative(p.last_check_in_ms, now)}</span>
+      </div>
+      {due && <p className="text-2xl font-medium tracking-[-0.02em]">{due}.</p>}
+      {open && <p className="text-2xl font-medium tracking-[-0.02em]">A release is under way. Checking in cancels it while the waiting period runs.</p>}
+      <p className="text-sm text-muted">{facts.join(" · ")}</p>
+      <div className="flex flex-wrap gap-2">
+        {canCheckIn && (
+          <Button
+            variant={view.status === "Active" ? "outline" : "primary"}
+            disabled={!!busy}
+            onClick={() => void run("Check in", async () => session!.call("check_in", {}), "Checked in.").then(onChange)}
+          >
+            {busy ? "Checking in…" : open ? "I'm here: check in and cancel" : "Check in now"}
+          </Button>
+        )}
+        <ButtonLink href={`/plan/${p.owner}`} variant={canCheckIn && view.status !== "Active" ? "outline" : "ink"}>
+          Open plan
+        </ButtonLink>
+      </div>
+      {result && <Notice tone={result.ok ? "ok" : "error"}>{result.text}</Notice>}
+    </div>
   );
 }
 

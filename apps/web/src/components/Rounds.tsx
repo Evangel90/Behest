@@ -4,7 +4,7 @@
 // approving, and the plan's past releases.
 import { useEffect, useState } from "react";
 import { getConfig, getReleaseHistory, view as viewCall } from "@/lib/contract";
-import { assetLabel, formatAmount, formatBtc, formatEth, formatNear, formatToken, shortName, vaultSplit } from "@/lib/plan";
+import { assetLabel, formatAmount, formatBtc, formatEth, formatNear, formatToken, shortName, vaultSplit, when, day } from "@/lib/plan";
 import type { Asset, ContractConfig, PlanView, Proposal } from "@/lib/types";
 import { useVault } from "@/lib/vault";
 import { btcProposal, useBtc } from "./Bitcoin";
@@ -52,7 +52,7 @@ export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanV
       <p>
         {followUp
           ? `A release of ${name}'s plan completed and ${name} hasn't checked in since. Anything left in the plan (later deposits, or an amount the last proposal missed) can go out in a follow-up round, split by the same rules. ${asHeir ? "The guardians approve it" : "The other guardians approve it"}, and ${name} can still cancel until the waiting period ends.`
-          : `${name} hasn't checked in since ${new Date(view.plan.last_check_in_ms).toLocaleString()}. Proposing freezes the plan and asks the other guardians to approve. ${name} can still cancel until the waiting period ends.`}
+          : `${name} hasn't checked in since ${when(view.plan.last_check_in_ms)}. Proposing freezes the plan and asks the other guardians to approve. ${name} can still cancel until the waiting period ends.`}
       </p>
       <div className="grid gap-1">
         <Row k="NEAR to distribute" v={`${formatNear(view.plan.escrow)} NEAR`} />
@@ -206,11 +206,14 @@ export function HistoryCard({ view, history }: { view: PlanView; history: Propos
     <Card className="flex flex-col gap-3">
       <Bracket>Past releases</Bracket>
       {past.map((h, i) => (
-        <details key={h.id} open={i === 0} className="rounded-tile border border-line">
-          <summary className="flex min-h-12 cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-2">
-            <span className="font-semibold">Release #{h.id}</span>
+        <details key={h.id} open={i === 0} className="group min-w-0 rounded-tile border border-line">
+          <summary className="flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-2 [&::-webkit-details-marker]:hidden">
+            <span className="flex items-center gap-2 font-semibold">
+              <span aria-hidden="true" className="text-muted transition-transform group-open:rotate-90">›</span>
+              Release #{h.id}
+            </span>
             <span className="text-sm text-muted">
-              proposed by {shortName(h.proposer)} · {new Date(h.created_at_ms).toLocaleDateString()} · {h.transfers.length} transfer{h.transfers.length === 1 ? "" : "s"}
+              proposed by {shortName(h.proposer)} · {day(h.created_at_ms)} · {h.transfers.length} transfer{h.transfers.length === 1 ? "" : "s"}
             </span>
           </summary>
           <div className="p-2 pt-0">

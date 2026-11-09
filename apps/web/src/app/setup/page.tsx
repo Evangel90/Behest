@@ -37,7 +37,7 @@ export default function SetupPage() {
 
 function Setup() {
   const router = useRouter();
-  const editing = useSearchParams().get("edit") === "1";
+  const asked = useSearchParams().get("edit") === "1";
   const { session, ready } = useSession();
   const [demo, setDemo] = useState(true);
   const [existing, setExisting] = useState<PlanView | null>(null);
@@ -52,6 +52,9 @@ function Setup() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signIn, setSignIn] = useState(false);
+  const [tried, setTried] = useState(false);
+  // An owner who already has a plan always edits it (the contract keeps one plan per account).
+  const editing = asked || !!existing;
 
   useEffect(() => void getConfig().then((c) => setDemo(c.demo_timers)).catch(() => {}), []);
   useEffect(() => {
@@ -59,7 +62,7 @@ function Setup() {
     getPlan(session.accountId)
       .then((v) => {
         setExisting(v);
-        if (v && editing) {
+        if (v) {
           const p = v.plan.policy;
           setCheckIn(fromMs(p.check_in_interval_ms));
           setGrace(fromMs(p.grace_ms));
@@ -71,7 +74,7 @@ function Setup() {
         }
       })
       .catch(() => {});
-  }, [session, editing]);
+  }, [session]);
 
   const plan: PlanInput = useMemo(
     () => ({
@@ -154,8 +157,8 @@ function Setup() {
     <Shell>
       <div className="flex flex-col gap-2">
         <Bracket>{editing ? "Edit plan" : "Create a plan"}</Bracket>
-        <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">{step === "edit" ? "Set your rules." : "Read it once more."}</h1>
-        {existing && !editing && <Notice>You already have a plan. Saving replaces it and counts as a check-in.</Notice>}
+        <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">{step === "review" ? "Read it once more." : existing ? "Edit your plan." : "Set your rules."}</h1>
+        {existing && <Notice>Your current plan is filled in. Saving makes a new version, which counts as a check-in; any open release must be cancelled first.</Notice>}
         {demo && <p className="text-sm text-muted">This is a demo-timer deployment: minutes are allowed so you can watch a release end to end.</p>}
       </div>
 
@@ -200,7 +203,7 @@ function Setup() {
           <Card className="flex flex-col gap-4">
             <Bracket>Heirs · fixed destinations</Bracket>
             {heirs.map((h, i) => (
-              <div key={i} className="grid gap-3 rounded-tile border border-line p-3 md:grid-cols-[1.2fr_0.5fr_1.2fr_1.6fr_auto]">
+              <div key={i} className="grid gap-3 rounded-tile border border-line p-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,0.45fr)_minmax(0,1.5fr)_minmax(0,1.3fr)_auto]">
                 <Field label="Heir account">
                   <input className={inputClass} placeholder="amara.testnet" value={h.account} onChange={(e) => setHeirs(heirs.map((x, j) => (j === i ? { ...x, account: e.target.value } : x)))} spellCheck={false} />
                 </Field>
@@ -234,7 +237,7 @@ function Setup() {
             </Card>
           )}
 
-          {allErrors.length > 0 && (
+          {tried && allErrors.length > 0 && (
             <Notice tone="error">
               <ul className="list-disc pl-5">
                 {allErrors.map((e) => (
@@ -243,7 +246,14 @@ function Setup() {
               </ul>
             </Notice>
           )}
-          <Button className="self-start" disabled={allErrors.length > 0 || depositYocto === null} onClick={() => setStep("review")}>
+          <Button
+            className="self-start"
+            disabled={tried && (allErrors.length > 0 || depositYocto === null)}
+            onClick={() => {
+              setTried(true);
+              if (!allErrors.length && depositYocto !== null) setStep("review");
+            }}
+          >
             Review in plain words
           </Button>
         </>

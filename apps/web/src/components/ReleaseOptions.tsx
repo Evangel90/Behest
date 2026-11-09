@@ -4,7 +4,7 @@
 // request or approve an extension while an approved release is waiting.
 import { useCallback, useEffect, useState } from "react";
 import { view as viewCall } from "@/lib/contract";
-import { describeOptions, duration, relative, shortName } from "@/lib/plan";
+import { describeOptions, duration, relative, shortName, when } from "@/lib/plan";
 import type { ExtensionState, ModeOverride, PlanView, ReleaseOptions } from "@/lib/types";
 import { Bracket, Button, Card, Field, Notice, inputClass } from "./ui";
 
@@ -66,7 +66,7 @@ export function OptionsCard({ view, now, me, editable, act, busy }: { view: Plan
       )}
       {ext && ext.total_ms > 0 && (
         <Notice>
-          Waiting period extended {ext.count} time{ext.count === 1 ? "" : "s"}, {duration(ext.total_ms)} in total. The owner can still cancel until {new Date(prop!.waiting_ends_at_ms!).toLocaleString()}.
+          Waiting period extended {ext.count} time{ext.count === 1 ? "" : "s"}, {duration(ext.total_ms)} in total. The owner can still cancel until {when(prop!.waiting_ends_at_ms!)}.
         </Notice>
       )}
       {waiting && ext?.pending && (

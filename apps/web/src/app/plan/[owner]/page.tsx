@@ -16,7 +16,7 @@ import { getConfig, getVaultWithdrawal } from "@/lib/contract";
 import { useVault, type Vault } from "@/lib/vault";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
-import { actionsFor, followUpOpen, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role } from "@/lib/plan";
+import { actionsFor, followUpOpen, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role, when } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import type { Asset, ContractConfig, PlanView, Transfer } from "@/lib/types";
 
@@ -243,7 +243,7 @@ function OwnerView({ view, now, refresh }: Props) {
           <p className="border-t border-line pt-4 text-xl leading-snug tracking-[-0.01em]">{describePlan(p)}</p>
           {open && view.plan.proposal?.waiting_ends_at_ms && (
             <Notice tone="info">
-              You can cancel until <strong>{new Date(view.plan.proposal.waiting_ends_at_ms).toLocaleString()}</strong> ({relative(view.plan.proposal.waiting_ends_at_ms, now)}).
+              You can cancel until <strong>{when(view.plan.proposal.waiting_ends_at_ms)}</strong> ({relative(view.plan.proposal.waiting_ends_at_ms, now)}).
             </Notice>
           )}
         </Card>
@@ -472,7 +472,7 @@ function GuardianView({ view, now, refresh }: Props) {
           )}
           {s === "Waiting" && p.waiting_ends_at_ms && (
             <Notice>
-              Approved. {name} can cancel until {new Date(p.waiting_ends_at_ms).toLocaleString()} ({relative(p.waiting_ends_at_ms, now)}). Then the heirs can receive.
+              Approved. {name} can cancel until {when(p.waiting_ends_at_ms)} ({relative(p.waiting_ends_at_ms, now)}). Then the heirs can receive.
             </Notice>
           )}
         </Card>
@@ -677,8 +677,8 @@ function PublicView({ view, now, refresh }: Props) {
             <Row k="Grace period" v={duration(p.grace_ms)} />
             <Row k="Waiting period" v={duration(p.waiting_period_ms)} />
             <Row k="Quorum" v={`${p.quorum} of ${p.guardians.length} guardians`} />
-            <Row k="Last check-in" v={`${new Date(view.plan.last_check_in_ms).toLocaleString()} (${relative(view.plan.last_check_in_ms, now)})`} />
-            <Row k="Unreachable from" v={`${new Date(view.overdue_at_ms).toLocaleString()} (${relative(view.overdue_at_ms, now)})`} />
+            <Row k="Last check-in" v={`${when(view.plan.last_check_in_ms)} (${relative(view.plan.last_check_in_ms, now)})`} />
+            <Row k="Unreachable from" v={`${when(view.overdue_at_ms)} (${relative(view.overdue_at_ms, now)})`} />
             <Row k="Plan version" v={view.plan.version} />
             <Row k="NEAR escrow" v={`${formatNear(view.plan.escrow)} NEAR`} />
             <Row k="ETH vault" v={vault ? <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink> : "…"} mono />

@@ -128,42 +128,91 @@ export function receiptUrl(t: Transfer): string | null {
   return null;
 }
 
+/** Where a transfer goes: addresses shortened, NEAR accounts shown whole (CSS truncates). */
+function Dest({ to }: { to: string }) {
+  const addr = /^(0x|tb1|bc1)/i.test(to);
+  return (
+    <span className="block min-w-0 truncate font-mono text-xs" title={to}>
+      {addr ? shortAddr(to) : to}
+    </span>
+  );
+}
+
+function Receipt({ t }: { t: Transfer }) {
+  const url = receiptUrl(t);
+  if (!url) return <span className="text-muted">—</span>;
+  return (
+    <ExtLink href={url} className="font-mono text-xs">
+      {t.tx_hash ? shortAddr(t.tx_hash) : "View"}
+    </ExtLink>
+  );
+}
+
+/**
+ * Transfers as a table where there is room, and as stacked rows in narrow
+ * containers (phones, the heir's column), so nothing scrolls sideways.
+ */
 export function TransferTable({ transfers, technical }: { transfers: Transfer[]; technical?: boolean }) {
   if (!transfers.length) return null;
   return (
-    <div className="overflow-x-auto rounded-tile border border-line">
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-        <thead>
-          <tr className="bg-subtle text-[13px] text-muted">
-            <th className="px-4 py-3 font-medium">Heir</th>
-            <th className="px-4 py-3 font-medium">Amount</th>
-            <th className="px-4 py-3 font-medium">To</th>
-            <th className="px-4 py-3 font-medium">State</th>
-            {technical && <th className="px-4 py-3 font-medium">Nonce · gas</th>}
-            <th className="px-4 py-3 font-medium">Receipt</th>
-          </tr>
-        </thead>
-        <tbody>
-          {transfers.map((t, i) => {
-            const url = receiptUrl(t);
-            return (
+    <div className="@container min-w-0">
+      <ul className="divide-y divide-line rounded-tile border border-line @[640px]:hidden">
+        {transfers.map((t, i) => (
+          <li key={i} className="flex min-w-0 flex-col gap-1.5 px-4 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="font-medium">{shortName(t.heir)}</span>
+                <span className="text-muted"> · {formatAmount(t)}</span>
+              </span>
+              <TransferPill state={t.state} />
+            </div>
+            <div className="flex min-w-0 items-center justify-between gap-3 text-muted">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0 text-xs">to</span>
+                <Dest to={t.destination} />
+              </span>
+              <span className="shrink-0">
+                <Receipt t={t} />
+              </span>
+            </div>
+            {technical && t.eth_tx && <span className="font-mono text-xs text-muted">nonce {t.eth_tx.nonce} · gas {t.eth_tx.gas_limit.toLocaleString()}</span>}
+            {t.failure && <span className="font-mono text-xs text-error">{t.failure}</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="hidden overflow-hidden rounded-tile border border-line @[640px]:block">
+        <table className="w-full table-fixed border-collapse text-left text-sm">
+          <thead>
+            <tr className="bg-subtle text-[13px] text-muted">
+              <th className="w-[16%] px-4 py-3 font-medium">Heir</th>
+              <th className="w-[20%] px-4 py-3 font-medium">Amount</th>
+              <th className="px-4 py-3 font-medium">To</th>
+              <th className="w-[18%] px-4 py-3 font-medium">State</th>
+              {technical && <th className="w-[14%] px-4 py-3 font-medium">Nonce · gas</th>}
+              <th className="w-[16%] px-4 py-3 font-medium">Receipt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transfers.map((t, i) => (
               <tr key={i} className="border-t border-line align-top">
-                <td className="px-4 py-3">{shortName(t.heir)}</td>
+                <td className="truncate px-4 py-3">{shortName(t.heir)}</td>
                 <td className="px-4 py-3">{formatAmount(t)}</td>
-                <td className="px-4 py-3 font-mono text-xs" title={t.destination}>
-                  {shortAddr(t.destination)}
+                <td className="px-4 py-3">
+                  <Dest to={t.destination} />
                 </td>
                 <td className="px-4 py-3">
                   <TransferPill state={t.state} />
                   {t.failure && <span className="mt-1 block font-mono text-xs text-error">{t.failure}</span>}
                 </td>
                 {technical && <td className="px-4 py-3 font-mono text-xs">{t.eth_tx ? `${t.eth_tx.nonce} · ${t.eth_tx.gas_limit.toLocaleString()}` : "—"}</td>}
-                <td className="px-4 py-3">{url ? <ExtLink href={url} className="font-mono text-xs">{t.tx_hash ? shortAddr(t.tx_hash) : "account"}</ExtLink> : <span className="text-muted">—</span>}</td>
+                <td className="px-4 py-3">
+                  <Receipt t={t} />
+                </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

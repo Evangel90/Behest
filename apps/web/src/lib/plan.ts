@@ -18,6 +18,16 @@ export function duration(ms: number): string {
 }
 
 /** "in 3 minutes" / "2 days ago" relative to the chain clock. */
+/** A moment, unambiguous in every locale: "9 Nov 2026, 00:30". */
+export function when(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** A day: "9 Nov 2026". */
+export function day(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function relative(target: number, now: number): string {
   const d = target - now;
   const abs = Math.abs(d);

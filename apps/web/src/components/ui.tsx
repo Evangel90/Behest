@@ -72,7 +72,7 @@ export function TransferPill({ state }: { state: TransferState; plain?: boolean 
 export function CanAct({ actions, plain }: { actions: Actions; plain?: boolean }) {
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-      <div className="flex flex-col gap-1 rounded-row bg-ok-bg p-4 text-ok">
+      <div className={cx("flex flex-col gap-1 rounded-row p-4", actions.can.length ? "bg-ok-bg text-ok" : "bg-subtle text-muted")}>
         <span className="text-[13px] font-semibold">{plain ? "You can" : "Can act now"}</span>
         <span className="text-sm text-ink">{actions.can.length ? actions.can.join(" · ") : "Nothing right now."}</span>
       </div>
