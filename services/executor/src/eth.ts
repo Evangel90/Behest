@@ -3,7 +3,13 @@ import { sepolia } from "viem/chains";
 import { buildOutcomeProof, httpRpc } from "./ethproof.js";
 import type { EthPort } from "./types.js";
 
-export function createEthPort(rpcUrl: string): EthPort {
+/**
+ * Proofs need raw transactions and a block's receipts, which some hosted
+ * providers don't serve; they can use a different node (D22).
+ */
+const PROOF_RPC_DEFAULT = "https://ethereum-sepolia-rpc.publicnode.com";
+
+export function createEthPort(rpcUrl: string, proofRpcUrl = process.env.SEPOLIA_PROOF_RPC_URL?.trim() || PROOF_RPC_DEFAULT): EthPort {
   const client = createPublicClient({ chain: sepolia, transport: http(rpcUrl) });
   return {
     sendRaw: (raw) => client.sendRawTransaction({ serializedTransaction: raw }),
@@ -34,7 +40,7 @@ export function createEthPort(rpcUrl: string): EthPort {
       }
     },
     async outcomeProof(hash) {
-      const { header, tx_index, tx_proof, receipt_proof } = await buildOutcomeProof(httpRpc(rpcUrl), hash);
+      const { header, tx_index, tx_proof, receipt_proof } = await buildOutcomeProof(httpRpc(proofRpcUrl), hash);
       return { header, tx_index, tx_proof, receipt_proof };
     },
   };
