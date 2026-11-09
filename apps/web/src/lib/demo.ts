@@ -35,7 +35,10 @@ const KEY = "behest.sandbox";
 export function loadSandbox(): Sandbox | null {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Sandbox) : null;
+    const s = raw ? (JSON.parse(raw) as Sandbox) : null;
+    // An older or partial sandbox (missing a persona or the heir wallets) is discarded.
+    if (!s || !s.eth?.amara || !s.eth?.tobi || PERSONA_ROLES.some((r) => !s.personas?.[r]?.accountId)) return null;
+    return s;
   } catch {
     return null;
   }

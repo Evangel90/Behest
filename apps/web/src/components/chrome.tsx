@@ -164,7 +164,7 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
   return (
     <div data-app-shell className="flex min-h-dvh flex-col bg-frame lg:h-dvh lg:overflow-hidden">
       <TestnetBar />
-      <div className="grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[232px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+      <div className="grid flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] lg:min-h-0 lg:grid-cols-[232px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
         <aside className="flex min-w-0 flex-col text-[#D4D4D4] lg:min-h-0 lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3 lg:px-6 lg:py-5">
             <Logo dark />
