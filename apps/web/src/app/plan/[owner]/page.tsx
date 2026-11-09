@@ -16,7 +16,8 @@ import { getConfig, getVaultWithdrawal } from "@/lib/contract";
 import { useVault, type Vault } from "@/lib/vault";
 import { watch } from "@/lib/demo";
 import { useAction, usePlan } from "@/lib/hooks";
-import { actionsFor, followUpOpen, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role, when } from "@/lib/plan";
+import { useBtcQuote, useConfig, useEthQuote } from "@/lib/fees";
+import { actionsFor, followUpOpen, formatBtc, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role, when } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import type { Asset, ContractConfig, PlanView, Transfer } from "@/lib/types";
 
@@ -347,6 +348,9 @@ function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vau
   const token = vault.tokens.find((t) => t.token.address === asset)?.token;
   const pending = w && w.state !== "Confirmed" && !(w.state === "Failed" && (w.failure === "Reverted" || w.failure === "Cancelled"));
   const maxEth = vault.balance != null && vault.feePerTx != null && vault.balance > vault.feePerTx ? vault.balance - vault.feePerTx : 0n;
+  const cfg = useConfig();
+  const validTo = /^0x[0-9a-fA-F]{40}$/.test(to.trim()) ? (to.trim() as `0x${string}`) : null;
+  const quote = useEthQuote(cfg, vault.address, validTo ? [{ to: validTo, token: token?.address as `0x${string}` | undefined }] : []);
 
   function submit() {
     setError(null);
@@ -403,6 +407,11 @@ function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vau
             Withdraw
           </Button>
         </div>
+      )}
+      {!locked && !pending && vault.feePerTx != null && (
+        <span className="text-[13px] text-muted">
+          Network fee, paid from the vault: {quote ? `≈ ${formatEth(quote.total)} ETH at today's base fee` : "enter an address for an estimate"} (at most {formatEth(vault.feePerTx)} ETH).
+        </span>
       )}
       {error && <Notice tone="error">{error}</Notice>}
     </div>
@@ -501,6 +510,14 @@ function HeirView({ view, now, refresh }: Props) {
   const heir = view.plan.policy.heirs.find((h) => h.account_id === me);
   const mine = p?.transfers.map((t, index) => ({ t, index })).filter(({ t }) => t.heir === me) ?? [];
   const started = mine.some(({ t }) => t.state !== "Pending");
+  const cfg = useConfig();
+  const heirVault = useVault(view.plan.owner);
+  const evmTxs = mine
+    .filter(({ t }) => t.state === "Pending" && (t.asset === "Eth" || (typeof t.asset === "object" && "Erc20" in t.asset)))
+    .map(({ t }) => ({ to: t.destination as `0x${string}`, token: typeof t.asset === "object" && "Erc20" in t.asset ? (t.asset.Erc20 as `0x${string}`) : undefined }));
+  const btcPending = mine.filter(({ t }) => t.state === "Pending" && t.asset === "Btc").length;
+  const ethFees = useEthQuote(cfg, heirVault?.address ?? null, evmTxs);
+  const btcFees = useBtcQuote(cfg, btcPending, btcPending ? 1 : 0);
   const ready = p?.waiting_ends_at_ms;
   const history = useHistory(view.plan.owner, `${s}:${p?.id}`);
   const followUp = followUpOpen(view, lastSettledAt(history));
@@ -577,6 +594,12 @@ function HeirView({ view, now, refresh }: Props) {
         <Button variant="mint" className="min-h-14 w-full text-lg" disabled={!!busy} onClick={claim}>
           {busy ? "Starting…" : "Receive my share"}
         </Button>
+      )}
+      {(s === "Eligible" || s === "Executing") && (ethFees || btcFees) && mine.some(({ t }) => t.state === "Pending") && (
+        <p className="text-sm text-muted">
+          Network fees, paid from the plan&apos;s reserve and not from your share:{" "}
+          {[ethFees && `≈ ${formatEth(ethFees.total)} ETH`, btcFees && `≈ ${formatBtc(btcFees.likely)} BTC`].filter(Boolean).join(" and ")}.
+        </p>
       )}
 
       {started && (

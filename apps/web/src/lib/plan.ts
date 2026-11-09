@@ -240,8 +240,7 @@ export const looksLikeBtcAddress = (a: string) => /^tb1[qp][02-9ac-hj-np-z]{38,5
  */
 export function btcSplit(opts: { heirs: number; inputs: number; total: bigint; maxFeeRate: number }) {
   if (opts.heirs === 0 || opts.inputs === 0) return { reserve: 0n, toSplit: 0n };
-  const vsize = (n: number) => BigInt(Math.ceil(((10 + 41 * n + 43 + 31) * 4 + 2 + 108 * n) / 4));
-  const reserve = (vsize(opts.inputs) + BigInt(opts.heirs - 1) * vsize(1)) * BigInt(opts.maxFeeRate);
+  const reserve = btcPayoutFees({ heirs: opts.heirs, inputs: opts.inputs, feeRate: opts.maxFeeRate });
   if (opts.total <= reserve) return { reserve, toSplit: 0n, error: "E_INSUFFICIENT_FEE_RESERVE" as const };
   return { reserve, toSplit: opts.total - reserve };
 }
@@ -328,4 +327,28 @@ export function describeOptions(o: ReleaseOptions | null): string[] {
       `${o.delay_quorum} of ${o.delay_signers.length} delay signers can extend an approved release's waiting period by up to ${duration(o.max_extension_ms)} at a time, ${duration(o.max_total_extension_ms)} in total. They can't approve, cancel or move anything.`,
     );
   return out;
+}
+
+/** Virtual size of a P2WPKH payout with `inputs` inputs, a heir output and change. */
+export const btcVsize = (inputs: number) => BigInt(Math.ceil(((10 + 41 * inputs + 43 + 31) * 4 + 2 + 108 * inputs) / 4));
+
+/**
+ * Fees for a release's Bitcoin payouts at `feeRate` sat/vB: the first spends
+ * the vault's coins, each later one spends the previous change (D20).
+ */
+export function btcPayoutFees(opts: { heirs: number; inputs: number; feeRate: number }): bigint {
+  if (opts.heirs === 0 || opts.inputs === 0) return 0n;
+  return (btcVsize(opts.inputs) + BigInt(opts.heirs - 1) * btcVsize(1)) * BigInt(opts.feeRate);
+}
+
+/**
+ * What a signed Sepolia transaction will most likely cost (D6 quote). The
+ * contract signs with a fixed priority fee and a starting max fee, so the
+ * price per gas is min(max fee, base fee + priority fee).
+ */
+export function ethTxCost(gasUsed: bigint, baseFee: bigint, cfg: { eth_initial_max_fee: string; eth_priority_fee: string }): bigint {
+  const max = BigInt(cfg.eth_initial_max_fee);
+  const prio = BigInt(cfg.eth_priority_fee) < max ? BigInt(cfg.eth_priority_fee) : max;
+  const price = baseFee + prio < max ? baseFee + prio : max;
+  return gasUsed * price;
 }

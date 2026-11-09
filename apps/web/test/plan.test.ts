@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionsFor, followUpOpen, assetLabel, btcSplit, formatBtc, looksLikeBtcAddress, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
+import { btcPayoutFees, btcVsize, ethTxCost, actionsFor, followUpOpen, assetLabel, btcSplit, formatBtc, looksLikeBtcAddress, describeOptions, failureText, describePlan, duration, formatAmount, formatEth, formatNear, nextHolder, parseNear, registerTokens, rolesOf, shortName, validateDraft, vaultSplit } from "../src/lib/plan";
 import type { PlanInput, PlanView, Transfer } from "../src/lib/types";
 
 const DAY = 86_400_000;
@@ -184,5 +184,19 @@ describe("btcSplit (D20)", () => {
     expect(formatBtc(59_082)).toBe("0.00059082");
     expect(looksLikeBtcAddress("tb1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla")).toBe(true);
     expect(looksLikeBtcAddress("bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvraulyla")).toBe(false);
+  });
+});
+
+describe("fee quotes (D6)", () => {
+  const cfg = { eth_initial_max_fee: "2000000000", eth_priority_fee: "1000000000" };
+  it("prices Sepolia gas at base fee + the contract's priority fee, capped by its max fee", () => {
+    expect(ethTxCost(207_000n, 18n, cfg)).toBe(207_000n * 1_000_000_018n);
+    expect(ethTxCost(21_000n, 5_000_000_000n, cfg)).toBe(21_000n * 2_000_000_000n);
+  });
+  it("prices Bitcoin payouts like the reserve, at the starting rate", () => {
+    expect(btcPayoutFees({ heirs: 2, inputs: 1, feeRate: 2 })).toBe((btcVsize(1) + btcVsize(1)) * 2n);
+    expect(btcPayoutFees({ heirs: 0, inputs: 1, feeRate: 2 })).toBe(0n);
+    // the reserve is the same formula at the cap
+    expect(btcSplit({ heirs: 2, inputs: 1, total: 100_000n, maxFeeRate: 5 }).reserve).toBe(btcPayoutFees({ heirs: 2, inputs: 1, feeRate: 5 }));
   });
 });

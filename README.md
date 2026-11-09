@@ -181,6 +181,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
 - [ ] Bitcoin testnet adapter: contract, executor, relayer and web done (D20, threats 28–31); live `e2e-btc` waiting for testnet4 coins
 - [x] Proven Sepolia outcomes: re-issuing a reverted transfer needs a Merkle-Patricia receipt proof checked against the Ethereum light client on NEAR; anyone may prove or re-issue, and the executor does it once the block is final (D22, threat 20; live `e2e-revert`)
+- [x] Per-chain fee reserves and live quotes: the likely Sepolia and Bitcoin fees shown next to each worst-case reserve when proposing, claiming and withdrawing (D6)
 - [x] Delay-signer quorum; automatic and hybrid release modes per plan, heir and asset group (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve

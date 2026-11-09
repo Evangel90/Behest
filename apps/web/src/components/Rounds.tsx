@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { getConfig, getReleaseHistory, view as viewCall } from "@/lib/contract";
 import { assetLabel, formatAmount, formatBtc, formatEth, formatNear, formatToken, shortName, vaultSplit, when, day } from "@/lib/plan";
 import type { Asset, ContractConfig, PlanView, Proposal } from "@/lib/types";
+import { useBtcQuote, useEthQuote, type EthTx } from "@/lib/fees";
 import { useVault } from "@/lib/vault";
 import { btcProposal, useBtc } from "./Bitcoin";
 import { Row, TransferTable } from "./PlanParts";
@@ -40,6 +41,14 @@ export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanV
     cfg && vault?.balance != null
       ? vaultSplit({ ethHeirs, ethBalance: vault.balance, tokenBalances: heldTokens.map((t) => t.balance!), gasLimit: cfg.eth_gas_limit, feeCap: BigInt(cfg.eth_max_fee_cap) })
       : null;
+  // Every vault transaction this proposal would create, for the fee quote (D6).
+  const ethTxs: EthTx[] = view.plan.policy.heirs.flatMap((h) =>
+    h.eth_destination
+      ? [...((split?.ethToSplit ?? 0n) > 0n ? [{ to: h.eth_destination as `0x${string}` }] : []), ...heldTokens.map((t) => ({ to: h.eth_destination as `0x${string}`, token: t.token.address as `0x${string}` }))]
+      : [],
+  );
+  const ethQuote = useEthQuote(cfg, vault?.address ?? null, ethTxs);
+  const btcQuote = useBtcQuote(cfg, bp.heirs, bp.coins.length);
   const fts = (view.ft_escrow ?? []).filter((b) => b.amount !== "0");
   const btcToSplit = "error" in bp.split ? 0n : bp.split.toSplit;
   const reading = (ethHeirs > 0 && (vault?.balance == null || vault.tokens.some((t) => t.balance == null))) || !bp.ready;
@@ -65,7 +74,13 @@ export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanV
             {heldTokens.map(({ token, balance }) => (
               <Row key={token.address} k={`${token.symbol} to distribute`} v={`${formatToken(balance!, token)} ${token.symbol}`} />
             ))}
-            <Row k="Network-fee reserve" v={split ? `${formatEth(split.reserve)} ETH (${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : "…"} />
+            <Row k="Network-fee reserve" v={split ? `${formatEth(split.reserve)} ETH (worst case, ${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : "…"} />
+            {ethTxs.length > 0 && (
+              <Row
+                k="Likely network fees"
+                v={ethQuote ? `≈ ${formatEth(ethQuote.total)} ETH at today's base fee; the unused reserve stays in the vault` : "estimating…"}
+              />
+            )}
             <Row k="ETH to distribute" v={split ? `${formatEth(split.ethToSplit)} ETH` : "…"} />
             {split?.error && <Notice tone="error">The vault doesn't hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
           </>
@@ -75,7 +90,13 @@ export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanV
             <Row k="BTC in vault (used)" v={btc.utxos ? `${formatBtc(bp.coins.reduce((a, c) => a + BigInt(c.value), 0n))} BTC · ${bp.coins.length} coin${bp.coins.length === 1 ? "" : "s"}` : "reading…"} />
             {bp.coins.length > 0 && (
               <>
-                <Row k="Bitcoin fee reserve" v={`${formatBtc(bp.split.reserve)} BTC (${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
+                <Row k="Bitcoin fee reserve" v={`${formatBtc(bp.split.reserve)} BTC (worst case, ${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
+                {btcQuote && (
+                  <Row
+                    k="Likely Bitcoin fees"
+                    v={`≈ ${formatBtc(btcQuote.likely)} BTC at ${btcQuote.feeRate} sat/vB${btcQuote.bumpLikely ? `; testnet4 wants about ${Math.ceil(btcQuote.networkRate!)} sat/vB now, so expect a fee bump (paid from the reserve)` : ""}`}
+                  />
+                )}
                 <Row k="BTC to distribute" v={`${formatBtc(btcToSplit)} BTC`} />
               </>
             )}
