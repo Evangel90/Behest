@@ -296,6 +296,18 @@ export class Engine {
         // has one, report it instead of retrying (or cancelling) blind.
         const won = await this.btcVersionOnNetwork(owner, index);
         if (won) return this.btcAdopt(owner, index, won, key);
+        // The payout reported Stuck may itself have been taken since
+        // (testnet4 can mine empty blocks for hours): track it again
+        // instead of re-signing a conflicting replacement.
+        if (t.state === "Failed" && t.failure === "Stuck") {
+          const cur = await this.near.getBtcTx!(owner, index);
+          if (cur?.raw && (await this.btc!.status(cur.txid))) {
+            await this.near.reportBroadcast(owner, index, cur.txid);
+            this.store.set(key, { ...this.store.get(key), broadcastAt: this.opts.now() });
+            this.opts.log("stuck payout reached the network after all", { key, txid: cur.txid });
+            return "rebroadcast";
+          }
+        }
         return t.state === "Failed" ? this.maybeRetry(owner, index, t, key) : "noop";
       }
       default:

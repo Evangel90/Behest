@@ -2358,6 +2358,24 @@ mod btc_flow {
     }
 
     #[test]
+    fn a_payout_reported_stuck_that_gets_mined_is_tracked_again() {
+        // testnet4 mined only empty blocks for hours, then took the payout
+        let mut e = with_vault();
+        e.as_("admin.testnet", 0).add_executor(acc("exec.testnet"));
+        let w = VAULT_WITHDRAWAL;
+        let _ = e.as_("owner.testnet", 0).withdraw_btc(vec![utxo(COIN, 1, 100_000)], U64(20_000), AMARA_BTC.into());
+        e.callback(vec![mpc_ok(BIG_R, S, 0)]).on_btc_signed(o(), w, 1);
+        let tx = e.as_("x.testnet", 0).get_btc_tx(o(), w).unwrap();
+        e.as_("exec.testnet", 0).report_broadcast(o(), w, tx.txid.clone());
+        e.as_("exec.testnet", 0).report_failed(o(), w, "Stuck".into());
+        e.as_("exec.testnet", 0).report_broadcast(o(), w, tx.txid.clone());
+        let t = e.as_("x.testnet", 0).get_vault_withdrawal(o()).unwrap();
+        assert_eq!((t.state, t.failure), (TransferState::Broadcast, None));
+        e.as_("exec.testnet", 0).report_confirmed(o(), w, tx.txid);
+        assert_eq!(e.as_("x.testnet", 0).get_vault_withdrawal(o()).unwrap().state, TransferState::Confirmed);
+    }
+
+    #[test]
     fn adopting_an_earlier_head_rechains_later_payouts() {
         let mut e = with_vault();
         proposed(&mut e, vec![utxo(COIN, 1, 100_000)]);

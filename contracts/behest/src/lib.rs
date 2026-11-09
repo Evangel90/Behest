@@ -2170,9 +2170,12 @@ impl Contract {
         let pid = self.btx_pid(owner, index);
         let cur = read_btx(owner, index, pid).unwrap_or_else(|| fail(Error::InvalidTransferState));
         if cur.txid == txid && cur.raw.is_some() {
-            if !matches!(tr.state, TransferState::Signed | TransferState::Broadcast) {
+            // Failed covers a payout reported Stuck that the network then took
+            // anyway (empty testnet4 blocks for hours, then a real one).
+            if !matches!(tr.state, TransferState::Signed | TransferState::Broadcast | TransferState::Failed) {
                 fail(Error::InvalidTransferState);
             }
+            tr.failure = None;
         } else {
             if tr.state == TransferState::Confirmed {
                 fail(Error::InvalidTransferState);

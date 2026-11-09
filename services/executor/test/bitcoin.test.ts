@@ -138,6 +138,19 @@ describe("Bitcoin payouts", () => {
     expect(s.sent).toEqual([b.raw]);
   });
 
+  it("tracks a payout reported Stuck that the network took anyway, instead of re-signing", async () => {
+    const b = build();
+    const s = setup(transfer("Failed", { failure: "Stuck", tx_hash: b.txid }), b, { status: async () => ({ confirmed: true, height: 10 }) });
+    expect(await s.tick()).toBe("rebroadcast");
+    expect(s.calls).toEqual([`broadcast:0:${b.txid}`]);
+  });
+
+  it("re-signs a Stuck payout the network doesn't have", async () => {
+    const b = build();
+    const s = setup(transfer("Failed", { failure: "Stuck", tx_hash: b.txid }), b);
+    expect(await s.tick()).toBe("retried");
+  });
+
   it("does not retry a conflict (a guardian must rebase)", async () => {
     const s = setup(transfer("Failed", { failure: "Conflict" }), build());
     expect(await s.tick()).toBe("needs-human");
