@@ -1,5 +1,6 @@
 import { BaseError, ExecutionRevertedError, createPublicClient, http } from "viem";
 import { sepolia } from "viem/chains";
+import { buildOutcomeProof, httpRpc } from "./ethproof.js";
 import type { EthPort } from "./types.js";
 
 export function createEthPort(rpcUrl: string): EthPort {
@@ -31,6 +32,10 @@ export function createEthPort(rpcUrl: string): EthPort {
         if (e instanceof BaseError && e.walk((x) => x instanceof ExecutionRevertedError)) return "reverts";
         throw e;
       }
+    },
+    async outcomeProof(hash) {
+      const { header, tx_index, tx_proof, receipt_proof } = await buildOutcomeProof(httpRpc(rpcUrl), hash);
+      return { header, tx_index, tx_proof, receipt_proof };
     },
   };
 }

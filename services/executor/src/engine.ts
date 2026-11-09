@@ -446,6 +446,7 @@ export class Engine {
       this.opts.log("withdrawal cancelled to free its nonce", { key, reason: t.failure });
       return "retried";
     }
+    if (t.failure === "Reverted" && index !== VAULT_WITHDRAWAL) return this.proveRevert(owner, index, t, key);
     if (!t.failure || !AUTO_RETRY.has(t.failure)) return "needs-human";
     const mem = this.store.get(key);
     if (mem.lastRetryAt && this.opts.now() - mem.lastRetryAt < this.opts.retryBackoffMs) return "noop";
@@ -453,5 +454,33 @@ export class Engine {
     await this.near.retryTransfer(owner, index);
     this.opts.log("retry requested", { key, reason: t.failure });
     return "retried";
+  }
+
+  /**
+   * D22: a mined revert is re-issued under a new nonce only after the
+   * contract has checked a proof of it against the Ethereum light client.
+   * Waits until the light client holds the block as final, then proves, then
+   * re-issues. Without the proof ports (or a light client) a human decides.
+   */
+  private async proveRevert(owner: string, index: number, t: Transfer, key: string): Promise<Outcome> {
+    const n = this.near;
+    if (!n.proveEthOutcome || !n.getRevertProof || !n.reissueReverted || !n.ethBlockFinal || !this.eth.outcomeProof || !t.tx_hash) return "needs-human";
+    const mem = this.store.get(key);
+    if (mem.lastRetryAt && this.opts.now() - mem.lastRetryAt < this.opts.retryBackoffMs) return "noop";
+    const hash = t.tx_hash as `0x${string}`;
+    if ((await n.getRevertProof(owner, index))?.toLowerCase() === hash.toLowerCase()) {
+      this.store.set(key, { ...mem, lastRetryAt: this.opts.now() });
+      await n.reissueReverted(owner, index);
+      this.opts.log("re-issued a proven revert", { key, reverted: hash });
+      return "retried";
+    }
+    const receipt = await this.eth.receipt(hash);
+    if (!receipt) return "needs-human"; // reported reverted, but not mined: a human checks
+    // A success here means the "Reverted" report was wrong; the proof fixes it.
+    if (!(await n.ethBlockFinal(receipt.blockNumber))) return "noop"; // not final in the light client yet
+    this.store.set(key, { ...mem, lastRetryAt: this.opts.now() });
+    await n.proveEthOutcome(owner, index, await this.eth.outcomeProof(hash));
+    this.opts.log(receipt.success ? "proved success" : "proved revert", { key, hash, block: Number(receipt.blockNumber) });
+    return receipt.success ? "confirmed" : "retried";
   }
 }

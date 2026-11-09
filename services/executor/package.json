@@ -11,6 +11,9 @@
     "vault": "tsx --env-file-if-exists=../../.env src/vault.ts"
   },
   "dependencies": {
+    "@ethereumjs/rlp": "5.0.2",
+    "@ethereumjs/trie": "6.2.1",
+    "@ethereumjs/util": "9.1.0",
     "@scure/base": "2.2.0",
     "@scure/btc-signer": "2.4.1",
     "near-api-js": "7.4.0",

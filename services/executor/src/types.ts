@@ -83,6 +83,7 @@ export interface ContractConfig {
   eth_max_fee_cap: string;
   eth_chain_id: number;
   mpc_contract: string;
+  eth_light_client?: string | null;
 }
 
 /** Contract-side operations (NEAR). */
@@ -112,6 +113,24 @@ export interface NearPort {
   /** Earlier signed versions of a payout that a fee bump replaced. */
   getBtcTxVersions?(owner: string, index: number): Promise<BtcTx[]>;
   btcVaultAddress?(owner: string): Promise<string | null>;
+  /**
+   * D22 (threat 20): re-issuing a reverted transfer under a new nonce needs a
+   * proof of the revert, checked by the contract against the Ethereum light
+   * client on NEAR. Optional: without them a revert waits for a human.
+   */
+  /** True once the light client holds `blockNumber` as finalized. */
+  ethBlockFinal?(blockNumber: bigint): Promise<boolean>;
+  proveEthOutcome?(owner: string, index: number, proof: EthOutcomeProof): Promise<void>;
+  /** The reverted tx hash proven for this transfer, if any. */
+  getRevertProof?(owner: string, index: number): Promise<string | null>;
+  reissueReverted?(owner: string, index: number): Promise<void>;
+}
+
+export interface EthOutcomeProof {
+  header: string;
+  tx_index: number;
+  tx_proof: string[];
+  receipt_proof: string[];
 }
 
 export interface BtcUtxo {
@@ -163,6 +182,8 @@ export interface EthPort {
    * Other errors (RPC trouble) are thrown.
    */
   estimateTransferGas(from: `0x${string}`, to: `0x${string}`, value: bigint, data?: `0x${string}`): Promise<bigint | "reverts">;
+  /** Header + Merkle-Patricia proofs of a mined tx and its receipt (D22). */
+  outcomeProof?(hash: `0x${string}`): Promise<EthOutcomeProof>;
 }
 
 /**

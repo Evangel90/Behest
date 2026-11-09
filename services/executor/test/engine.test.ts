@@ -90,6 +90,7 @@ class FakeEth implements EthPort {
   minedNonce = async () => this.mined;
   needGas: bigint | "reverts" = 21_000n;
   estimateTransferGas = async () => this.needGas;
+  outcomeProof?: EthPort["outcomeProof"];
 }
 
 let near: FakeNear, eth: FakeEth, store: Store, clock: number, engine: Engine;
@@ -418,5 +419,53 @@ describe("Automatic and hybrid release (D19)", () => {
     near.options = { mode: "Claim", hybrid_grace_ms: 0 };
     await engine.tick();
     expect(near.calls.some((c) => c.startsWith("release"))).toBe(false);
+  });
+});
+
+describe("Proven reverts (D22, threat 20)", () => {
+  const H = "0x" + "ab".repeat(32);
+  let final: Set<bigint>, proven: string | null;
+  beforeEach(() => {
+    final = new Set();
+    proven = null;
+    Object.assign(near, {
+      ethBlockFinal: async (n: bigint) => final.has(n),
+      proveEthOutcome: async (_o: string, i: number, p: { tx_index: number }) => {
+        near.calls.push(`prove:${i}:${p.tx_index}`);
+      },
+      getRevertProof: async () => proven,
+      reissueReverted: async (_o: string, i: number) => void near.calls.push(`reissue:${i}`),
+    });
+    eth.outcomeProof = async () => ({ header: "0x", tx_index: 7, tx_proof: [], receipt_proof: [] });
+    near.transfers = [transfer("Failed", { failure: "Reverted", tx_hash: H })];
+    eth.receipts.set(H, { blockNumber: 90n, success: false });
+  });
+
+  it("waits until the light client holds the block as final", async () => {
+    expect(await run()).toBe("noop");
+    expect(near.calls).toEqual([]);
+  });
+
+  it("proves the revert, then re-issues once the contract recorded it", async () => {
+    final.add(90n);
+    expect(await run()).toBe("retried");
+    expect(near.calls).toEqual(["prove:0:7"]);
+    proven = H;
+    expect(await run()).toBe("noop"); // backoff
+    clock += 120_001;
+    expect(await run()).toBe("retried");
+    expect(near.calls).toEqual(["prove:0:7", "reissue:0"]);
+  });
+
+  it("proves success when a revert report was wrong", async () => {
+    final.add(90n);
+    eth.receipts.set(H, { blockNumber: 90n, success: true });
+    expect(await run()).toBe("confirmed");
+    expect(near.calls).toEqual(["prove:0:7"]);
+  });
+
+  it("leaves an unmined 'revert' to a human", async () => {
+    eth.receipts.clear();
+    expect(await run()).toBe("needs-human");
   });
 });

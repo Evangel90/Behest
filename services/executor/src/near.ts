@@ -71,6 +71,24 @@ export function createNearPort(o: NearOptions): NearPort {
     getBtcTx: (owner, index) => view<BtcTx | null>("get_btc_tx", { owner, index }),
     getBtcRelease: (owner) => view<{ last: number | null } | null>("get_btc_release", { owner }),
     getBtcTxVersions: (owner, index) => view<BtcTx[]>("get_btc_tx_versions", { owner, index }),
+    async ethBlockFinal(blockNumber) {
+      const lc = (await this.config()).eth_light_client;
+      if (!lc) return false;
+      const n = Buffer.alloc(8);
+      n.writeBigUInt64LE(blockNumber);
+      // block_hash_safe takes and returns borsh: Option<[u8; 32]>
+      const r = (await provider.query({
+        request_type: "call_function",
+        account_id: lc,
+        method_name: "block_hash_safe",
+        args_base64: n.toString("base64"),
+        finality: "final",
+      } as never)) as unknown as { result: number[] };
+      return r.result[0] === 1;
+    },
+    proveEthOutcome: (owner, index, proof) => call("prove_eth_outcome", { owner, index, proof }, 150),
+    getRevertProof: (owner, index) => view<string | null>("get_revert_proof", { owner, index }),
+    reissueReverted: (owner, index) => call("reissue_reverted_transfer", { owner, index }, 200),
     btcVaultAddress: async (owner) => (await view<{ address: string } | null>("get_btc_vault", { owner }))?.address ?? null,
   };
 }
