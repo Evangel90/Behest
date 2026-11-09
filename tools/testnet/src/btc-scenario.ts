@@ -15,6 +15,10 @@
 // (`pnpm btc-funder` prints the address). Blocks take ~10 min, so a full run
 // waits for 2–3 of them.
 // Usage: pnpm --filter @behest/testnet e2e-btc
+//
+// E2E_RESUME_OWNER=<owner> resumes a run whose payouts are already broadcast
+// (testnet4 sometimes mines empty blocks for hours): it only drives the
+// executor until the plan settles and checks the heirs' addresses.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +92,42 @@ if (have < FUND + 2_000) {
   process.exit(1);
 }
 const engine = executor(C, d.executor);
+
+/**
+ * Drives the executor until both payouts confirm and the plan settles.
+ * "Stuck" is expected while testnet4 mines empty blocks (the executor
+ * re-signs with a higher fee); only other failures end the run.
+ */
+async function settle(owner: string, amaraTx: string, tobiTx: string) {
+  const end = Date.now() + 240 * MINUTE;
+  for (;;) {
+    await engine.tick().catch((e) => log(`executor: ${String(e).slice(0, 120)}`));
+    const p = await plan(owner);
+    if (p.status === "Settled") break;
+    const bad = p.plan.proposal?.transfers.find((t) => t.state === "Failed" && !["Stuck", "Rechained"].includes(t.failure ?? ""));
+    assert(!bad, `payout failed for good: ${bad?.failure}`);
+    if (Date.now() > end) throw new Error("timed out: payouts confirm and the plan settles");
+    await sleep(60_000);
+  }
+  log("settled", { amara: amaraTx, tobi: tobiTx });
+}
+
+const resumeOwner = process.env.E2E_RESUME_OWNER?.trim();
+if (resumeOwner) {
+  const ts = (await plan(resumeOwner)).plan.proposal!.transfers;
+  const ia = ts.findIndex((t) => t.asset === "Btc" && t.heir === AMARA);
+  const it = ts.findIndex((t) => t.asset === "Btc" && t.heir === TOBI);
+  const tx = (i: number) => view<{ txid: string }>(C, "get_btc_tx", { owner: resumeOwner, index: i });
+  const [ta, tt] = [await tx(ia), await tx(it)];
+  log("resuming", { owner: resumeOwner, amara: ta.txid, tobi: tt.txid });
+  await settle(resumeOwner, ta.txid, tt.txid);
+  for (const i of [ia, it]) {
+    const t = (await plan(resumeOwner)).plan.proposal!.transfers[i]!;
+    assert((await received(t.destination)) === Number(t.amount), `${t.heir}'s address got exactly ${t.amount} sats`);
+  }
+  console.log("✓ Bitcoin vault: chained payouts to bech32 and bech32m heirs confirmed, plan settled");
+  process.exit(0);
+}
 
 // ---------------------------------------------------------- 0. plan + vault
 const owner = await makeAccount("btc", "0.3");
@@ -165,12 +205,5 @@ await until("both payouts in the mempool", 10, async () => {
 assert((await received(amaraBtc)) === amt.amara, "Amara's Taproot address got exactly her share");
 assert((await received(tobiBtc)) === amt.tobi, "Tobi's address got exactly his share");
 log("heirs' addresses hold their shares (mempool)", { amara: `${ESPLORA.replace("/api", "")}/tx/${ta.txid}` });
-await until("payouts confirm and the plan settles", 90, async () => {
-  await engine.tick();
-  const p = await plan(owner);
-  assert(!p.plan.proposal?.transfers.some((t) => t.state === "Failed"), "no payout failed");
-  return p.status === "Settled";
-});
-log("settled", { amara: ta.txid, tobi: tt.txid });
-
+await settle(owner, ta.txid, tt.txid);
 console.log("✓ Bitcoin vault: owner withdrawal, fee-reserved split, chained payouts to bech32 and bech32m heirs, settled");
