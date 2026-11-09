@@ -1,15 +1,17 @@
 // Admin tool: re-issue ETH transfers whose transaction was mined but reverted.
 // Usage: pnpm --filter @behest/testnet reissue <owner> [--run]
 //
-// The contract can't see Ethereum, so `reissue_reverted_transfer` trusts the
-// admin. This tool does the admin's check: it re-issues a transfer only if its
-// reported tx is mined on Sepolia with status "reverted" (so its nonce can't be
-// reused). Transfers are re-issued in nonce order so new nonces keep that order.
+// D22: `reissue_reverted_transfer` needs a proof of the revert, checked by the
+// contract against the Ethereum light client on NEAR. This tool builds that
+// proof from a Sepolia node once the light client holds the block as final,
+// submits it (any account may; the admin key is just convenient here), then
+// re-issues. Transfers are re-issued in nonce order so new nonces keep it.
 // --run then drives the executor to confirmation, checks each heir's balance
 // and sweeps generated heir wallets back to the funder.
 import { formatEther, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { call, loadDeployment, log, view } from "./near.js";
+import { call, loadDeployment, log, provider, view } from "./near.js";
+import { createEthPort } from "@behest/executor/eth";
 import { executor, funderAccount, loadWallets, pub, sweep, vaultOf } from "./sepolia.js";
 
 interface Transfer { heir: string; asset: string; destination: string; amount: string; state: string; failure: string | null; tx_hash: string | null; eth_tx: { nonce: number; gas_limit: number } | null }
@@ -31,6 +33,21 @@ for (const { t, index } of candidates) {
   if (receipt?.status !== "reverted") {
     log("skipping: not verifiably reverted on Sepolia", { index, tx: t.tx_hash, status: receipt?.status ?? "not found" });
     continue;
+  }
+  const proven = await view<string | null>(C, "get_revert_proof", { owner, index });
+  if (proven?.toLowerCase() !== t.tx_hash!.toLowerCase()) {
+    const lc = (await view<{ eth_light_client: string | null }>(C, "get_config")).eth_light_client;
+    if (!lc) throw new Error("no Ethereum light client configured (set_eth_light_client)");
+    const n = Buffer.alloc(8);
+    n.writeBigUInt64LE(receipt.blockNumber);
+    const fin = (await provider.query({ request_type: "call_function", finality: "final", account_id: lc, method_name: "block_hash_safe", args_base64: n.toString("base64") } as never)) as unknown as { result: number[] };
+    if (fin.result[0] !== 1) {
+      log("waiting: the light client hasn't finalized the block yet; run again later", { index, block: Number(receipt.blockNumber) });
+      continue;
+    }
+    const proof = await createEthPort(process.env.SEPOLIA_RPC_URL?.trim() || "https://ethereum-sepolia-rpc.publicnode.com").outcomeProof!(t.tx_hash as Hex);
+    await call(d.admin, C, "prove_eth_outcome", { owner, index, proof }, { tgas: 150 });
+    log("revert proven", { index, tx: t.tx_hash });
   }
   await call(d.admin, C, "reissue_reverted_transfer", { owner, index }, { tgas: 300 });
   log("re-issued", { index, heir: t.heir, oldNonce: t.eth_tx?.nonce, revertedTx: t.tx_hash });

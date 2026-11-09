@@ -18,6 +18,7 @@
     "e2e-nep141": "tsx --env-file=../../.env src/nep141-scenario.ts",
     "e2e-btc": "tsx --env-file=../../.env src/btc-scenario.ts",
     "e2e-followup": "tsx --env-file=../../.env src/followup-scenario.ts",
+    "e2e-revert": "tsx --env-file=../../.env src/revert-scenario.ts",
     "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
   },
   "dependencies": {

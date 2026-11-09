@@ -117,9 +117,10 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `e2e-nep141` | NEP-141: the owner wraps NEAR and deposits wNEAR (a deposit for an unknown plan is refunded), withdraws part of it, then the release splits it 60/40 to two fresh accounts the contract registers with the token first; heirs hold exactly their shares and the registration reserve is spent exactly |
 | `e2e-btc` | Bitcoin testnet4 (D20): a plan registers an MPC-derived P2WPKH vault; the funder sends it tBTC; the owner withdraws part of it (MPC-signed, executor-broadcast, change back to the vault); guardians propose with the vault's coin; Amara (Taproot address) and Tobi (P2WPKH) claim, their payouts are chained (Tobi's spends Amara's change before either is mined), each address receives exactly its share and the plan settles. Needs ≥ 32k sats on the `btc-funder` address; waits for 2–3 blocks |
 | `e2e-followup` | Follow-up rounds (D21): a release with Tobi's 0.01 NEAR fixed amount settles; a friend deposits 0.02 NEAR afterwards; Amara (an heir) proposes a follow-up round, guardians approve, both heirs receive a plain 60/40 split (the fixed amount isn't paid twice); the history holds both rounds and the owner can check in again |
+| `e2e-revert` | Proven reverts (D22): a transfer signed with too little gas reverts on Sepolia; a re-issue on the admin's word is refused; once the Ethereum light client on NEAR finalizes the block, a proof of the revert is checked by the contract and the executor re-issues under the next nonce; the heir receives exactly her share |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
 | `recover-vaults <owner>…` | Withdraws what earlier runs left in plan vaults back to the funder via D7 (re-creates deleted scenario owner accounts by name) |
-| `reissue <owner> --run` | Admin recovery: re-issues transfers whose Sepolia tx is verifiably reverted, on fresh nonces with the current gas limit |
+| `reissue <owner> --run` | Recovery: proves each reverted Sepolia transfer against the Ethereum light client (D22), then re-issues it on a fresh nonce with the current gas limit |
 
 ### First ERC-20 release (Stage 2)
 
@@ -136,6 +137,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 ### Release rules (Stage 2)
 
 `e2e-rules`, 2026-11-08. The escrow of 0.05 NEAR + 7 yocto snapshotted as 0.026000…002 for Tobi (0.01 fixed + 40%) and 0.024000…005 for Amara (60% + the 1-yocto remainder), with nothing left in the plan. Neither heir claimed. A minute after claiming opened, a guardian moved Amara's share to her alternate and Tobi's (no alternate) to the fallback; both claimed and received exactly those amounts. The relayer sponsors claims by alternates and the fallback, and lets any plan participant move an unclaimed share without gas.
+
+### Proven revert (Stage 2)
+
+`e2e-revert`, 2026-11-09. Amara's 0.000137 ETH transfer was signed with a 21k gas limit and sent to a never-used address, so it reverted when mined ([0xb421…4311](https://sepolia.etherscan.io/tx/0xb421ee924c92d4e4f2f865042588e42be11e272c92765637bd6d7d3e4b724311)). A second executor that was running at the time refused to broadcast the same transfer and recorded it as never sent ("GasLimitTooLow"). That left the contract believing nonce 0 unused, which no report could fix. The admin's re-issue was refused. About 25 minutes later the Ethereum light client on NEAR (`client-eth2.sepolia.testnet`) had finalized the block. Amara, an heir, submitted the header and Merkle-Patricia proofs; the contract verified them and corrected the record to "Reverted". The executor re-issued under nonce 1 with 250k gas ([0xc4ed…80cb](https://sepolia.etherscan.io/tx/0xc4eda334bc1690c70228fa606ac8798a5ac875a47a7113e3474b0336befd80cb)), and Amara received exactly her share. Proofs need a node that serves raw transactions and block receipts (`SEPOLIA_PROOF_RPC_URL`, publicnode by default); some hosted providers don't.
 
 ### Follow-up rounds (Stage 2)
 
@@ -175,6 +180,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Partial failure and retry across two assets without replaying the successful transfer (`e2e-partial`; executor `WouldRevert` pre-check)
 - [x] Allowlisted NEP-141 token (wNEAR): `ft_transfer_call` deposits with refunds, owner `withdraw_ft`, 60/40 split, contract registers each heir with the token from reserved NEAR (D16, threat 24; live `e2e-nep141`)
 - [ ] Bitcoin testnet adapter: contract, executor, relayer and web done (D20, threats 28–31); live `e2e-btc` waiting for testnet4 coins
+- [x] Proven Sepolia outcomes: re-issuing a reverted transfer needs a Merkle-Patricia receipt proof checked against the Ethereum light client on NEAR; anyone may prove or re-issue, and the executor does it once the block is final (D22, threat 20; live `e2e-revert`)
 - [x] Delay-signer quorum; automatic and hybrid release modes per plan, heir and asset group (D18–D19, threats 26–27; executor auto-release; live `e2e-auto`)
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve

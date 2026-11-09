@@ -63,11 +63,17 @@ if (hasCode && migrate) {
   });
 }
 
-const config = await view<{ executors: string[]; demo_timers: boolean; erc20_tokens?: { address: string }[]; nep141_tokens?: { account_id: string }[] }>(contract, "get_config");
+const config = await view<{ executors: string[]; demo_timers: boolean; eth_light_client?: string | null; erc20_tokens?: { address: string }[]; nep141_tokens?: { account_id: string }[] }>(contract, "get_config");
 if (!config.demo_timers) throw new Error("expected a demo-timers build on testnet");
 if (!(config.erc20_tokens ?? []).some((t) => t.address === WETH_TOKEN.address)) {
   await call(admin, contract, "set_erc20_tokens", { tokens: [WETH_TOKEN] });
   log("ERC-20 allowlist set", { tokens: [WETH_TOKEN.symbol] });
+}
+// D22: the Ethereum (Sepolia) light client on NEAR that proves reverts.
+const ETH_LIGHT_CLIENT = process.env.ETH_LIGHT_CLIENT?.trim() || "client-eth2.sepolia.testnet";
+if (config.eth_light_client !== ETH_LIGHT_CLIENT) {
+  await call(admin, contract, "set_eth_light_client", { account_id: ETH_LIGHT_CLIENT });
+  log("Ethereum light client set", { account_id: ETH_LIGHT_CLIENT });
 }
 // wNEAR: wrap.testnet registers an account for 0.00125 NEAR (storage_balance_bounds.min).
 const WNEAR = { account_id: "wrap.testnet", symbol: "wNEAR", decimals: 24, storage_deposit: "1250000000000000000000" };
