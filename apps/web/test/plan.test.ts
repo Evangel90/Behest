@@ -201,3 +201,15 @@ describe("fee quotes (D6)", () => {
     expect(btcSplit({ heirs: 2, inputs: 1, total: 100_000n, maxFeeRate: 5 }).reserve).toBe(btcPayoutFees({ heirs: 2, inputs: 1, feeRate: 5 }));
   });
 });
+
+describe("isTransient", () => {
+  it("retries rate limits and network failures, not contract errors", async () => {
+    const { isTransient } = await import("../src/lib/contract");
+    expect(isTransient(new Error('{"code": -429, "message": "Rate limits exceeded."}'))).toBe(true);
+    expect(isTransient(new TypeError("Failed to fetch"))).toBe(true);
+    expect(isTransient(new Error("Server error 502 Bad Gateway"))).toBe(true);
+    expect(isTransient(new Error("Smart contract panicked: E_NO_PLAN"))).toBe(false);
+    expect(isTransient(new Error("Account x.testnet does not exist"))).toBe(false);
+    expect(isTransient(new Error("block 512345 not found"))).toBe(false);
+  });
+});

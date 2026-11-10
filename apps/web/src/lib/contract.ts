@@ -10,8 +10,25 @@ import type { BtcDestination, BtcRelease, BtcTx, BtcUtxo, BtcVault, ContractConf
 export const provider = new JsonRpcProvider({ url: NEAR_RPC });
 export const sepoliaClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
 
+/** Rate limits and network blips, as opposed to a contract error that would fail again. */
+export function isTransient(e: unknown): boolean {
+  const m = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  if (/does not exist|panicked|MethodNotFound|CodeDoesNotExist|wasm execution failed/i.test(m)) return false;
+  return /429|rate limit|too many|failed to fetch|fetch failed|network|timeout|timed out|ECONN|socket|\b50[0234]\b|bad gateway|unavailable/i.test(m);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Contract view call; retries transient RPC failures (public RPCs rate-limit bursts). */
 export async function view<T>(method: string, args: Record<string, unknown> = {}, contractId = CONTRACT_ID): Promise<T> {
-  return (await provider.callFunction({ contractId, method, args })) as T;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return (await provider.callFunction({ contractId, method, args })) as T;
+    } catch (e) {
+      if (attempt >= 4 || !isTransient(e)) throw e;
+      await sleep(500 * 2 ** attempt + Math.random() * 400);
+    }
+  }
 }
 
 export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { owner });
@@ -19,10 +36,19 @@ export const getPlan = (owner: string) => view<PlanView | null>("get_plan", { ow
 export const getVaultWithdrawal = (owner: string) => view<Transfer | null>("get_vault_withdrawal", { owner });
 /** D21: settled releases, oldest first (a settled one not yet archived included). */
 export const getReleaseHistory = (owner: string) => view<Proposal[]>("get_release_history", { owner });
-export async function getConfig() {
-  const cfg = await view<ContractConfig>("get_config");
-  registerTokens(cfg.erc20_tokens ?? [], cfg.nep141_tokens ?? []);
-  return cfg;
+// Many components need the config; share one read for a minute instead of one each.
+let configCache: { at: number; p: Promise<ContractConfig> } | null = null;
+export function getConfig(): Promise<ContractConfig> {
+  if (configCache && Date.now() - configCache.at < 60_000) return configCache.p;
+  const p = view<ContractConfig>("get_config").then((cfg) => {
+    registerTokens(cfg.erc20_tokens ?? [], cfg.nep141_tokens ?? []);
+    return cfg;
+  });
+  configCache = { at: Date.now(), p };
+  p.catch(() => {
+    if (configCache?.p === p) configCache = null;
+  });
+  return p;
 }
 export const listOpenReleases = () => view<string[]>("list_open_releases", { from_index: 0, limit: 100 });
 
@@ -36,7 +62,18 @@ export async function nearBalance(accountId: string): Promise<bigint | null> {
 }
 
 /** Sepolia address controlled by the plan through Chain Signatures. */
-export async function vaultAddress(owner: string): Promise<Hex> {
+// A plan's vault address never changes, so derive it once per owner.
+const vaultCache = new Map<string, Promise<Hex>>();
+export function vaultAddress(owner: string): Promise<Hex> {
+  let p = vaultCache.get(owner);
+  if (!p) {
+    p = deriveVaultAddress(owner);
+    vaultCache.set(owner, p);
+    p.catch(() => vaultCache.delete(owner));
+  }
+  return p;
+}
+async function deriveVaultAddress(owner: string): Promise<Hex> {
   const path = await view<string>("get_eth_vault_path", { owner });
   const key = await view<string>("derived_public_key", { path, predecessor: CONTRACT_ID, domain_id: 0 }, MPC_CONTRACT);
   const raw = baseDecode(key.replace(/^secp256k1:/, ""));

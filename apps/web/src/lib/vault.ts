@@ -18,17 +18,28 @@ export function useVault(owner: string) {
   const [vault, setVault] = useState<Vault | null>(null);
   useEffect(() => {
     let off = false;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Keep trying until every read lands: a single failed read used to leave
+    // the vault "loading" (and proposing disabled) until a page reload.
+    const load = async (attempt: number) => {
       const [address, cfg] = await Promise.all([vaultAddress(owner).catch(() => null), getConfig().catch(() => null)]);
-      if (!address || off) return;
-      const list = cfg?.erc20_tokens ?? [];
-      const feePerTx = cfg ? BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap) : null;
-      setVault({ address, balance: null, tokens: list.map((token) => ({ token, balance: null })), feePerTx });
+      if (off) return;
+      if (!address || !cfg) {
+        timer = setTimeout(() => void load(attempt + 1), Math.min(30_000, 3_000 * 2 ** attempt));
+        return;
+      }
+      const list = cfg.erc20_tokens ?? [];
+      const feePerTx = BigInt(cfg.eth_gas_limit) * BigInt(cfg.eth_max_fee_cap);
+      setVault((v) => v ?? { address, balance: null, tokens: list.map((token) => ({ token, balance: null })), feePerTx });
       const [balance, toks] = await Promise.all([ethBalance(address).catch(() => null), tokenBalances(address, list)]);
-      if (!off) setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })), feePerTx });
-    })();
+      if (off) return;
+      setVault({ address, balance, tokens: list.map((token, i) => ({ token, balance: toks[i] ?? null })), feePerTx });
+      if (balance == null || toks.some((t) => t == null)) timer = setTimeout(() => void load(attempt + 1), Math.min(30_000, 3_000 * 2 ** attempt));
+    };
+    void load(0);
     return () => {
       off = true;
+      clearTimeout(timer);
     };
   }, [owner]);
   return vault;
