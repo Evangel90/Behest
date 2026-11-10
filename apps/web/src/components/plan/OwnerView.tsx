@@ -150,6 +150,8 @@ function AmountField({ value, onChange, unit, max }: { value: string; onChange: 
 }
 
 function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; busy: boolean; act: Act }) {
+  // Ethereum wallets sign messages; they can't attach NEAR to a call (D23).
+  const evm = useSession().session?.kind === "evm";
   const [dlg, setDlg] = useState<"add" | "withdraw" | null>(null);
   const [amount, setAmount] = useState("0.1");
   let units: bigint | null = null;
@@ -177,13 +179,18 @@ function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; bu
         held by <Address value={CONTRACT_ID} href={`${NEAR_EXPLORER}/address/${CONTRACT_ID}`} label="contract" />
       </span>
       {!open ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="ink" icon={ArrowDownToLine} disabled={busy} onClick={() => setDlg("add")}>
-            Add
-          </Button>
-          <Button size="sm" variant="outline" icon={ArrowUpFromLine} disabled={busy || escrow === 0n} onClick={() => setDlg("withdraw")}>
-            Withdraw
-          </Button>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            {!evm && (
+              <Button size="sm" variant="ink" icon={ArrowDownToLine} disabled={busy} onClick={() => setDlg("add")}>
+                Add
+              </Button>
+            )}
+            <Button size="sm" variant="outline" icon={ArrowUpFromLine} disabled={busy || escrow === 0n} onClick={() => setDlg("withdraw")}>
+              Withdraw
+            </Button>
+          </div>
+          {evm && <span className="text-[13px] leading-relaxed text-muted">An Ethereum wallet can&apos;t attach NEAR. Anyone with a NEAR wallet can add NEAR to this plan for you; ETH and Bitcoin go straight to the vaults.</span>}
         </div>
       ) : (
         <span className="text-[13px] text-muted">Locked while a release is open.</span>
@@ -214,6 +221,7 @@ function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; bu
  * ft_transfer_call; the token refunds anything Behest doesn't accept.
  */
 function NearTokens({ view, open, busy, act }: { view: PlanView; open: boolean; busy: boolean; act: Act }) {
+  const evm = useSession().session?.kind === "evm";
   const [cfg, setCfg] = useState<ContractConfig | null>(null);
   const [amt, setAmt] = useState("0.1");
   const [which, setWhich] = useState<string | null>(null);
@@ -258,24 +266,27 @@ function NearTokens({ view, open, busy, act }: { view: PlanView; open: boolean; 
           <>
             <AmountField value={amt} onChange={setAmt} unit={t.symbol} />
             <div className="flex flex-wrap gap-2">
-              {t.account_id.startsWith("wrap.") && (
+              {!evm && t.account_id.startsWith("wrap.") && (
                 <Button variant="outline" disabled={busy || units === 0n} onClick={() => act(`Wrap ${amt} NEAR`, "near_deposit", {}, { deposit: units, receiverId: t.account_id })}>
                   Wrap NEAR first
                 </Button>
               )}
-              <Button
-                variant="primary"
-                icon={ArrowDownToLine}
-                loading={busy}
-                disabled={units === 0n}
-                onClick={() => act(`Add ${t.symbol}`, "ft_transfer_call", { receiver_id: CONTRACT_ID, amount: units.toString(), msg: view.plan.owner }, { deposit: 1n, receiverId: t.account_id }).then((ok) => ok && setWhich(null))}
-              >
-                Add {t.symbol}
-              </Button>
+              {!evm && (
+                <Button
+                  variant="primary"
+                  icon={ArrowDownToLine}
+                  loading={busy}
+                  disabled={units === 0n}
+                  onClick={() => act(`Add ${t.symbol}`, "ft_transfer_call", { receiver_id: CONTRACT_ID, amount: units.toString(), msg: view.plan.owner }, { deposit: 1n, receiverId: t.account_id }).then((ok) => ok && setWhich(null))}
+                >
+                  Add {t.symbol}
+                </Button>
+              )}
               <Button variant="outline" icon={ArrowUpFromLine} disabled={busy || units === 0n || units > held(t.account_id)} onClick={() => act(`Withdraw ${t.symbol}`, "withdraw_ft", { token: t.account_id, amount: units.toString() }).then((ok) => ok && setWhich(null))}>
                 Withdraw
               </Button>
             </div>
+            {evm && <span className="text-[13px] leading-relaxed text-muted">Adding tokens means sending them from a NEAR account, which an Ethereum wallet can&apos;t do. You can still withdraw.</span>}
           </>
         )}
       </Dialog>
