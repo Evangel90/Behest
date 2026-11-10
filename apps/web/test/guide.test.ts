@@ -31,6 +31,7 @@ const proposal = (extra: Partial<Proposal> = {}): Proposal => ({
   transfers: [],
   ...extra,
 });
+const toAmara = { heir: "x7f2-amara.demo.testnet", asset: "Near", destination: "x7f2-amara.demo.testnet", amount: "1", state: "Pending", attempts: 0, failure: null } as unknown as Proposal["transfers"][number];
 const view = (status: PlanView["status"], p: Proposal | null = null): PlanView => ({
   status,
   overdue_at_ms: 500,
@@ -82,8 +83,10 @@ describe("next step", () => {
     expect(nextStep(view("Proposed", proposal()), "guardian", { now: 0, me: "dayo.testnet" }).title).toBe("You've voted.");
   });
   it("tells an heir when it's ready", () => {
-    expect(nextStep(view("Eligible", proposal()), "heir", { now: 0, me: "x7f2-amara.demo.testnet" }).title).toBe("It's ready for you, Amara.");
+    expect(nextStep(view("Eligible", proposal({ transfers: [toAmara] })), "heir", { now: 0, me: "x7f2-amara.demo.testnet" }).title).toBe("It's ready for you, Amara.");
     expect(nextStep(view("Active"), "heir", { now: 0, me: "amara.testnet" }).title).toBe("Nothing for you to do yet, Amara.");
+    expect(nextStep(view("Eligible", proposal()), "heir", { now: 0, me: "x7f2-tobi.demo.testnet" }).title).toBe("This release has nothing for you, Tobi.");
+    expect(nextStep(view("Settled", proposal()), "heir", { now: 0, me: "x7f2-tobi.demo.testnet" }).title).toBe("Nothing in this release was for you, Tobi.");
   });
   it("asks a delay signer to vote on a pending extension", () => {
     const v = view("Waiting", proposal({ waiting_ends_at_ms: 9_000 }));

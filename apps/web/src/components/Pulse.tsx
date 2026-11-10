@@ -5,15 +5,18 @@ import { relative } from "@/lib/plan";
  * the time left. Scales to its container (max 240px); the arc animates when
  * a check-in restarts the clock.
  */
-export function Pulse({ overdueAt, period, now, overdue }: { overdueAt: number; period: number; now: number; overdue: boolean }) {
+export function Pulse({ overdueAt, period, now, overdue, released }: { overdueAt: number; period: number; now: number; overdue: boolean; released?: "releasing" | "settled" }) {
   const left = Math.max(0, overdueAt - now);
   const frac = period > 0 ? Math.min(1, left / period) : 0;
   const C = 2 * Math.PI * 104;
   const rings = 14;
-  const big = overdue ? "Late" : left > 86_400_000 ? `${Math.ceil(left / 86_400_000)}d` : left > 3_600_000 ? `${Math.ceil(left / 3_600_000)}h` : left > 60_000 ? `${Math.ceil(left / 60_000)}m` : `${Math.ceil(left / 1000)}s`;
+  // Once a release can no longer be cancelled, a late check-in changes nothing
+  // about it, so the pulse stops asking for one.
+  if (released) overdue = false;
+  const big = released === "releasing" ? "Sent" : released === "settled" ? "Done" : overdue ? "Late" : left > 86_400_000 ? `${Math.ceil(left / 86_400_000)}d` : left > 3_600_000 ? `${Math.ceil(left / 3_600_000)}h` : left > 60_000 ? `${Math.ceil(left / 60_000)}m` : `${Math.ceil(left / 1000)}s`;
   return (
     <div className="relative aspect-square w-full max-w-[240px] @container">
-      <svg className="size-full" viewBox="0 0 240 240" fill="none" role="img" aria-label={overdue ? "Check-in overdue" : `Next check-in due ${relative(overdueAt, now)}`}>
+      <svg className="size-full" viewBox="0 0 240 240" fill="none" role="img" aria-label={released ? "Release under way; check-ins are paused" : overdue ? "Check-in overdue" : `Next check-in due ${relative(overdueAt, now)}`}>
         {Array.from({ length: rings }, (_, i) => (
           <circle key={i} cx="120" cy="120" r={12 + i * 6.4} stroke="#FFFFFF" strokeOpacity={(0.05 + (i / rings) * 0.2).toFixed(2)} strokeWidth="1" />
         ))}
@@ -22,10 +25,10 @@ export function Pulse({ overdueAt, period, now, overdue }: { overdueAt: number; 
           cx="120"
           cy="120"
           r="104"
-          stroke={overdue ? "#F59E0B" : "#2F6BFF"}
+          stroke={released ? "#525252" : overdue ? "#F59E0B" : "#2F6BFF"}
           strokeWidth="8"
           strokeLinecap="round"
-          strokeDasharray={`${(C * (overdue ? 1 : frac)).toFixed(1)} ${C.toFixed(1)}`}
+          strokeDasharray={`${(C * (overdue || released ? 1 : frac)).toFixed(1)} ${C.toFixed(1)}`}
           transform="rotate(-90 120 120)"
           className="transition-[stroke-dasharray,stroke] duration-[900ms] ease-ledger"
         />
@@ -33,7 +36,7 @@ export function Pulse({ overdueAt, period, now, overdue }: { overdueAt: number; 
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
         <span className="tabular text-[clamp(40px,23cqw,56px)] font-medium leading-none tracking-[-0.04em] text-white">{big}</span>
-        <span className="text-[13px] text-muted-dark">{overdue ? "check in now" : "until check-in"}</span>
+        <span className="text-[13px] text-muted-dark">{released === "releasing" ? "heirs are receiving" : released === "settled" ? "check in to resume" : overdue ? "check in now" : "until check-in"}</span>
       </div>
     </div>
   );

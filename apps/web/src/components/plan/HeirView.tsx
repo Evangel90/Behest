@@ -79,7 +79,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
             {heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share passed to you` : "—"}
           </span>
           <span className="text-[15px] leading-normal text-muted">
-            {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" + ") : "Amounts are fixed when a release is proposed."}
+            {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" + ") : p ? `Nothing for you in release #${p.id}.` : "Amounts are fixed when a release is proposed."}
             {heir?.eth_destination && <> · Ethereum wallet ending in <strong className="text-ink">{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
             {heir?.near_destination && <> · NEAR account <strong className="text-ink">{heir.near_destination.split(".")[0]}</strong></>}
             {mine.length > 0 && " · fees paid"}

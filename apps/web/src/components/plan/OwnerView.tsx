@@ -80,7 +80,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
             <Term k="checkIn">Check-in pulse</Term>
           </span>
           <div className="w-[min(220px,70vw)]">
-            <Pulse overdueAt={view.overdue_at_ms} period={p.check_in_interval_ms + p.grace_ms} now={now} overdue={s !== "Active"} />
+            <Pulse overdueAt={view.overdue_at_ms} period={p.check_in_interval_ms + p.grace_ms} now={now} overdue={s !== "Active"} released={s === "Eligible" || s === "Executing" ? "releasing" : s === "Settled" ? "settled" : undefined} />
           </div>
           <span className="text-center text-xs text-muted-dark">Every {duration(p.check_in_interval_ms)} · gas paid by Behest</span>
         </Card>

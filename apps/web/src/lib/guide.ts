@@ -161,6 +161,13 @@ export function nextStep(view: PlanView, role: UiRole, ctx: GuideCtx): NextStep 
       const started = mine.some((t) => t.state !== "Pending");
       if (ctx.followUp && s === "Overdue")
         return { tone: "done", title: "Done.", body: `${name}'s release to you has completed. If anything was left in the plan, you can start a follow-up round below; guardians approve it.` };
+      // A heir can be left out of a release: a share of 0, a share moved to an
+      // alternate, or a follow-up round with nothing for them. Say so plainly
+      // instead of promising something that isn't in this release.
+      if (p && mine.length === 0 && s !== "Active" && s !== "Overdue")
+        return s === "Settled"
+          ? { tone: "done", title: `Nothing in this release was for you, ${first}.`, body: `${name}'s release has completed. None of its transfers went to you. If anything is left in the plan, a follow-up round can still include you.` }
+          : { tone: "calm", title: `This release has nothing for you, ${first}.`, body: `None of the transfers in ${name}'s release #${p.id} go to you. There's nothing to receive this time; if anything is left afterwards, a follow-up round can include you.` };
       if (s === "Proposed") return { tone: "calm", title: `Nothing for you to do yet, ${first}.`, body: `${name}'s guardians have proposed a release. Nothing moves until enough of them approve and a waiting period passes.` };
       if (s === "Waiting" && ends)
         return {
