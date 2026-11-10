@@ -21,7 +21,8 @@
     "e2e-revert": "tsx --env-file=../../.env src/revert-scenario.ts",
     "e2e-evm": "tsx --env-file=../../.env src/evm-scenario.ts",
     "gen-evm-vectors": "tsx src/gen-evm-vectors.ts",
-    "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
+    "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts",
+    "topup": "tsx --env-file=../../.env src/topup.ts"
   },
   "dependencies": {
     "@behest/executor": "workspace:*",
