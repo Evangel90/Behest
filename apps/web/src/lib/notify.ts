@@ -3,7 +3,8 @@
 // the chain: they live in the notifier's database, and every change is a
 // NEP-413 message signed by the signed-in account (no transaction, no gas).
 //  - persona sessions sign locally with the key this browser holds;
-//  - wallet sessions ask the wallet (NEAR Connect `signMessage`).
+//  - wallet sessions ask the wallet (NEAR Connect `signMessage`);
+//  - Ethereum-wallet sessions sign the same text with personal_sign (EIP-191).
 // Reading your settings uses a short session token from one signature.
 import { KeyPairSigner, type KeyPairString } from "near-api-js";
 import { NOTIFIER_URL, NOTIFY_RECIPIENT } from "./config";
@@ -102,11 +103,23 @@ export interface Envelope {
   recipient: string;
 }
 
+/** An Ethereum account's envelope: the same message, signed with personal_sign. */
+export interface Eip191Envelope {
+  scheme: "eip191";
+  accountId: string;
+  message: string;
+  signature: string;
+}
+
 const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
 
 /** Signs a notifier action as the session's account. */
-export async function signAction(session: Session, summary: string, action: string, args: Record<string, unknown> = {}): Promise<Envelope> {
+export async function signAction(session: Session, summary: string, action: string, args: Record<string, unknown> = {}): Promise<Envelope | Eip191Envelope> {
   const message = actionMessage(summary, action, session.accountId, args);
+  if (session.kind === "evm") {
+    if (!session.personalSign) throw new NotifierError("NO_WALLET", "Reconnect your wallet, then try again.");
+    return { scheme: "eip191", accountId: session.accountId, message, signature: await session.personalSign(message) };
+  }
   const nonce = crypto.getRandomValues(new Uint8Array(32));
   const recipient = NOTIFY_RECIPIENT;
   if (session.kind === "persona") {
