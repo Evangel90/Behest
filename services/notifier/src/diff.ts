@@ -161,10 +161,13 @@ export const EXPLORERS = {
 };
 
 /** "kemi-1a2b.testnet" → "Kemi"; the friendly first part of an account. */
-export const name = (a: string) => {
+export const PERSONA_NAMES: Record<string, string> = { owner: "Kemi", g1: "Dayo", g2: "Funmi", g3: "Chidi" };
+const name = (a: string) => {
   if (/^0x[0-9a-f]{40}$/i.test(a) || /^[0-9a-f]{64}$/.test(a)) return `${a.slice(0, 6)}…${a.slice(-4)}`;
   const f = a.split(".")[0] ?? a;
   const r = f.includes("-") ? f.slice(f.lastIndexOf("-") + 1) : f;
+  // "Try as…" personas are named by role in the account id; use their names.
+  if (a.includes(".demo.") && r in PERSONA_NAMES) return PERSONA_NAMES[r]!;
   return r.charAt(0).toUpperCase() + r.slice(1);
 };
 

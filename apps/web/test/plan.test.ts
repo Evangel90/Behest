@@ -43,6 +43,7 @@ describe("plain language", () => {
 
   it("names persona accounts by their role", () => {
     expect([shortName("x7f2-amara.demo.behest-ekkr6-admin.testnet"), shortName("tobi.testnet")]).toEqual(["Amara", "Tobi"]);
+    expect([shortName("x7f2-owner.demo.behest-ekkr6-admin.testnet"), shortName("x7f2-g2.demo.behest-ekkr6-admin.testnet"), shortName("owner.testnet")]).toEqual(["Kemi", "Funmi", "Owner"]);
   });
 });
 

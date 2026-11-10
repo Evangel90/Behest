@@ -35,10 +35,14 @@ export function relative(target: number, now: number): string {
   return d >= 0 ? `in ${s}` : `${s} ago`;
 }
 
+const PERSONA_NAMES: Record<string, string> = { owner: "Kemi", g1: "Dayo", g2: "Funmi", g3: "Chidi" };
+
 export function shortName(account: string): string {
   const first = account.split(".")[0] ?? account;
   // persona accounts look like "x7f2-amara.demo…": show "Amara"
   const role = first.includes("-") ? first.slice(first.lastIndexOf("-") + 1) : first;
+  // "Try as…" personas are named by role in the account id; show their names.
+  if (account.includes(".demo.") && role in PERSONA_NAMES) return PERSONA_NAMES[role]!;
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
