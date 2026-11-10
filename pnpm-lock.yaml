@@ -111,6 +111,9 @@ importers:
       nodemailer:
         specifier: 10.2.1
         version: 10.2.1
+      viem:
+        specifier: 2.57.16
+        version: 2.57.16(typescript@7.0.2)
     devDependencies:
       '@types/node':
         specifier: 26.6.6
@@ -139,6 +142,9 @@ importers:
       near-api-js:
         specifier: 7.4.0
         version: 7.4.0
+      viem:
+        specifier: 2.57.16
+        version: 2.57.16(typescript@7.0.2)
     devDependencies:
       '@types/node':
         specifier: 26.6.6

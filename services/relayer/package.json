@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Behest gas relayer: pays NEAR gas for NEP-366 meta-transactions that call allowlisted, non-payable Behest methods.",
+  "description": "Behest gas relayer: pays NEAR gas for NEP-366 meta-transactions and EVM-signed actions (evm_call) that call allowlisted, non-payable Behest methods.",
   "exports": {
     "./policy": "./src/policy.ts",
     "./client": "./src/client.ts",
-    "./methods": "./src/methods.ts"
+    "./methods": "./src/methods.ts",
+    "./evm": "./src/evm.ts"
   },
   "scripts": {
     "start": "tsx --env-file=../../.env src/server.ts",
@@ -18,7 +19,8 @@
     "borsh": "2.0.0",
     "near-api-js": "7.4.0",
     "@noble/curves": "2.2.0",
-    "@noble/hashes": "2.2.0"
+    "@noble/hashes": "2.2.0",
+    "viem": "2.57.16"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

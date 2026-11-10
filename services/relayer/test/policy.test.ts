@@ -40,6 +40,16 @@ describe("check", () => {
     expect(intent).toMatchObject({ sender: "amara.testnet", method: "claim", owner: "kemi.testnet", role: "heir" });
   });
 
+  it("sponsors owner configuration with no deposit (D24)", async () => {
+    const intent = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("set_plan", { plan: {} }, teraToGas(30), 0n)] })), C);
+    expect(intent).toMatchObject({ owner: "kemi.testnet", role: "self", method: "set_plan" });
+    expect(holdsRole(null, intent)).toBe(true); // a first plan has no plan yet
+    const rules = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("set_release_rules", { rules: null }, teraToGas(30), 0n)] })), C);
+    expect(rules).toMatchObject({ owner: "kemi.testnet", role: "owner" });
+    expect(holdsRole(plan, rules)).toBe(true);
+    expect(holdsRole(plan, { ...rules, sender: "amara.testnet" })).toBe(false);
+  });
+
   it("uses the sender as the owner for owner methods", async () => {
     const intent = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("check_in", {}, teraToGas(30), 0n)] })), C);
     expect(intent).toMatchObject({ owner: "kemi.testnet", role: "owner" });
@@ -48,7 +58,8 @@ describe("check", () => {
   it.each([
     ["another contract", { receiver: "evil.testnet" }, "WRONG_RECEIVER"],
     ["a payable method", { acts: [actions.functionCall("deposit", { owner: "kemi.testnet" }, teraToGas(30), 0n)] }, "METHOD_NOT_SPONSORED"],
-    ["plan edits", { acts: [actions.functionCall("set_plan", { plan: {} }, teraToGas(30), 0n)] }, "METHOD_NOT_SPONSORED"],
+    ["owner withdrawals (EVM path only)", { acts: [actions.functionCall("withdraw", { amount: "1" }, teraToGas(30), 0n)] }, "METHOD_NOT_SPONSORED"],
+    ["a plan with a deposit", { acts: [actions.functionCall("set_plan", { plan: {} }, teraToGas(30), 1n)] }, "DEPOSIT"],
     ["admin calls", { acts: [actions.functionCall("set_paused", { paused: true }, teraToGas(30), 0n)] }, "METHOD_NOT_SPONSORED"],
     ["an attached deposit", { acts: [actions.functionCall("claim", { owner: "kemi.testnet" }, teraToGas(30), 1n)] }, "DEPOSIT"],
     ["more than 300 Tgas", { acts: [actions.functionCall("claim", { owner: "kemi.testnet" }, teraToGas(301), 0n)] }, "GAS"],

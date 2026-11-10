@@ -7,9 +7,11 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { deserialize } from "borsh";
 import { SCHEMA, encodeDelegateAction } from "near-api-js";
 
-import { SPONSORED_METHODS, type Role, type SponsoredMethod } from "./methods.js";
+import { recoverMessageAddress } from "viem";
+import { isCanonicalSignature, networkOf, parseSignedAction, SignedActionError } from "./evm.js";
+import { EVM_METHODS, SPONSORED_METHODS, type EvmMethod, type Role, type SponsoredMethod } from "./methods.js";
 
-export { SPONSORED_METHODS, type Role, type SponsoredMethod };
+export { EVM_METHODS, SPONSORED_METHODS, type EvmMethod, type Role, type SponsoredMethod };
 
 export const MAX_GAS = 300_000_000_000_000n;
 
@@ -27,7 +29,7 @@ export interface DecodedDelegate {
 
 export interface CallIntent {
   sender: string;
-  method: SponsoredMethod;
+  method: EvmMethod;
   args: Record<string, unknown>;
   /** Plan owner the call is about (args.owner, or the sender for owner methods). */
   owner: string;
@@ -75,10 +77,52 @@ export function check(sd: DecodedDelegate, contractId: string): CallIntent {
     throw new PolicyError("BAD_ARGS", "arguments must be JSON");
   }
   const method = fc.methodName as SponsoredMethod;
-  const role = SPONSORED_METHODS[method];
-  const owner = role === "owner" ? da.senderId : String(args.owner ?? "");
+  return intentOf(da.senderId, method, SPONSORED_METHODS[method], args);
+}
+
+function intentOf(sender: string, method: EvmMethod, role: Role, args: Record<string, unknown>): CallIntent {
+  // Owner methods act on the sender's own plan; one naming an owner must name the sender.
+  const own = role === "owner" || role === "self";
+  if (own && args.owner !== undefined && args.owner !== sender) throw new PolicyError("BAD_ARGS", "owner methods act on the sender's own plan");
+  const owner = own ? sender : String(args.owner ?? "");
   if (!owner) throw new PolicyError("BAD_ARGS", "missing owner");
-  return { sender: da.senderId, method, args, owner, role };
+  return { sender, method, args, owner, role };
+}
+
+export interface EvmIntent extends CallIntent {
+  nonce: bigint;
+  deadlineMs: bigint;
+}
+
+/**
+ * D23 structural checks on a signed action, mirroring the contract: header
+ * and JSON, this contract and network, a canonical 65-byte low-S signature
+ * that recovers to `actor`, an allowlisted method, and an unexpired deadline.
+ * The sender is the actor's eth-implicit account (`0x…`, lowercase).
+ */
+export async function checkEvm(message: unknown, signature: unknown, contractId: string, now: number = Date.now()): Promise<EvmIntent> {
+  if (typeof message !== "string" || typeof signature !== "string") throw new PolicyError("BAD_REQUEST", "message and signature are required");
+  let action;
+  try {
+    action = parseSignedAction(message).action;
+  } catch (e) {
+    if (e instanceof SignedActionError) throw new PolicyError(e.code, e.message);
+    throw e;
+  }
+  if (action.contract !== contractId || action.network !== networkOf(contractId)) throw new PolicyError("EVM_WRONG_CONTRACT", `signed for ${action.contract} on ${action.network}, not ${contractId}`);
+  if (!isCanonicalSignature(signature)) throw new PolicyError("EVM_SIGNATURE", "signature must be 65 bytes (r‖s‖v) with a low s");
+  let signer: string;
+  try {
+    signer = (await recoverMessageAddress({ message, signature: signature as `0x${string}` })).toLowerCase();
+  } catch {
+    throw new PolicyError("EVM_SIGNATURE", "signature does not recover");
+  }
+  if (action.actor.toLowerCase() !== signer) throw new PolicyError("EVM_ACTOR", "the signature is not the actor's");
+  if (!(action.method in EVM_METHODS)) throw new PolicyError("EVM_METHOD", `${action.method} can't be called with an EVM signature`);
+  const deadlineMs = BigInt(action.deadline_ms);
+  if (BigInt(now) > deadlineMs) throw new PolicyError("EVM_EXPIRED", "the signed action expired; sign again");
+  const method = action.method as EvmMethod;
+  return { ...intentOf(signer, method, EVM_METHODS[method], action.args), nonce: BigInt(action.nonce), deadlineMs };
 }
 
 interface PlanRoles {
@@ -89,6 +133,9 @@ interface PlanRoles {
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
 export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
+  // set_plan creates or replaces the sender's own plan: anyone may (the
+  // contract caps sponsored storage per owner and new plans per day).
+  if (intent.role === "self") return true;
   if (!plan) return false;
   switch (intent.role) {
     case "owner":

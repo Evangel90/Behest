@@ -24,3 +24,22 @@ export async function sponsoredCall(
   if (!res.ok || !body.tx_hash) throw new Error(`relayer ${res.status} ${body.code ?? ""}: ${body.error ?? "unknown error"}`);
   return { txHash: body.tx_hash };
 }
+
+export interface RelayResult {
+  tx_hash: string;
+  status: "ok" | "failed";
+  failure?: unknown;
+  result?: unknown;
+}
+
+/** D23: submit an EVM-signed action (`personal_sign` of `message`) through the relayer's `evm_call`. */
+export async function evmCall(relayerUrl: string, message: string, signature: string): Promise<RelayResult> {
+  const res = await fetch(`${relayerUrl.replace(/\/$/, "")}/evm-call`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message, signature }),
+  });
+  const body = (await res.json()) as Partial<RelayResult> & { code?: string; error?: string };
+  if (!res.ok || !body.tx_hash) throw new Error(`relayer ${res.status} ${body.code ?? ""}: ${body.error ?? "unknown error"}`);
+  return body as RelayResult;
+}
