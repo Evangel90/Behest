@@ -7,6 +7,7 @@
 // Reading your settings uses a short session token from one signature.
 import { KeyPairSigner, type KeyPairString } from "near-api-js";
 import { NOTIFIER_URL, NOTIFY_RECIPIENT } from "./config";
+import { sharedConnector } from "./connector";
 import { loadSandbox } from "./demo";
 import type { Session } from "./session";
 
@@ -116,8 +117,7 @@ export async function signAction(session: Session, summary: string, action: stri
     return { accountId: session.accountId, publicKey: s.publicKey.toString(), signature: b64(s.signature), nonce: b64(nonce), message, recipient };
   }
   // Wallet: the connector keeps the connected wallet in browser storage, so a second instance finds it.
-  const { NearConnector } = await import("@hot-labs/near-connect");
-  const connector = new NearConnector({ network: "testnet", features: { testnet: true } });
+  const connector = await sharedConnector();
   const { wallet } = await connector.getConnectedWallet();
   if (!wallet) throw new NotifierError("NO_WALLET", "Reconnect your wallet, then try again.");
   if (wallet.manifest.features?.signMessage === false) throw new NotifierError("NO_SIGN_MESSAGE", `${wallet.manifest.name} can't sign messages. Try another wallet.`);

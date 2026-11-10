@@ -12,6 +12,7 @@ import type { NearConnector, NearWalletBase } from "@hot-labs/near-connect";
 import { Account, KeyPair, actions, base64Encode, encodeSignedDelegate, teraToGas, type KeyPairString } from "near-api-js";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CONTRACT_ID, RELAYER_URL } from "./config";
+import { sharedConnector } from "./connector";
 import { provider } from "./contract";
 import { loadSandbox, type Persona } from "./demo";
 
@@ -166,20 +167,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const connector = useRef<NearConnector | null>(null);
-
   const getConnector = useCallback(async () => {
-    if (connector.current) return connector.current;
-    const { NearConnector } = await import("@hot-labs/near-connect");
-    const c = new NearConnector({ network: "testnet", features: { testnet: true }, excludedWallets: [] });
-    c.on("wallet:signIn", async ({ wallet, accounts }) => {
-      const id = accounts[0]?.accountId;
-      if (id) {
-        localStorage.removeItem(PERSONA_KEY);
-        setSession(walletSession(wallet, id));
-      }
-    });
-    c.on("wallet:signOut", () => setSession((s) => (s?.kind === "wallet" ? null : s)));
-    connector.current = c;
+    const c = await sharedConnector();
+    if (connector.current !== c) {
+      connector.current = c;
+      c.on("wallet:signIn", async ({ wallet, accounts }) => {
+        const id = accounts[0]?.accountId;
+        if (id) {
+          localStorage.removeItem(PERSONA_KEY);
+          setSession(walletSession(wallet, id));
+        }
+      });
+      c.on("wallet:signOut", () => setSession((s) => (s?.kind === "wallet" ? null : s)));
+    }
     return c;
   }, []);
 
