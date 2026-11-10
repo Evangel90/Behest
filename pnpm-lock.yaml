@@ -102,6 +102,9 @@ importers:
       near-api-js:
         specifier: 7.4.0
         version: 7.4.0
+      nodemailer:
+        specifier: 10.2.1
+        version: 10.2.1
     devDependencies:
       '@types/node':
         specifier: 26.6.6
@@ -1356,6 +1359,10 @@ packages:
       sass:
         optional: true
 
+  nodemailer@10.2.1:
+    resolution: {integrity: sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w==}
+    engines: {node: '>=20.0.0'}
+
   obug@3.0.0:
     resolution: {integrity: sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw==}
     engines: {node: '>=12.20.0'}
@@ -2575,6 +2582,8 @@ snapshots:
       - '@babel/core'
       - '@types/node'
       - babel-plugin-macros
+
+  nodemailer@10.2.1: {}
 
   obug@3.0.0: {}
 

@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Read-only Behest notifier: watches plans and sends reminders and lifecycle notices to the console and an optional webhook.",
+  "description": "Behest notifier: watches plans (read-only) and delivers reminders and lifecycle notices per person by email, Telegram and signed webhooks.",
   "scripts": {
     "start": "tsx --env-file=../../.env src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "near-api-js": "7.4.0"
+    "near-api-js": "7.4.0",
+    "nodemailer": "10.2.1"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
