@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, BellRing, ChevronRight, CirclePlus, FlaskConical, HeartPulse, Inbox, Search, UserRound } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Countdown, useNow } from "@/components/interactive";
+import { GetNotified } from "@/components/Notifications";
 import { Stagger, StaggerItem } from "@/components/motion";
 import { Avatar } from "@/components/PlanParts";
 import { SignInDialog } from "@/components/SignIn";
@@ -104,6 +105,7 @@ export default function Home() {
           </EmptyState>
         )}
         {mine && <MyPlan view={mine} onChange={loadMine} />}
+        {mine && <GetNotified role="owner" />}
       </section>
 
       <section aria-labelledby="part-of" className="flex flex-col gap-3">

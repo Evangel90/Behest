@@ -11,6 +11,7 @@ import { assetLabel, failureText, formatAmount, formatBtc, formatEth, isBtc, isE
 import type { Transfer } from "@/lib/types";
 import { useVault } from "@/lib/vault";
 import { useConfirm } from "../feedback";
+import { GetNotified } from "../Notifications";
 import { Countdown, Dialog, Disclosure, Term } from "../interactive";
 import { Row, Timeline, receiptUrl } from "../PlanParts";
 import { OptionsCard } from "../ReleaseOptions";
@@ -157,6 +158,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
         </section>
       )}
 
+      <GetNotified role="heir" />
       {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
       <HistoryCard view={view} history={history} />
       <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />

@@ -5,6 +5,7 @@ import { ArrowDown, ScrollText } from "lucide-react";
 import { nextStep } from "@/lib/guide";
 import { describePlan, shortName } from "@/lib/plan";
 import { BtcRebase, useBtc } from "../Bitcoin";
+import { GetNotified } from "../Notifications";
 import { GuardianList, HeirList, Timeline } from "../PlanParts";
 import { ExtensionControls, OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
@@ -52,6 +53,7 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
       {canPropose && <ProposeCard view={view} act={act} busy={!!busy} followUp={followUp} />}
       {p && <ProposalPanel view={view} now={now} me={me} act={act} busy={!!busy} vote />}
       <BtcRebase view={view} btc={btc} />
+      {s === "Active" && <GetNotified role="guardian" />}
       <PlainWords ctx={ctx} />
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
