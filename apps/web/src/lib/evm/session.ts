@@ -22,6 +22,12 @@ export const NO_NEAR_DEPOSIT = "An Ethereum wallet can't attach NEAR. Fund the p
 const queues = new Map<string, Promise<unknown>>();
 const lastUsed = new Map<string, bigint>();
 
+const RELAY_CODES: Record<string, string> = {
+  NO_ROLE: "E_EVM_NO_ROLE",
+  RATE_LIMITED: "E_EVM_RATE_LIMITED",
+  BAD_ARGS: "E_EVM_ARGS",
+};
+
 async function nextNonce(actor: string): Promise<bigint> {
   let n: bigint;
   try {
@@ -57,6 +63,11 @@ async function postEvmCall(message: string, signature: string): Promise<RelayBod
   const body = (await res.json().catch(() => ({}))) as RelayBody;
   if (res.status === 404) throw new Error("Behest's gas relayer doesn't take Ethereum-wallet signatures yet. Nothing was sent.");
   if (!res.ok || !body.tx_hash) {
+    // The relayer checks the same rules before submitting and answers with its
+    // own codes (EVM_NONCE, NO_ROLE…); map them onto the contract's E_ codes
+    // so humanError() words them the same way.
+    const relayCode = body.code?.startsWith("EVM_") ? `E_${body.code}` : body.code ? RELAY_CODES[body.code] : undefined;
+    if (relayCode) throw new Error(relayCode);
     const coded = contractError(body.error) ?? null;
     throw new Error(coded ?? `Relayer: ${body.error ?? `HTTP ${res.status}`}`);
   }

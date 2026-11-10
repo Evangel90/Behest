@@ -113,7 +113,10 @@ const ERRORS: Record<string, string> = {
   E_EVM_METHOD: "An Ethereum wallet can't do this through Behest. Nothing changed.",
   E_EVM_NONCE: "Another signed action went through first. Try again: you'll be asked to sign once more.",
   E_EVM_EXPIRED: "The signature expired before it reached the chain. Try again.",
-  E_EVM_DEADLINE: "The signature expired before it reached the chain. Try again.",
+  E_EVM_NO_ROLE: "Your account doesn't have a role in this plan that allows that. Nothing changed.",
+  E_EVM_RATE_LIMITED: "Too many signed actions in a short time. Wait a minute and try again.",
+  E_EVM_SIGNATURE: "That signature couldn't be checked. Try again, and make sure your wallet signs with the connected account.",
+  E_EVM_ACTOR: "The signature came from a different account than the one signed in. Switch back in your wallet and try again.",
 };
 
 export function humanError(e: unknown): string {
