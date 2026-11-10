@@ -45,7 +45,7 @@ export function useBtc(owner: string): BtcState {
   }, [owner]);
   useEffect(() => {
     void reload();
-    const t = setInterval(reload, 20_000);
+    const t = setInterval(() => !document.hidden && void reload(), 20_000);
     return () => clearInterval(t);
   }, [reload]);
   return { vault, dests, utxos, release, maxFeeRate, reload };

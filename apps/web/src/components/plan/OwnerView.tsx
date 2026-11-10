@@ -293,7 +293,8 @@ function EthCard({ view, vault, locked, busy, act }: { view: PlanView; vault: Va
     let off = false;
     const load = () => getVaultWithdrawal(owner).then((x) => !off && setW(x)).catch(() => {});
     void load();
-    const t = setInterval(load, 5000);
+    // Only an open withdrawal changes; otherwise check rarely.
+    const t = setInterval(() => !document.hidden && void load(), 15_000);
     return () => {
       off = true;
       clearInterval(t);

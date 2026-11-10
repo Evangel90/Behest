@@ -13,6 +13,7 @@ export function usePlan(owner: string | null, intervalMs = 4000) {
   // Loads the token allowlist so ERC-20 amounts format with symbol and decimals.
   useEffect(() => void getConfig().catch(() => {}), []);
 
+  const failures = useRef(0);
   const refresh = useCallback(async () => {
     if (!owner) return;
     try {
@@ -20,16 +21,40 @@ export function usePlan(owner: string | null, intervalMs = 4000) {
       if (v) offset.current = v.now_ms - Date.now();
       setView(v);
       setError(null);
+      failures.current = 0;
     } catch (e) {
+      failures.current++;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [owner]);
 
+  // Poll while the tab is visible; back off while the RPC is failing (public
+  // RPCs rate-limit per IP, and hammering them only makes it last longer).
+  // Coming back to the tab refreshes at once.
   useEffect(() => {
     if (!owner) return;
-    void refresh();
-    const t = setInterval(refresh, intervalMs);
-    return () => clearInterval(t);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (stopped || document.hidden) return;
+      const delay = Math.min(30_000, intervalMs * 2 ** Math.min(failures.current, 3));
+      timer = setTimeout(async () => {
+        await refresh();
+        schedule();
+      }, delay);
+    };
+    const onVisible = () => {
+      if (document.hidden) return clearTimeout(timer);
+      void refresh().then(schedule);
+    };
+    void refresh().then(schedule);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [owner, refresh, intervalMs]);
 
   useEffect(() => {
