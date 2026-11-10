@@ -104,7 +104,9 @@ export function CommandPalette({ isOpen, close }: { isOpen: boolean; close: () =
     return hits;
   }, [cmds, term, go]);
 
-  useEffect(() => setSel(0), [term]);
+  useEffect(() => {
+    setSel(0);
+  }, [term]);
   useEffect(() => {
     document.getElementById(`cmd-${sel}`)?.scrollIntoView({ block: "nearest" });
   }, [sel]);

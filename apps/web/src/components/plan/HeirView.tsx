@@ -17,7 +17,7 @@ import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
 import { useTx } from "../tx";
-import { Button, ExtLink, Progress, StatusPill, TickerDisc, TransferPill, cx } from "../ui";
+import { Button, ExtLink, Progress, TickerDisc, TransferPill, cx } from "../ui";
 import type { PlanCtx } from "./common";
 
 const tickerOf = (t: Transfer) => (isBtc(t.asset) ? "BTC" : isEvm(t.asset) ? "ETH" : "NEAR");
@@ -62,7 +62,6 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
   return (
     <>
       <div className="flex flex-col gap-3">
-        <StatusPill status={s} />
         <h2 key={step.title} className="animate-fade-up text-[clamp(34px,8vw,44px)] font-medium leading-[0.98] tracking-[-0.04em]">
           {step.title}
         </h2>

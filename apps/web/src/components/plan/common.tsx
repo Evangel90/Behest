@@ -42,7 +42,9 @@ export function PlanHeader({ view, role, roles, onRole, actions }: { view: PlanV
       </Link>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3.5">
-          <Avatar name={owner} i={0} size={52} />
+          <span className="hidden sm:block">
+            <Avatar name={owner} i={0} size={52} />
+          </span>
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <h1 className="text-[clamp(28px,4.4vw,44px)] font-medium leading-none tracking-[-0.04em]">{mine ? "Your plan" : role === "public" ? "Plan inspector" : `${shortName(owner)}'s plan`}</h1>
@@ -50,8 +52,10 @@ export function PlanHeader({ view, role, roles, onRole, actions }: { view: PlanV
             </div>
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-muted">
               <Address value={owner} href={`${NEAR_EXPLORER}/address/${owner}`} label="owner account" className="max-w-[260px]" />
-              <span aria-hidden>·</span>
-              <span>version {view.plan.version}</span>
+              <span className="hidden sm:inline" aria-hidden>
+                ·
+              </span>
+              <span className="hidden sm:inline">version {view.plan.version}</span>
             </span>
           </div>
         </div>

@@ -52,7 +52,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <NowCard step={step} now={now} role="owner">
           {(s === "Active" || s === "Overdue" || open) && (
             <Button variant="primary" size="lg" icon={HeartPulse} loading={checkingIn} disabled={!!busy && !checkingIn} onClick={checkIn} className="sm:min-w-[220px]">
@@ -103,7 +103,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} />}
 
       <Group title="People">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <HeirList view={view} />
           <GuardianList view={view} />
         </div>

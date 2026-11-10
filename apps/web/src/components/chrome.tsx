@@ -324,9 +324,9 @@ function SearchButton({ onOpen, wide }: { onOpen: () => void; wide?: boolean }) 
       </button>
     );
   return (
-    <button onClick={onOpen} className="flex h-10 w-full items-center gap-2.5 rounded-tile border border-white/10 px-3 text-left text-sm text-[#A1A1A1] transition-colors hover:border-white/20 hover:text-white">
+    <button onClick={onOpen} className="flex h-11 w-full items-center gap-2.5 rounded-tile border border-white/10 px-3 text-left text-sm text-[#A1A1A1] transition-colors hover:border-white/20 hover:text-white">
       <Search aria-hidden className="size-4" />
-      <span className="flex-1">Search or jump to…</span>
+      <span className="flex-1 truncate">Search…</span>
       <span className="flex gap-0.5 [&>kbd]:border-white/15 [&>kbd]:bg-white/5 [&>kbd]:text-[#A1A1A1]">
         <Kbd>⌘</Kbd>
         <Kbd>K</Kbd>
@@ -345,7 +345,9 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
   const palette = useCommandPalette();
   const panel = useRef<HTMLDivElement>(null);
   // Each page starts at the top of the content panel.
-  useEffect(() => panel.current?.scrollTo(0, 0), [path]);
+  useEffect(() => {
+    panel.current?.scrollTo(0, 0);
+  }, [path]);
   return (
     <div data-app-shell className="flex min-h-dvh flex-col bg-frame lg:h-dvh lg:overflow-hidden">
       <a href="#main" className="sr-only z-[90] rounded-tile bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">

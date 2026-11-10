@@ -54,7 +54,7 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
       <BtcRebase view={view} btc={btc} />
       <PlainWords ctx={ctx} />
       <Group title="People">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <GuardianList view={view} me={me} />
           <HeirList view={view} />
         </div>
@@ -92,7 +92,7 @@ export function DelayView({ ctx }: { ctx: PlanCtx }) {
         <HistoryCard view={view} history={history} />
       </Group>
       <Group title="People">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <GuardianList view={view} me={me} />
           <HeirList view={view} />
         </div>

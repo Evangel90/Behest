@@ -231,9 +231,9 @@ export function TickerDisc({ ticker, size = 32 }: { ticker: string; size?: numbe
     <span
       aria-hidden="true"
       className="flex shrink-0 items-center justify-center rounded-full font-bold text-white ring-1 ring-white/10"
-      style={{ background: ASSET_MARK[ticker] ?? "#3B82F6", width: size, height: size, fontSize: ticker.length > 4 ? 8 : size <= 28 ? 9 : 10 }}
+      style={{ background: ASSET_MARK[ticker] ?? "#3B82F6", width: size, height: size, fontSize: size < 28 ? Math.round(size * 0.45) : ticker.length > 3 ? Math.max(8, Math.round(size * 0.26)) : Math.round(size * 0.3) }}
     >
-      {ticker}
+      {size < 28 ? ticker[0] : ticker}
     </span>
   );
 }
