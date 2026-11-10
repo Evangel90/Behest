@@ -14,3 +14,4 @@ node_modules/
 .next/
 *.tsbuildinfo
 .notifier-state.json*
+.notifier.db*
