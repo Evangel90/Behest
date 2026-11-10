@@ -19,6 +19,8 @@
     "e2e-btc": "tsx --env-file=../../.env src/btc-scenario.ts",
     "e2e-followup": "tsx --env-file=../../.env src/followup-scenario.ts",
     "e2e-revert": "tsx --env-file=../../.env src/revert-scenario.ts",
+    "e2e-evm": "tsx --env-file=../../.env src/evm-scenario.ts",
+    "gen-evm-vectors": "tsx src/gen-evm-vectors.ts",
     "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts"
   },
   "dependencies": {

@@ -12,6 +12,6 @@
     "behest-ekkr6-amara.testnet",
     "behest-ekkr6-tobi.testnet"
   ],
-  "wasmSha256": "5beb5ffada3c72f0a83930c2728f49d18ed5b40d8d07f36f20f20d533d277eb5",
-  "deployedAt": "2026-11-09T10:48:25.683Z"
+  "wasmSha256": "fa5568e60e7c12d7ed3f3c5e4395b16668e3d275ea34f2bf9393d95f7a68ab6d",
+  "deployedAt": "2026-11-10T19:35:35.433Z"
 }

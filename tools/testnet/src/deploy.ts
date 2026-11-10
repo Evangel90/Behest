@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { actions, teraToGas } from "near-api-js";
+import { actions, nearToYocto, teraToGas } from "near-api-js";
 import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
 import { WETH_TOKEN } from "./sepolia.js";
 
@@ -89,6 +89,21 @@ if (!(config.nep141_tokens ?? []).some((t) => t.account_id === WNEAR.account_id)
 if (!config.executors.includes(executor)) {
   await call(admin, contract, "add_executor", { account_id: executor });
   log("executor registered", { executor });
+}
+// D24: the gas relayer's transactions get plan storage from the sponsor pool.
+// The admin keeps the pool topped up to SPONSOR_POOL_NEAR (default 1 NEAR).
+const relayerId = process.env.RELAYER_ACCOUNT_ID?.trim();
+const sponsor = (await view<{ sponsor?: { relayer: string | null; allowance_per_owner: string; daily_new_plans: number } }>(contract, "get_config")).sponsor;
+if (!sponsor) throw new Error("this build has no sponsor pool (D24)");
+if (relayerId && sponsor.relayer !== relayerId) {
+  await call(admin, contract, "set_sponsor_config", { config: { ...sponsor, relayer: relayerId } });
+  log("sponsor relayer set", { relayer: relayerId, allowance_per_owner: sponsor.allowance_per_owner, daily_new_plans: sponsor.daily_new_plans });
+}
+const poolTarget = nearToYocto((process.env.SPONSOR_POOL_NEAR?.trim() || "1") as `${number}`);
+const pool = BigInt((await view<{ pool: string }>(contract, "get_sponsorship", { owner: admin })).pool);
+if (pool < poolTarget) {
+  await call(admin, contract, "fund_sponsor_pool", {}, { deposit: poolTarget - pool });
+  log("sponsor pool funded", { added: (poolTarget - pool).toString(), pool: poolTarget.toString() });
 }
 
 saveDeployment({
