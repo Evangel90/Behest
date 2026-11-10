@@ -154,7 +154,7 @@ export function Notifications() {
   }
   if (infoError)
     return (
-      <EmptyState icon={WifiOff} tone="error" title="The notification service isn't reachable" body={`${infoError}. Plans keep working without it: notifications never change what the contract does.`}>
+      <EmptyState icon={WifiOff} tone="error" title="The notification service isn't reachable" body={`${infoError.replace(/\.$/, "")}. Plans keep working without it: notifications never change what the contract does.`}>
         <Button variant="ink" icon={RefreshCw} onClick={loadInfo}>
           Try again
         </Button>
