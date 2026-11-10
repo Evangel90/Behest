@@ -17,6 +17,9 @@ function env(name: string, fallback?: string): string {
 
 const contractId = env("BEHEST_CONTRACT_ID");
 const provider = new JsonRpcProvider({ url: env("NEAR_RPC_URL", "https://test.rpc.fastnear.com") });
+// Policy reads (plans, roles, nonces) may use another RPC than transactions, so
+// a per-IP rate limit on one doesn't block the other.
+const viewProvider = process.env.NEAR_VIEW_RPC_URL ? new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL }) : provider;
 const relayer = new Account(env("RELAYER_ACCOUNT_ID"), provider, env("RELAYER_PRIVATE_KEY") as KeyPairString);
 const limiter = new Limiter(Number(env("RELAYER_PER_SENDER_PER_HOUR", "30")), Number(env("RELAYER_GLOBAL_PER_DAY", "2000")));
 const origin = env("RELAYER_ALLOWED_ORIGIN", "*");
@@ -45,7 +48,17 @@ async function readBody(req: IncomingMessage, limit = 16_384): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-const view = <T>(method: string, args: Record<string, unknown>) => provider.callFunction({ contractId, method, args }) as Promise<T>;
+/** Contract view with a short backoff on RPC rate limits. */
+async function view<T>(method: string, args: Record<string, unknown>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return (await viewProvider.callFunction({ contractId, method, args })) as T;
+    } catch (e) {
+      if (i >= 3 || !/429|rate limit/i.test(String(e))) throw e;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
+}
 
 /** The sender must hold the method's role in the plan it names. */
 async function authorize(intent: CallIntent) {
@@ -58,6 +71,23 @@ async function authorize(intent: CallIntent) {
 }
 
 type Outcome = Awaited<ReturnType<Account["signAndSendTransaction"]>>;
+
+/**
+ * Sends with backoff while the RPC rate-limits. Safe to repeat: a delegate
+ * action carries its own nonce and an evm_call the actor's, so a duplicate
+ * that did get through only fails on chain.
+ */
+async function submit(tx: Parameters<Account["signAndSendTransaction"]>[0]): Promise<Outcome> {
+  for (let i = 0; ; i++) {
+    try {
+      return await relayer.signAndSendTransaction(tx);
+    } catch (e) {
+      if (i >= 4 || !/429|rate limit/i.test(String(e))) throw e;
+      log("rpc rate-limited; retrying", { attempt: i + 1 });
+      await new Promise((r) => setTimeout(r, 1_000 * 2 ** i));
+    }
+  }
+}
 
 function summarize(outcome: Outcome) {
   const status = outcome.status as { SuccessValue?: string; Failure?: unknown };
@@ -82,7 +112,7 @@ async function relay(req: IncomingMessage, res: ServerResponse) {
   await authorize(intent);
   if (!limiter.take(intent.sender)) return send(res, 429, { code: "RATE_LIMITED", error: "too many sponsored calls; try later" });
 
-  const outcome = await relayer.signAndSendTransaction({
+  const outcome = await submit({
     receiverId: intent.sender,
     actions: [actions.signedDelegate(sd as never)],
     throwOnFailure: false,
@@ -101,7 +131,7 @@ async function evmCall(req: IncomingMessage, res: ServerResponse) {
   await authorize(intent);
   if (!limiter.take(intent.sender)) return send(res, 429, { code: "RATE_LIMITED", error: "too many sponsored calls; try later" });
 
-  const outcome = await relayer.signAndSendTransaction({
+  const outcome = await submit({
     receiverId: contractId,
     actions: [actions.functionCall("evm_call", { message: body.message, signature: body.signature }, teraToGas(300), 0n)],
     throwOnFailure: false,
