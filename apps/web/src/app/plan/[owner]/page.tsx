@@ -1,27 +1,26 @@
 "use client";
-import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { parseUnits, type Hex } from "viem";
-import { AppShell, NavItem, NavLabel } from "@/components/chrome";
-import { BtcOwnerCard, BtcRebase, useBtc } from "@/components/Bitcoin";
-import { GuardianList, HeirList, Lifecycle, Row, TransferTable, receiptUrl } from "@/components/PlanParts";
-import { Pulse } from "@/components/Pulse";
-import { OptionsCard } from "@/components/ReleaseOptions";
-import { RulesCard, useRules } from "@/components/ReleaseRules";
-import { HistoryCard, ProposeCard, SnapshotCheck, lastSettledAt, useHistory } from "@/components/Rounds";
-import { AssetHead, Bracket, Button, ButtonLink, CanAct, Card, ExtLink, Field, Notice, StatusPill, TestnetTag, TransferPill, inputClass } from "@/components/ui";
-import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
-import { getConfig, getVaultWithdrawal } from "@/lib/contract";
-import { useVault, type Vault } from "@/lib/vault";
+// One plan, seen through the signed-in person's role: owner, guardian, heir,
+// delay signer, or the public inspector. Each view leads with what that
+// person needs to do now.
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo } from "react";
+import { CirclePlus, FileQuestion, RotateCcw, Search, WifiOff } from "lucide-react";
+import { AppShell } from "@/components/chrome";
+import { PlanHeader, type PlanCtx } from "@/components/plan/common";
+import { DelayView, GuardianView } from "@/components/plan/GuardianView";
+import { HeirView } from "@/components/plan/HeirView";
+import { OwnerView } from "@/components/plan/OwnerView";
+import { PublicView } from "@/components/plan/PublicView";
+import { useOptions } from "@/components/ReleaseOptions";
+import { useRules } from "@/components/ReleaseRules";
+import { lastSettledAt, useHistory } from "@/components/Rounds";
+import { Swap } from "@/components/motion";
+import { Button, ButtonLink, Card, EmptyState, Skeleton } from "@/components/ui";
 import { watch } from "@/lib/demo";
-import { useAction, usePlan } from "@/lib/hooks";
-import { useBtcQuote, useConfig, useEthQuote } from "@/lib/fees";
-import { actionsFor, followUpOpen, formatBtc, assetLabel, describePlan, duration, failureText, formatAmount, formatEth, formatNear, formatToken, parseNear, relative, rolesOf, shortAddr, shortName, type Role, when } from "@/lib/plan";
+import type { UiRole } from "@/lib/guide";
+import { usePlan } from "@/lib/hooks";
+import { followUpOpen, rolesOf } from "@/lib/plan";
 import { useSession } from "@/lib/session";
-import type { Asset, ContractConfig, PlanView, Transfer } from "@/lib/types";
-
-type Tab = Role | "public";
 
 export default function PlanPage() {
   return (
@@ -33,738 +32,108 @@ export default function PlanPage() {
 
 function PlanScreen() {
   const owner = decodeURIComponent(useParams<{ owner: string }>().owner);
-  const forced = useSearchParams().get("view");
-  const { session } = useSession();
+  const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { session, ready } = useSession();
+  const me = session?.accountId ?? null;
   const { view, error, refresh, chainNow } = usePlan(owner);
-  const roles = useMemo(() => rolesOf(view ?? null, session?.accountId ?? null), [view, session]);
-  const [tab, setTab] = useState<Tab | null>(null);
-  const active: Tab = tab ?? (forced === "inspect" ? "public" : (roles[0] ?? "public"));
+  const prop = view?.plan.proposal;
+  const options = useOptions(owner, prop?.id, prop?.waiting_ends_at_ms);
+  const rules = useRules(owner);
+  const history = useHistory(owner, view ? `${view.status}:${prop?.id}` : undefined);
+
+  const roles = useMemo<UiRole[]>(() => {
+    const r: UiRole[] = rolesOf(view ?? null, me);
+    if (me && options.options?.delay_signers.includes(me)) r.push("delay");
+    return [...r, "public"];
+  }, [view, me, options.options]);
+
+  const asked = search.get("as") as UiRole | null;
+  const forced = search.get("view") === "inspect" ? "public" : null;
+  const role: UiRole = (asked && roles.includes(asked) ? asked : null) ?? forced ?? roles[0]!;
+  const setRole = (r: UiRole) => {
+    const q = new URLSearchParams(search.toString());
+    q.delete("view");
+    q.set("as", r);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  };
 
   useEffect(() => {
     if (view) watch(owner);
   }, [view, owner]);
 
-  const heirMode = active === "heir";
-  const tabs = view ? [...roles, "public" as const] : [];
-  const label = (r: Tab) => (r === "public" ? "Public inspector" : r === "owner" ? "As owner" : r === "guardian" ? "As guardian" : "As heir");
+  const ctx: PlanCtx | null = view
+    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options }
+    : null;
+
   return (
-    <AppShell
-      narrow={heirMode}
-      nav={
-        tabs.length > 1 || active === "public" ? (
-          <>
-            <NavLabel>{shortName(owner)}&apos;s plan</NavLabel>
-            {tabs.map((r) => (
-              <NavItem key={r} active={active === r} onClick={() => setTab(r)}>
-                {label(r)}
-              </NavItem>
-            ))}
-          </>
-        ) : null
-      }
-    >
-      {view === undefined && !error && <p className="text-muted">Loading plan…</p>}
-      {error && <Notice tone="error">Couldn&apos;t load the plan: {error}</Notice>}
+    <AppShell narrow={role === "heir"}>
+      {view === undefined && !error && <PlanSkeleton />}
+      {error && view === undefined && (
+        <EmptyState icon={WifiOff} tone="error" title="Couldn't load this plan" body={`The NEAR network didn't answer: ${error}. Your plan is safe; this is only a display problem.`}>
+          <Button variant="ink" icon={RotateCcw} onClick={() => void refresh()}>
+            Try again
+          </Button>
+        </EmptyState>
+      )}
       {view === null && (
-        <Card className="flex flex-col gap-3">
-          <h1 className="text-3xl font-medium tracking-[-0.03em]">No plan for {owner}</h1>
-          <p className="text-muted">Check the account name, or create a plan if it&apos;s yours.</p>
-          <div className="flex gap-2">
-            <ButtonLink href="/inspect" variant="outline">
-              Search again
-            </ButtonLink>
-            <ButtonLink href="/setup" variant="primary">
+        <EmptyState icon={FileQuestion} title={`No plan for ${owner}`} body="Check the account name. If it's yours, you can create a plan in a few minutes.">
+          <ButtonLink href="/inspect" variant="outline" icon={Search}>
+            Search again
+          </ButtonLink>
+          {me === owner && (
+            <ButtonLink href="/setup" variant="primary" icon={CirclePlus}>
               Create a plan
             </ButtonLink>
-          </div>
-        </Card>
+          )}
+        </EmptyState>
       )}
-      {view && (
+      {ctx && ready && (
         <>
-          {active === "owner" && <OwnerView view={view} now={chainNow} refresh={refresh} />}
-          {active === "guardian" && <GuardianView view={view} now={chainNow} refresh={refresh} />}
-          {active === "heir" && <HeirView view={view} now={chainNow} refresh={refresh} />}
-          {active === "public" && <PublicView view={view} now={chainNow} refresh={refresh} />}
+          <PlanHeader view={ctx.view} role={role} roles={roles} onRole={setRole} />
+          {error && <p className="text-sm text-muted">Showing the last update; reconnecting…</p>}
+          <Swap id={role} className="flex flex-col gap-6">
+            {role === "owner" && <OwnerView ctx={ctx} />}
+            {role === "guardian" && <GuardianView ctx={ctx} />}
+            {role === "heir" && <HeirView ctx={ctx} />}
+            {role === "delay" && <DelayView ctx={ctx} />}
+            {role === "public" && <PublicView ctx={ctx} />}
+          </Swap>
         </>
       )}
+      {ctx && !ready && <PlanSkeleton />}
     </AppShell>
   );
 }
 
-interface Props {
-  view: PlanView;
-  now: number;
-  refresh?: () => Promise<void>;
-}
-
-
-function Result({ result }: { result: ReturnType<typeof useAction>["result"] }) {
-  if (!result) return null;
+function PlanSkeleton() {
   return (
-    <Notice tone={result.ok ? "ok" : "error"}>
-      {result.text}{" "}
-      {result.txHash && (
-        <ExtLink href={`${NEAR_EXPLORER}/txns/${result.txHash}`} className="font-mono text-xs">
-          View transaction
-        </ExtLink>
-      )}
-    </Notice>
-  );
-}
-
-// ------------------------------------------------------------------- owner
-
-/**
- * NEP-141 tokens held for the plan. Adding wNEAR wraps NEAR first (the token
- * registers the owner and keeps its registration fee), then sends it here with
- * ft_transfer_call; the token refunds anything Behest doesn't accept.
- */
-function NearTokens({ view, open, busy, act }: { view: PlanView; open: boolean; busy: boolean; act: (label: string, method: string, args: Record<string, unknown>, deposit?: bigint, receiverId?: string) => void }) {
-  const [cfg, setCfg] = useState<ContractConfig | null>(null);
-  const [amt, setAmt] = useState("0.1");
-  useEffect(() => void getConfig().then(setCfg).catch(() => setCfg(null)), []);
-  const fts = cfg?.nep141_tokens ?? [];
-  if (fts.length === 0) return null;
-  const held = (id: string) => BigInt(view.ft_escrow?.find((b) => b.token === id)?.amount ?? "0");
-  return (
-    <div className="flex flex-col gap-2 border-t border-line pt-3">
-      {fts.map((t) => {
-        const units = (() => {
-          try {
-            return parseUnits(amt, t.decimals);
-          } catch {
-            return 0n;
-          }
-        })();
-        return (
-          <div key={t.account_id} className="flex flex-col gap-2">
-            <span className="font-mono text-sm">
-              {formatToken(held(t.account_id), t)} {t.symbol} <span className="text-muted">· {t.account_id}</span>
-            </span>
-            {!open && (
-              <div className="flex flex-wrap items-end gap-2">
-                <Field label={`Amount (${t.symbol})`}>
-                  <input className={`${inputClass} w-32`} inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value)} />
-                </Field>
-                {t.account_id.startsWith("wrap.") && (
-                  <Button
-                    disabled={busy || units === 0n}
-                    onClick={() => {
-                      act(`Wrap ${amt} NEAR`, "near_deposit", {}, units, t.account_id);
-                    }}
-                  >
-                    Wrap NEAR
-                  </Button>
-                )}
-                <Button disabled={busy || units === 0n} onClick={() => act(`Add ${t.symbol}`, "ft_transfer_call", { receiver_id: CONTRACT_ID, amount: units.toString(), msg: view.plan.owner }, 1n, t.account_id)}>
-                  Add {t.symbol}
-                </Button>
-                <Button variant="outline" disabled={busy || units === 0n || units > held(t.account_id)} onClick={() => act(`Withdraw ${t.symbol}`, "withdraw_ft", { token: t.account_id, amount: units.toString() })}>
-                  Withdraw
-                </Button>
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {!open && <span className="text-xs text-muted">Tokens split between heirs with a NEAR account. Each heir's first token payment includes a small registration fee, taken from the plan's NEAR.</span>}
-    </div>
-  );
-}
-
-function OwnerView({ view, now, refresh }: Props) {
-  const { session } = useSession();
-  const { busy, result, run } = useAction();
-  const vault = useVault(view.plan.owner);
-  const btc = useBtc(view.plan.owner);
-  const rules = useRules(view.plan.owner);
-  const [amount, setAmount] = useState("0.1");
-  const p = view.plan.policy;
-  const s = view.status;
-  const open = s === "Proposed" || s === "Waiting";
-  const act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint, receiverId?: string) =>
-    run(label, async () => {
-      const r = await session!.call(method, args, { deposit, receiverId });
-      await refresh?.();
-      return r;
-    });
-
-  const history = useHistory(view.plan.owner, `${view.status}:${view.plan.proposal?.id}`);
-  return (
-    <>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-2.5">
-          <StatusPill status={s} />
-          <h1 className="text-[clamp(40px,6vw,64px)] font-medium leading-[0.92] tracking-[-0.045em]">Your plan</h1>
-          <span className="font-mono text-xs text-muted">
-            {view.plan.owner} · version {view.plan.version}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <ButtonLink href={`/plan/${view.plan.owner}?view=inspect`} variant="outline">
-            Rules &amp; inspector
-          </ButtonLink>
-          {!open && s !== "Eligible" && s !== "Executing" && (
-            <ButtonLink href="/setup?edit=1" variant="ink">
-              Edit plan
-            </ButtonLink>
-          )}
+    <div aria-busy="true" aria-label="Loading plan" className="flex flex-col gap-6">
+      <div className="flex items-center gap-3.5">
+        <Skeleton className="size-[52px] rounded-full" />
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-9 w-56" />
+          <Skeleton className="h-4 w-40" />
         </div>
       </div>
-      <Result result={result} />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[400px_minmax(0,1fr)]">
-        <Card dark className="flex flex-col items-center gap-4">
-          <span className="self-start">
-            <Bracket dark>Pulse</Bracket>
-          </span>
-          <Pulse overdueAt={view.overdue_at_ms} period={p.check_in_interval_ms + p.grace_ms} now={now} overdue={s !== "Active"} />
-          <span className="font-mono text-xs text-muted-dark">
-            last check-in {relative(view.plan.last_check_in_ms, now)} · {s === "Active" ? `unreachable ${relative(view.overdue_at_ms, now)}` : "now counted as unreachable"}
-          </span>
-          {(s === "Active" || s === "Overdue" || open) && (
-            <Button variant="mint" className="w-full text-[17px]" disabled={!!busy} onClick={() => act(open ? "Check in (cancels the release)" : "Check in", "check_in", {})}>
-              {busy === "Check in" ? "Checking in…" : open ? "I'm here — check in and cancel" : "Check in now"}
-            </Button>
-          )}
-          {open && (
-            <Button variant="outline-light" className="w-full" disabled={!!busy} onClick={() => act("Cancel release", "cancel_release", {})}>
-              Cancel the release only
-            </Button>
-          )}
-        </Card>
-
-        <Card className="flex flex-col gap-4">
-          <div className="flex justify-between gap-2">
-            <Bracket>Lifecycle</Bracket>
-            <span className="font-mono text-xs text-muted">{view.plan.proposal ? `proposal #${view.plan.proposal.id}` : "nothing pending"}</span>
-          </div>
-          <Lifecycle status={s} />
-          <CanAct actions={actionsFor(view, "owner")} />
-          <p className="border-t border-line pt-4 text-xl leading-snug tracking-[-0.01em]">{describePlan(p)}</p>
-          {open && view.plan.proposal?.waiting_ends_at_ms && (
-            <Notice tone="info">
-              You can cancel until <strong>{when(view.plan.proposal.waiting_ends_at_ms)}</strong> ({relative(view.plan.proposal.waiting_ends_at_ms, now)}).
-            </Notice>
-          )}
-        </Card>
-      </div>
-
-      <section aria-label="Assets" className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <Card className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <AssetHead ticker="NEAR" name="NEAR" />
-            <TestnetTag />
-          </div>
-          <span className="text-[40px] font-medium leading-none tracking-[-0.04em]">{formatNear(view.plan.escrow)}</span>
-          <span className="font-mono text-xs text-muted">held by {CONTRACT_ID} for this plan</span>
-          {!open && (
-            <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
-              <Field label="Amount (NEAR)">
-                <input className={`${inputClass} w-32`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-              </Field>
-              <Button disabled={!!busy} onClick={() => act("Add NEAR", "deposit", { owner: view.plan.owner }, parseNear(amount))}>
-                Add
-              </Button>
-              <Button variant="outline" disabled={!!busy} onClick={() => act("Withdraw NEAR", "withdraw", { amount: parseNear(amount).toString() })}>
-                Withdraw
-              </Button>
-            </div>
-          )}
-          <NearTokens view={view} open={open} busy={!!busy} act={act} />
-        </Card>
-        <Card className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <AssetHead ticker="ETH" name="Ethereum · Sepolia" />
-            <TestnetTag />
-          </div>
-          <span className="text-[40px] font-medium leading-none tracking-[-0.04em]">{vault?.balance != null ? formatEth(vault.balance) : "…"}</span>
-          {vault && (
-            <span className="break-all font-mono text-xs text-muted">
-              vault <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink>
-            </span>
-          )}
-          {vault?.tokens.map(({ token, balance }) => (
-            <span key={token.address} className="font-mono text-sm">
-              {balance != null ? formatToken(balance, token) : "…"} {token.symbol}
-            </span>
-          ))}
-          <span className="text-sm text-muted">Send Sepolia ETH or an allowed token to this address to include it. It's controlled only by this plan through Chain Signatures.</span>
-          {vault && <VaultWithdraw owner={view.plan.owner} vault={vault} locked={!!view.plan.proposal && s !== "Settled"} act={act} busy={!!busy} />}
-        </Card>
-        <BtcOwnerCard view={view} btc={btc} locked={!!view.plan.proposal && s !== "Settled"} />
-      </section>
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <HeirList view={view} />
-        <GuardianList view={view} />
-      </div>
-      <HistoryCard view={view} history={history} />
-      <RulesCard
-        view={view}
-        now={now}
-        rules={rules.rules}
-        editable={!view.plan.proposal || s === "Settled"}
-        act={async (l, m, a, d) => {
-          await act(l, m, a, d);
-          await rules.reload();
-        }}
-        busy={!!busy}
-        signedIn
-      />
-      <OptionsCard view={view} now={now} me={session?.accountId ?? null} editable={!view.plan.proposal || s === "Settled"} act={act} busy={!!busy} />
-      {view.plan.proposal && (
-        <Card className="flex flex-col gap-3">
-          <Bracket>Proposed transfers</Bracket>
-          <TransferTable transfers={view.plan.proposal.transfers} />
-        </Card>
-      )}
-    </>
-  );
-}
-
-/**
- * D7: the owner takes ETH or a token back out of the vault. One withdrawal at a
- * time, only with no open release; network fees come from the vault's ETH.
- */
-function VaultWithdraw({ owner, vault, locked, act, busy }: { owner: string; vault: Vault; locked: boolean; act: (label: string, method: string, args: Record<string, unknown>) => Promise<unknown>; busy: boolean }) {
-  const { session } = useSession();
-  const [w, setW] = useState<Transfer | null | undefined>(undefined);
-  const [asset, setAsset] = useState("Eth");
-  const [amount, setAmount] = useState("");
-  const [to, setTo] = useState(session?.accountId.startsWith("0x") ? session.accountId : "");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let off = false;
-    const load = () => getVaultWithdrawal(owner).then((x) => !off && setW(x)).catch(() => {});
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      off = true;
-      clearInterval(t);
-    };
-  }, [owner]);
-
-  const token = vault.tokens.find((t) => t.token.address === asset)?.token;
-  const pending = w && w.state !== "Confirmed" && !(w.state === "Failed" && (w.failure === "Reverted" || w.failure === "Cancelled"));
-  const maxEth = vault.balance != null && vault.feePerTx != null && vault.balance > vault.feePerTx ? vault.balance - vault.feePerTx : 0n;
-  const cfg = useConfig();
-  const validTo = /^0x[0-9a-fA-F]{40}$/.test(to.trim()) ? (to.trim() as `0x${string}`) : null;
-  const quote = useEthQuote(cfg, vault.address, validTo ? [{ to: validTo, token: token?.address as `0x${string}` | undefined }] : []);
-
-  function submit() {
-    setError(null);
-    try {
-      if (!/^0x[0-9a-fA-F]{40}$/.test(to.trim())) throw new Error("Enter a Sepolia address (0x + 40 hex characters).");
-      const units = parseUnits(amount.trim() || "0", token ? token.decimals : 18);
-      if (units <= 0n) throw new Error("Enter an amount above zero.");
-      if (!token && units > maxEth) throw new Error(`At most ${formatEth(maxEth)} ETH: one transfer's network fee stays in the vault.`);
-      const a: Asset = token ? { Erc20: token.address } : "Eth";
-      void act("Withdraw from vault", "withdraw_vault", { asset: a, amount: units.toString(), to: to.trim().toLowerCase() });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-2 border-t border-line pt-3">
-      <span className="font-semibold">Withdraw from the vault</span>
-      {w && (
-        <span className="text-sm">
-          Last withdrawal: {w.amount === "0" ? "cancelled (nonce freed)" : formatAmount(w)} to <span className="font-mono">{shortAddr(w.destination)}</span> · {w.state}
-          {w.failure ? ` (${w.failure})` : ""}
-          {w.tx_hash && (
-            <>
-              {" · "}
-              <ExtLink href={receiptUrl(w) ?? `${ETH_EXPLORER}/tx/${w.tx_hash}`}>receipt</ExtLink>
-            </>
-          )}
-        </span>
-      )}
-      {locked ? (
-        <span className="text-sm text-muted">Locked while a release is open, so heirs' amounts can't change.</span>
-      ) : pending ? (
-        <span className="text-sm text-muted">Finishing your last withdrawal first. Guardians can't propose a release until it's done.</span>
-      ) : (
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="Asset">
-            <select className={`${inputClass} w-28`} value={asset} onChange={(e) => setAsset(e.target.value)}>
-              <option value="Eth">ETH</option>
-              {vault.tokens.map(({ token: t }) => (
-                <option key={t.address} value={t.address}>
-                  {t.symbol}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Amount">
-            <input className={`${inputClass} w-32`} inputMode="decimal" value={amount} placeholder={token ? "0.0" : formatEth(maxEth)} onChange={(e) => setAmount(e.target.value)} />
-          </Field>
-          <Field label="To (Sepolia address)">
-            <input className={`${inputClass} w-[22rem] max-w-full font-mono text-xs`} value={to} placeholder="0x…" onChange={(e) => setTo(e.target.value)} />
-          </Field>
-          <Button variant="outline" disabled={busy} onClick={submit}>
-            Withdraw
-          </Button>
-        </div>
-      )}
-      {!locked && !pending && vault.feePerTx != null && (
-        <span className="text-[13px] text-muted">
-          Network fee, paid from the vault: {quote ? `≈ ${formatEth(quote.total)} ETH at today's base fee` : "enter an address for an estimate"} (at most {formatEth(vault.feePerTx)} ETH).
-        </span>
-      )}
-      {error && <Notice tone="error">{error}</Notice>}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- guardian
-
-function GuardianView({ view, now, refresh }: Props) {
-  const { session } = useSession();
-  const { busy, result, run } = useAction();
-  const btc = useBtc(view.plan.owner);
-  const rules = useRules(view.plan.owner);
-  const me = session!.accountId;
-  const name = shortName(view.plan.owner);
-  const s = view.status;
-  const p = view.plan.proposal;
-  const history = useHistory(view.plan.owner, `${s}:${p?.id}`);
-  const followUp = followUpOpen(view, lastSettledAt(history));
-  const act = (label: string, method: string, args: Record<string, unknown>) =>
-    run(label, async () => {
-      const r = await session!.call(method, args, { tgas: 100 });
-      await refresh?.();
-      return r;
-    });
-
-  return (
-    <>
-      <div className="flex flex-col gap-2.5">
-        <StatusPill status={s} />
-        <h1 className="text-[clamp(36px,5vw,56px)] font-medium leading-[0.95] tracking-[-0.04em]">You guard {name}'s plan.</h1>
-        <p className="max-w-[760px] text-lg leading-relaxed">{describePlan(view.plan.policy, name)}</p>
-      </div>
-      <Result result={result} />
-      <CanAct actions={actionsFor(view, "guardian", me, followUp)} />
-
-      {s === "Active" && (
-        <Card className="flex flex-col gap-2">
-          <Bracket>Nothing to do</Bracket>
-          <p>
-            {name} is checking in. If they stop, you'll be able to propose a release {relative(view.overdue_at_ms, now)}.
-          </p>
-        </Card>
-      )}
-
-      {(s === "Overdue" || s === "Settled") && <ProposeCard view={view} act={act} busy={!!busy} followUp={followUp} />}
-
-      {p && (
-        <Card className="flex flex-col gap-4">
-          <div className="flex flex-wrap justify-between gap-2">
-            <Bracket>Proposal #{p.id}</Bracket>
-            <span className="font-mono text-xs text-muted">
-              by {shortName(p.proposer)} · {p.approvals.length} of {view.plan.policy.quorum} approvals
-            </span>
-          </div>
-          <TransferTable transfers={p.transfers} />
-          {(s === "Proposed" || s === "Waiting") && <SnapshotCheck view={view} />}
-          {s === "Proposed" && !p.approvals.includes(me) && !p.rejections.includes(me) && (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="mint" disabled={!!busy} onClick={() => act("Approve", "approve_release", { owner: view.plan.owner, proposal_id: p.id })}>
-                Approve this exact proposal
-              </Button>
-              <Button variant="outline" disabled={!!busy} onClick={() => act("Reject", "reject_release", { owner: view.plan.owner, proposal_id: p.id })}>
-                Reject
-              </Button>
-            </div>
-          )}
-          {s === "Waiting" && p.waiting_ends_at_ms && (
-            <Notice>
-              Approved. {name} can cancel until {when(p.waiting_ends_at_ms)} ({relative(p.waiting_ends_at_ms, now)}). Then the heirs can receive.
-            </Notice>
-          )}
-        </Card>
-      )}
-      <BtcRebase view={view} btc={btc} />
-      <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
-      <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} />
-      <HistoryCard view={view} history={history} />
-      <GuardianList view={view} />
-    </>
-  );
-}
-
-// -------------------------------------------------------------------- heir
-// Paper theme, plain words; hashes only under "Technical details".
-
-function HeirView({ view, now, refresh }: Props) {
-  const { session } = useSession();
-  const { busy, result, run } = useAction();
-  const rules = useRules(view.plan.owner);
-  const me = session!.accountId;
-  const first = shortName(me);
-  const owner = shortName(view.plan.owner);
-  const s = view.status;
-  const p = view.plan.proposal;
-  const heir = view.plan.policy.heirs.find((h) => h.account_id === me);
-  const mine = p?.transfers.map((t, index) => ({ t, index })).filter(({ t }) => t.heir === me) ?? [];
-  const started = mine.some(({ t }) => t.state !== "Pending");
-  const cfg = useConfig();
-  const heirVault = useVault(view.plan.owner);
-  const evmTxs = mine
-    .filter(({ t }) => t.state === "Pending" && (t.asset === "Eth" || (typeof t.asset === "object" && "Erc20" in t.asset)))
-    .map(({ t }) => ({ to: t.destination as `0x${string}`, token: typeof t.asset === "object" && "Erc20" in t.asset ? (t.asset.Erc20 as `0x${string}`) : undefined }));
-  const btcPending = mine.filter(({ t }) => t.state === "Pending" && t.asset === "Btc").length;
-  const ethFees = useEthQuote(cfg, heirVault?.address ?? null, evmTxs);
-  const btcFees = useBtcQuote(cfg, btcPending, btcPending ? 1 : 0);
-  const ready = p?.waiting_ends_at_ms;
-  const history = useHistory(view.plan.owner, `${s}:${p?.id}`);
-  const followUp = followUpOpen(view, lastSettledAt(history));
-  const act = (label: string, method: string, args: Record<string, unknown>) =>
-    run(label, async () => {
-      const r = await session!.call(method, args, { tgas: 100 });
-      await refresh?.();
-      return r;
-    });
-
-  const claim = () =>
-    run(
-      "Receive",
-      async () => {
-        const r = await session!.call("claim", { owner: view.plan.owner }, { tgas: 300 });
-        await refresh?.();
-        return r;
-      },
-      "On its way. This page updates as each transfer lands.",
-    );
-  const retry = (index: number) =>
-    run("Retry", async () => {
-      const r = await session!.call("retry_transfer", { owner: view.plan.owner, index }, { tgas: 300 });
-      await refresh?.();
-      return r;
-    });
-
-  let title = `Nothing for you to do yet, ${first}.`;
-  let body = `${owner} has set something aside for you. If ${owner} stops checking in, their guardians can start a release and we'll walk you through receiving it.`;
-  if (s === "Proposed") body = `${owner}'s guardians have proposed a release. Nothing moves until enough of them approve and a waiting period passes.`;
-  if (s === "Waiting" && ready) body = `In about ${relative(ready, now).replace("in ", "")} you'll be able to receive what ${owner} set aside for you. If ${owner} turns out to be reachable, they can stop this until then. That's by design.`;
-  if (s === "Eligible" || (s === "Executing" && !started)) {
-    title = `It's ready for you, ${first}.`;
-    body = `You can now receive what ${owner} set aside for you. It goes straight to the addresses ${owner} chose; network fees are already covered.`;
-  }
-  if (s === "Executing" && started) {
-    title = "On its way.";
-    body = "Each part arrives separately. You can close this page; nothing is lost if you do.";
-  }
-  if (s === "Settled") {
-    title = "Done.";
-    body = `Everything ${owner} set aside for you has arrived. Your receipts are below.`;
-  }
-  if (followUp && s === "Overdue") {
-    title = "Done.";
-    body = `${owner}'s release to you has completed. If anything was left in the plan, you can start a follow-up round below; guardians approve it. Your receipts are under Past releases.`;
-  }
-
-  return (
-    <>
-      <StatusPill status={s} plain />
-      <h1 className="text-[44px] font-medium leading-[0.95] tracking-[-0.04em]">{title}</h1>
-      <p className="text-lg leading-relaxed">{body}</p>
-      <Result result={result} />
-
-      <section className="flex flex-col gap-2 rounded-card border border-line bg-card p-5">
-        <span className="text-sm text-muted">Set aside for you</span>
-        <span className="text-[32px] font-medium leading-none tracking-[-0.03em]">{heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share of ${owner}'s plan passed to you` : "—"}</span>
-        <span className="text-base leading-normal">
-          {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" and ") : "Amounts are fixed when a release is proposed."}
-          {heir?.eth_destination && <> · Ethereum wallet ending in <strong>{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
-          {heir?.near_destination && <> · NEAR account <strong>{heir.near_destination.split(".")[0]}</strong></>}
-        </span>
-      </section>
-
-      {s === "Waiting" && ready && (
-        <div className="flex items-center justify-between rounded-tile bg-gradient-to-b from-[#A9CCFF] to-[#6E9BFF] px-5 py-4 text-[#0A0A0A]">
-          <span className="font-semibold">Ready from</span>
-          <span className="text-2xl font-medium">{new Date(ready).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-        </div>
-      )}
-
-      {(s === "Eligible" || s === "Executing") && mine.some(({ t }) => t.state === "Pending") && (
-        <Button variant="mint" className="min-h-14 w-full text-lg" disabled={!!busy} onClick={claim}>
-          {busy ? "Starting…" : "Receive my share"}
-        </Button>
-      )}
-      {(s === "Eligible" || s === "Executing") && (ethFees || btcFees) && mine.some(({ t }) => t.state === "Pending") && (
-        <p className="text-sm text-muted">
-          Network fees, paid from the plan&apos;s reserve and not from your share:{" "}
-          {[ethFees && `≈ ${formatEth(ethFees.total)} ETH`, btcFees && `≈ ${formatBtc(btcFees.likely)} BTC`].filter(Boolean).join(" and ")}.
-        </p>
-      )}
-
-      {started && (
-        <section className="flex flex-col gap-3" aria-label="Your transfers">
-          {mine.map(({ t, index }) => {
-            const url = receiptUrl(t);
-            return (
-              <div key={index} className="flex flex-col gap-2 rounded-card border border-line bg-card p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xl font-medium">{formatAmount(t)}</span>
-                  <TransferPill state={t.state} plain />
-                </div>
-                {t.state === "Failed" && (
-                  <>
-                    <p className="text-sm">{failureText(t)}</p>
-                    {!["GasLimitTooLow", "Reverted"].includes(t.failure ?? "") && (
-                      <Button variant="outline" disabled={!!busy} onClick={() => retry(index)}>
-                        Try again
-                      </Button>
-                    )}
-                  </>
-                )}
-                {url && (
-                  <ExtLink href={url} className="text-sm font-semibold">
-                    View receipt
-                  </ExtLink>
-                )}
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
-      <HistoryCard view={view} history={history} />
-
-      <RulesCard
-        view={view}
-        now={now}
-        rules={rules.rules}
-        editable={false}
-        act={(l, _m, a) =>
-          run(l, async () => {
-            const r = await session!.call("reassign_unclaimed", a, { tgas: 50 });
-            await refresh?.();
-            return r;
-          })
-        }
-        busy={!!busy}
-        signedIn
-      />
-      <OptionsCard view={view} now={now} me={me} editable={false} act={() => undefined} busy={!!busy} />
-      <details className="rounded-card border border-line p-4">
-        <summary className="min-h-11 cursor-pointer content-center font-semibold">Technical details</summary>
-        <div className="flex flex-col gap-1 pt-2">
-          <Row k="Plan" v={view.plan.owner} mono />
-          <Row k="Contract" v={CONTRACT_ID} mono />
-          {mine.map(({ t, index }) => (
-            <Row key={index} k={`${assetLabel(t.asset)} transfer #${index}`} v={`${t.destination}${t.tx_hash ? ` · ${t.tx_hash}` : ""}${t.eth_tx ? ` · nonce ${t.eth_tx.nonce}` : ""}`} mono />
-          ))}
-        </div>
-      </details>
-      <Link href="/#features" className="flex min-h-12 items-center justify-center rounded-tile bg-subtle font-medium">
-        What happens next?
-      </Link>
-    </>
-  );
-}
-
-// ------------------------------------------------------------------ public
-
-function PublicView({ view, now, refresh }: Props) {
-  const { session } = useSession();
-  const { busy, result, run } = useAction();
-  const rules = useRules(view.plan.owner);
-  const vault = useVault(view.plan.owner);
-  const p = view.plan.policy;
-  const prop = view.plan.proposal;
-  const history = useHistory(view.plan.owner, `${view.status}:${prop?.id}`);
-  return (
-    <>
-      <div className="flex flex-col gap-2.5">
-        <StatusPill status={view.status} />
-        <h1 className="text-[clamp(36px,5vw,56px)] font-medium leading-[0.95] tracking-[-0.04em]">Plan inspector</h1>
-        <span className="break-all font-mono text-sm text-muted">{view.plan.owner}</span>
-      </div>
-      <CanAct actions={actionsFor(view, "public")} />
-      <Card className="flex flex-col gap-3">
-        <Bracket>In plain words</Bracket>
-        <p className="text-xl leading-snug tracking-[-0.01em]">{describePlan(p, shortName(view.plan.owner))}</p>
-        <Lifecycle status={view.status} />
+      <Card className="flex flex-col gap-4">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-9 w-3/4" />
+        <Skeleton className="h-4 w-full max-w-[520px]" />
+        <Skeleton className="h-12 w-48 rounded-tile" />
       </Card>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card className="flex flex-col">
-          <Bracket>Rules as stored on-chain</Bracket>
-          <div className="mt-3">
-            <Row k="Check-in interval" v={duration(p.check_in_interval_ms)} />
-            <Row k="Grace period" v={duration(p.grace_ms)} />
-            <Row k="Waiting period" v={duration(p.waiting_period_ms)} />
-            <Row k="Quorum" v={`${p.quorum} of ${p.guardians.length} guardians`} />
-            <Row k="Last check-in" v={`${when(view.plan.last_check_in_ms)} (${relative(view.plan.last_check_in_ms, now)})`} />
-            <Row k="Unreachable from" v={`${when(view.overdue_at_ms)} (${relative(view.overdue_at_ms, now)})`} />
-            <Row k="Plan version" v={view.plan.version} />
-            <Row k="NEAR escrow" v={`${formatNear(view.plan.escrow)} NEAR`} />
-            <Row k="ETH vault" v={vault ? <ExtLink href={`${ETH_EXPLORER}/address/${vault.address}`}>{vault.address}</ExtLink> : "…"} mono />
-            <Row k="Vault balance" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "…"} />
-            {vault?.tokens.map(({ token, balance }) => (
-              <Row key={token.address} k={`Vault ${token.symbol}`} v={balance != null ? `${formatToken(balance, token)} ${token.symbol}` : "…"} />
-            ))}
-            <Row k="Vault next nonce" v={view.plan.eth_next_nonce} />
-            <Row k="Contract" v={<ExtLink href={`${NEAR_EXPLORER}/address/${CONTRACT_ID}`}>{CONTRACT_ID}</ExtLink>} mono />
-          </div>
-        </Card>
-        <div className="flex flex-col gap-3">
-          <HeirList view={view} />
-          <GuardianList view={view} />
-        </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <Card key={i} className="flex flex-col gap-3">
+            <Skeleton className="h-8 w-28" />
+            <Skeleton className="h-10 w-24" />
+            <Skeleton className="h-4 w-40" />
+          </Card>
+        ))}
       </div>
-      <RulesCard
-        view={view}
-        now={now}
-        rules={rules.rules}
-        editable={false}
-        act={(l, m, a) =>
-          run(l, async () => {
-            const r = await session!.call(m, a, { tgas: 50 });
-            await refresh?.();
-            return r;
-          })
-        }
-        busy={!!busy}
-        signedIn={!!session}
-      />
-      <HistoryCard view={view} history={history} />
-      <OptionsCard
-        view={view}
-        now={now}
-        me={session?.accountId ?? null}
-        editable={false}
-        act={(l, m, a) =>
-          run(l, async () => {
-            const r = await session!.call(m, a, { tgas: 50 });
-            await refresh?.();
-            return r;
-          })
-        }
-        busy={!!busy}
-      />
-      <Result result={result} />
-      {prop && (
-        <Card className="flex flex-col gap-3">
-          <div className="flex flex-wrap justify-between gap-2">
-            <Bracket>Proposal #{prop.id}</Bracket>
-            <span className="font-mono text-xs text-muted">
-              NEAR snapshot {formatNear(prop.near_snapshot)} · ETH snapshot {formatEth(prop.eth_snapshot)} · fee reserve {formatEth(prop.eth_fee_reserve)} · gas {prop.eth_gas_limit.toLocaleString()}
-            </span>
-          </div>
-          <TransferTable transfers={prop.transfers} technical />
-        </Card>
-      )}
-      <details className="rounded-card border border-line p-4">
-        <summary className="min-h-11 cursor-pointer content-center font-semibold">Raw contract view (JSON)</summary>
-        <pre className="mt-2 max-h-[480px] overflow-auto rounded-tile bg-void p-4 font-mono text-xs text-white">{JSON.stringify(view, null, 2)}</pre>
-      </details>
-      <span className="text-xs text-muted">Addresses shown in full or as {shortAddr("0x0000000000000000000000000000000000000000")} for brevity. Everything here is read directly from the chain.</span>
-    </>
+      <span className="sr-only">Loading the plan from the NEAR network…</span>
+    </div>
   );
 }
+

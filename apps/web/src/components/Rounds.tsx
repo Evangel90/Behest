@@ -2,17 +2,19 @@
 // Release rounds (contract D21): proposing a release or a follow-up round,
 // checking a proposal's reported balances against the live vaults before
 // approving, and the plan's past releases.
+import { ChevronRight, History, Scale, Vote } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getConfig, getReleaseHistory, view as viewCall } from "@/lib/contract";
-import { assetLabel, formatAmount, formatBtc, formatEth, formatNear, formatToken, shortName, vaultSplit, when, day } from "@/lib/plan";
+import { assetLabel, formatAmount, formatBtc, formatEth, formatNear, formatToken, shortName, vaultSplit, when } from "@/lib/plan";
 import type { Asset, ContractConfig, PlanView, Proposal } from "@/lib/types";
 import { useBtcQuote, useEthQuote, type EthTx } from "@/lib/fees";
 import { useVault } from "@/lib/vault";
 import { btcProposal, useBtc } from "./Bitcoin";
-import { Row, TransferTable } from "./PlanParts";
-import { Bracket, Button, Card, Chip, Notice } from "./ui";
-
-type Act = (label: string, method: string, args: Record<string, unknown>) => unknown;
+import { useConfirm } from "./feedback";
+import { Disclosure, Term } from "./interactive";
+import { ReleaseSummary, Row, TransferTable } from "./PlanParts";
+import type { Act } from "./tx";
+import { Button, Card, Chip, Notice, SectionTitle, Skeleton } from "./ui";
 
 /** Settled releases, oldest first; reloads when `key` changes. */
 export function useHistory(owner: string, key?: unknown): Proposal[] | null {
@@ -29,6 +31,7 @@ export const lastSettledAt = (h: Proposal[] | null) => (h?.length ? h[h.length -
  * vaults; the contract splits them by the plan's rules.
  */
 export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanView; act: Act; busy: boolean; followUp: boolean; asHeir?: boolean }) {
+  const confirm = useConfirm();
   const vault = useVault(view.plan.owner);
   const btc = useBtc(view.plan.owner);
   const bp = btcProposal(view, btc);
@@ -55,69 +58,85 @@ export function ProposeCard({ view, act, busy, followUp, asHeir }: { view: PlanV
   const nothing =
     !reading && BigInt(view.plan.escrow) === 0n && fts.length === 0 && (ethHeirs === 0 || ((split?.ethToSplit ?? 0n) === 0n && heldTokens.length === 0)) && btcToSplit === 0n;
   const title = followUp ? "Propose a follow-up release" : "Propose a release";
+  const blocked = reading || nothing || "error" in bp.split || (ethHeirs > 0 && !!split?.error);
+
+  const summary: [string, string][] = [
+    ["NEAR", `${formatNear(view.plan.escrow)} NEAR`],
+    ...fts.map((b): [string, string] => [assetLabel({ Nep141: b.token }), formatAmount({ asset: { Nep141: b.token }, amount: b.amount })]),
+    ...(ethHeirs > 0 && split ? [["ETH", `${formatEth(split.ethToSplit)} ETH`] as [string, string]] : []),
+    ...heldTokens.map(({ token, balance }): [string, string] => [token.symbol, `${formatToken(balance!, token)} ${token.symbol}`]),
+    ...(bp.coins.length ? [["BTC", `${formatBtc(btcToSplit)} BTC`] as [string, string]] : []),
+  ];
+
+  async function propose() {
+    const ok = await confirm({
+      title: followUp ? "Start a follow-up round?" : `Propose releasing ${name}'s plan?`,
+      body: followUp
+        ? `What's left is split by the same rules. ${asHeir ? "The guardians" : "The other guardians"} approve it, and ${name} can still cancel until the waiting period ends.`
+        : `This freezes the plan and asks the other guardians to approve. ${name} can still cancel, or check in, until the waiting period ends.`,
+      rows: summary,
+      acknowledge: followUp ? undefined : `I've tried to reach ${name} and believe they can't act right now.`,
+      confirmLabel: followUp ? "Start the round" : "Propose the release",
+    });
+    if (!ok) return;
+    await act(title, "propose_release", {
+      owner: view.plan.owner,
+      eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null,
+      erc20_balances: ethHeirs > 0 && heldTokens.length ? heldTokens.map((t) => ({ token: t.token.address, amount: t.balance!.toString() })) : null,
+      btc_utxos: bp.coins.length ? bp.coins : null,
+    }, { tgas: 100, done: followUp ? "Follow-up round proposed." : "Release proposed. The other guardians can now vote." });
+  }
+
   return (
-    <Card className="flex flex-col gap-4">
-      <Bracket>{title}</Bracket>
-      <p>
+    <Card id="propose" className="flex scroll-mt-24 flex-col gap-4">
+      <SectionTitle icon={Vote} title={title} sub={followUp ? <Term k="followUp">What's a follow-up round?</Term> : `${name} last checked in ${when(view.plan.last_check_in_ms)}`} />
+      <p className="text-[15px] leading-relaxed">
         {followUp
-          ? `A release of ${name}'s plan completed and ${name} hasn't checked in since. Anything left in the plan (later deposits, or an amount the last proposal missed) can go out in a follow-up round, split by the same rules. ${asHeir ? "The guardians approve it" : "The other guardians approve it"}, and ${name} can still cancel until the waiting period ends.`
-          : `${name} hasn't checked in since ${when(view.plan.last_check_in_ms)}. Proposing freezes the plan and asks the other guardians to approve. ${name} can still cancel until the waiting period ends.`}
+          ? `A release of ${name}'s plan completed and ${name} hasn't checked in since. Anything left in the plan (later deposits, or an amount the last proposal missed) can go out in a follow-up round, split by the same rules.`
+          : `Proposing freezes the plan and asks the other guardians to approve. ${name} can still cancel until the waiting period ends. You can't choose recipients or amounts: the plan already fixes them.`}
       </p>
-      <div className="grid gap-1">
+      <div className="rounded-row border border-line px-4 py-1">
         <Row k="NEAR to distribute" v={`${formatNear(view.plan.escrow)} NEAR`} />
         {fts.map((b) => (
           <Row key={b.token} k={`${assetLabel({ Nep141: b.token })} to distribute`} v={formatAmount({ asset: { Nep141: b.token }, amount: b.amount })} />
         ))}
         {ethHeirs > 0 && (
           <>
-            <Row k="ETH in vault" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : "reading…"} />
+            <Row k="ETH in vault" v={vault?.balance != null ? `${formatEth(vault.balance)} ETH` : <Skeleton className="h-4 w-24" />} />
             {heldTokens.map(({ token, balance }) => (
               <Row key={token.address} k={`${token.symbol} to distribute`} v={`${formatToken(balance!, token)} ${token.symbol}`} />
             ))}
-            <Row k="Network-fee reserve" v={split ? `${formatEth(split.reserve)} ETH (worst case, ${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : "…"} />
-            {ethTxs.length > 0 && (
-              <Row
-                k="Likely network fees"
-                v={ethQuote ? `≈ ${formatEth(ethQuote.total)} ETH at today's base fee; the unused reserve stays in the vault` : "estimating…"}
-              />
-            )}
-            <Row k="ETH to distribute" v={split ? `${formatEth(split.ethToSplit)} ETH` : "…"} />
-            {split?.error && <Notice tone="error">The vault doesn't hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
+            <Row
+              k={<Term k="feeReserve">Network-fee reserve</Term>}
+              v={split ? `${formatEth(split.reserve)} ETH (worst case, ${split.transfers} transfer${split.transfers === 1 ? "" : "s"})` : <Skeleton className="h-4 w-32" />}
+            />
+            {ethTxs.length > 0 && <Row k="Likely network fees" v={ethQuote ? `≈ ${formatEth(ethQuote.total)} ETH at today's base fee; the unused reserve stays in the vault` : "estimating…"} />}
+            <Row k="ETH to distribute" v={split ? <strong className="font-semibold">{formatEth(split.ethToSplit)} ETH</strong> : <Skeleton className="h-4 w-20" />} />
           </>
         )}
         {bp.heirs > 0 && btc.vault && (
           <>
-            <Row k="BTC in vault (used)" v={btc.utxos ? `${formatBtc(bp.coins.reduce((a, c) => a + BigInt(c.value), 0n))} BTC · ${bp.coins.length} coin${bp.coins.length === 1 ? "" : "s"}` : "reading…"} />
+            <Row k="BTC in vault (used)" v={btc.utxos ? `${formatBtc(bp.coins.reduce((a, c) => a + BigInt(c.value), 0n))} BTC · ${bp.coins.length} coin${bp.coins.length === 1 ? "" : "s"}` : <Skeleton className="h-4 w-28" />} />
             {bp.coins.length > 0 && (
               <>
-                <Row k="Bitcoin fee reserve" v={`${formatBtc(bp.split.reserve)} BTC (worst case, ${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
+                <Row k={<Term k="feeReserve">Bitcoin fee reserve</Term>} v={`${formatBtc(bp.split.reserve)} BTC (worst case, ${bp.heirs} payout${bp.heirs === 1 ? "" : "s"})`} />
                 {btcQuote && (
                   <Row
                     k="Likely Bitcoin fees"
                     v={`≈ ${formatBtc(btcQuote.likely)} BTC at ${btcQuote.feeRate} sat/vB${btcQuote.bumpLikely ? `; testnet4 wants about ${Math.ceil(btcQuote.networkRate!)} sat/vB now, so expect a fee bump (paid from the reserve)` : ""}`}
                   />
                 )}
-                <Row k="BTC to distribute" v={`${formatBtc(btcToSplit)} BTC`} />
+                <Row k="BTC to distribute" v={<strong className="font-semibold">{formatBtc(btcToSplit)} BTC</strong>} />
               </>
             )}
-            {"error" in bp.split && <Notice tone="error">The Bitcoin vault&apos;s coins don&apos;t cover the network fees for these payouts. Add BTC to the vault first.</Notice>}
           </>
         )}
       </div>
+      {ethHeirs > 0 && split?.error && <Notice tone="error">The vault doesn&apos;t hold enough ETH to pay the network fees for these transfers. Add ETH to the vault first.</Notice>}
+      {"error" in bp.split && <Notice tone="error">The Bitcoin vault&apos;s coins don&apos;t cover the network fees for these payouts. Add BTC to the vault first.</Notice>}
       {nothing && <Notice>Nothing is left to distribute right now.</Notice>}
-      <Button
-        className="self-start"
-        disabled={busy || reading || nothing || "error" in bp.split || (ethHeirs > 0 && !!split?.error)}
-        onClick={() =>
-          act(title, "propose_release", {
-            owner: view.plan.owner,
-            eth_balance: ethHeirs > 0 && vault?.balance ? vault.balance.toString() : null,
-            erc20_balances: ethHeirs > 0 && heldTokens.length ? heldTokens.map((t) => ({ token: t.token.address, amount: t.balance!.toString() })) : null,
-            btc_utxos: bp.coins.length ? bp.coins : null,
-          })
-        }
-      >
-        {busy ? "Proposing…" : title}
+      <Button variant="primary" size="lg" icon={Vote} className="self-stretch sm:self-start" loading={busy} disabled={blocked} onClick={propose}>
+        {reading ? "Reading the vaults…" : title}
       </Button>
     </Card>
   );
@@ -171,47 +190,46 @@ export function SnapshotCheck({ view }: { view: PlanView }) {
   const verdict = (r: CheckRow) => (r.live == null ? "reading" : r.live === r.reported ? "match" : r.live > r.reported ? "more" : "less");
   const verdicts = rows.map(verdict);
   return (
-    <section className="flex flex-col gap-3 rounded-tile border border-line p-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-semibold">Check the numbers before you vote</span>
-        <span className="text-sm text-muted">
-          The proposer reported these balances. NEAR{(view.ft_escrow ?? []).length ? " and NEAR tokens" : ""} ({formatNear(p.near_snapshot)} NEAR) the contract counts itself.
-        </span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[480px] text-left text-sm">
-          <thead>
-            <tr className="text-[13px] text-muted">
-              <th className="py-2 pr-3 font-medium">Asset</th>
-              <th className="py-2 pr-3 font-medium">Reported</th>
-              <th className="py-2 pr-3 font-medium">In the vault now</th>
-              <th className="py-2 font-medium" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t border-line align-top">
-                <td className="py-2.5 pr-3">{assetLabel(r.asset)}</td>
-                <td className="py-2.5 pr-3">{fmt(r.asset, r.reported)}</td>
-                <td className="py-2.5 pr-3">
-                  {r.live == null ? "reading…" : fmt(r.asset, r.live)}
-                  {r.note && <span className="mt-1 block text-xs text-muted">{r.note}</span>}
-                </td>
-                <td className="py-2.5 text-right">
-                  {verdicts[i] === "match" && <Chip style={{ tone: "active", shape: "circle", label: "" }}>Matches</Chip>}
-                  {verdicts[i] === "more" && <Chip style={{ tone: "overdue", shape: "square", label: "" }}>Vault holds more</Chip>}
-                  {verdicts[i] === "less" && <Chip style={{ tone: "failed", shape: "diamond", label: "" }}>Vault holds less</Chip>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <section className="flex flex-col gap-3 rounded-row border border-line p-4">
+      <SectionTitle
+        as="h3"
+        icon={Scale}
+        title="Check the numbers before you vote"
+        sub={
+          <>
+            The proposer reported these <Term k="snapshot">balances</Term>. NEAR{(view.ft_escrow ?? []).length ? " and NEAR tokens" : ""} ({formatNear(p.near_snapshot)} NEAR) the contract counts itself.
+          </>
+        }
+      />
+      <ul className="divide-y divide-line rounded-tile border border-line">
+        {rows.map((r, i) => (
+          <li key={i} className="grid grid-cols-2 gap-x-3 gap-y-1 px-4 py-3 text-sm sm:grid-cols-[80px_1fr_1fr_auto] sm:items-center">
+            <span className="font-semibold">{assetLabel(r.asset)}</span>
+            <span className="justify-self-end sm:order-last">
+              {verdicts[i] === "match" && <Chip style={{ tone: "active", shape: "circle", label: "" }}>Matches</Chip>}
+              {verdicts[i] === "more" && <Chip style={{ tone: "overdue", shape: "square", label: "" }}>Vault holds more</Chip>}
+              {verdicts[i] === "less" && <Chip style={{ tone: "failed", shape: "diamond", label: "" }}>Vault holds less</Chip>}
+              {verdicts[i] === "reading" && <Skeleton className="h-7 w-24" />}
+            </span>
+            <span className="flex flex-col">
+              <span className="text-xs text-muted">Reported</span>
+              {fmt(r.asset, r.reported)}
+            </span>
+            <span className="flex flex-col">
+              <span className="text-xs text-muted">In the vault now</span>
+              {r.live == null ? "reading…" : fmt(r.asset, r.live)}
+            </span>
+            {r.note && <span className="col-span-2 text-xs text-muted sm:col-span-4">{r.note}</span>}
+          </li>
+        ))}
+      </ul>
       {verdicts.includes("less") && (
-        <Notice tone="error">The vault holds less than reported, so some transfers would fail and the first heirs to receive could get more than their share. Reject this proposal and propose again with the live balance.</Notice>
+        <Notice tone="error" title="Reject this proposal">
+          The vault holds less than reported, so some transfers would fail and the first heirs to receive could get more than their share. Propose again with the live balance.
+        </Notice>
       )}
       {verdicts.includes("more") && !verdicts.includes("less") && (
-        <Notice>
+        <Notice tone="warn">
           The vault holds more than this proposal distributes. Approving pays out only the reported amounts; the rest stays in the vault for a follow-up round, which heirs can start too. If the difference looks deliberate, reject it. (Money that arrived after the proposal also shows up here.)
         </Notice>
       )}
@@ -219,29 +237,23 @@ export function SnapshotCheck({ view }: { view: PlanView }) {
   );
 }
 
-/** Completed releases (D21), newest first. */
-export function HistoryCard({ view, history }: { view: PlanView; history: Proposal[] | null }) {
+/** Completed releases (D21), newest first, inside a collapsible section. */
+export function HistoryCard({ view, history, defaultOpen }: { view: PlanView; history: Proposal[] | null; defaultOpen?: boolean }) {
   const past = (history ?? []).filter((h) => h.id !== view.plan.proposal?.id).reverse();
   if (!past.length) return null;
   return (
-    <Card className="flex flex-col gap-3">
-      <Bracket>Past releases</Bracket>
+    <Disclosure icon={History} title="Past releases" sub={`${past.length} completed`} defaultOpen={defaultOpen}>
       {past.map((h, i) => (
-        <details key={h.id} open={i === 0} className="group min-w-0 rounded-tile border border-line">
-          <summary className="flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-2 [&::-webkit-details-marker]:hidden">
-            <span className="flex items-center gap-2 font-semibold">
-              <span aria-hidden="true" className="text-muted transition-transform group-open:rotate-90">›</span>
-              Release #{h.id}
-            </span>
-            <span className="text-sm text-muted">
-              proposed by {shortName(h.proposer)} · {day(h.created_at_ms)} · {h.transfers.length} transfer{h.transfers.length === 1 ? "" : "s"}
-            </span>
+        <details key={h.id} open={i === 0} className="group min-w-0 rounded-row border border-line">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 py-2 [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-4 shrink-0 text-muted transition-transform duration-200 group-open:rotate-90" />
+            <ReleaseSummary id={h.id} proposer={h.proposer} at={h.created_at_ms} count={h.transfers.length} />
           </summary>
           <div className="p-2 pt-0">
             <TransferTable transfers={h.transfers} />
           </div>
         </details>
       ))}
-    </Card>
+    </Disclosure>
   );
 }

@@ -2,14 +2,16 @@
 // Release rules (contract D17): fixed amounts, remainder, alternates and the
 // fallback. Everyone sees them in plain words; the owner edits them while no
 // release is open; anyone can move a share nobody claimed in time.
+import { ArrowRight, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { parseEther, parseUnits } from "viem";
 import { getBtcDestinations, getConfig, view as viewCall } from "@/lib/contract";
 import { describeRules, formatAmount, nextHolder, parseNear, relative, shortName, tokenOf } from "@/lib/plan";
 import type { Asset, ContractConfig, PlanView, Recipient, ReleaseRules } from "@/lib/types";
-import { Bracket, Button, Card, Field, Notice, inputClass } from "./ui";
-
-type Act = (label: string, method: string, args: Record<string, unknown>, deposit?: bigint) => unknown;
+import { useConfirm } from "./feedback";
+import { Dialog, Disclosure, Field, Term } from "./interactive";
+import type { Act } from "./tx";
+import { Button, IconButton, Notice, Skeleton, cx, inputClass } from "./ui";
 
 /** Accounts with a Bitcoin destination in this plan (D20). */
 export function useBtcDests(owner: string) {
@@ -27,59 +29,122 @@ export function useRules(owner: string) {
 
 /** Unclaimed shares that can be moved now, with a button for each. */
 export function Reassign({ view, now, rules, act, busy, signedIn }: { view: PlanView; now: number; rules: ReleaseRules | null | undefined; act: Act; busy: boolean; signedIn: boolean }) {
+  const confirm = useConfirm();
   const transfers = view.plan.proposal?.transfers ?? [];
   const btcDests = useBtcDests(view.plan.owner);
   const moves = transfers.map((t, i) => ({ t, i, next: nextHolder(view, rules ?? null, t, btcDests) })).filter((m) => m.next);
   if (moves.length === 0) return null;
   return (
-    <div className="flex flex-col gap-2 border-t border-line pt-3">
+    <div className="flex flex-col gap-2 rounded-row border border-line p-4">
       <span className="font-semibold">Unclaimed shares</span>
-      {moves.map(({ t, i, next }) => {
-        const ready = now >= next!.from_ms;
-        return (
-          <div key={i} className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm">
-              {formatAmount(t)} for {shortName(t.heir)} → {next!.to.account_id} <span className="text-muted">({ready ? "can move now" : `from ${relative(next!.from_ms, now)}`})</span>
-            </span>
-            <Button variant="outline" disabled={busy || !ready || !signedIn} onClick={() => act(`Move ${shortName(t.heir)}'s share`, "reassign_unclaimed", { owner: view.plan.owner, index: i })}>
-              Move share
-            </Button>
-          </div>
-        );
-      })}
+      <ul className="flex flex-col divide-y divide-line">
+        {moves.map(({ t, i, next }) => {
+          const ready = now >= next!.from_ms;
+          return (
+            <li key={i} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm">
+                {formatAmount(t)} for {shortName(t.heir)}
+                <ArrowRight aria-hidden className="size-4 text-muted" />
+                <span className="font-mono text-xs">{next!.to.account_id}</span>
+                <span className="text-muted">({ready ? "can move now" : `from ${relative(next!.from_ms, now)}`})</span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || !ready || !signedIn}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: `Move ${shortName(t.heir)}'s share?`,
+                      body: `${shortName(t.heir)} didn't claim within the window the owner set, so this share now goes to ${next!.to.account_id}. This can't be undone.`,
+                      rows: [
+                        ["Amount", formatAmount(t)],
+                        ["New recipient", next!.to.account_id],
+                      ],
+                      confirmLabel: "Move share",
+                    })
+                  )
+                    await act(`Move ${shortName(t.heir)}'s share`, "reassign_unclaimed", { owner: view.plan.owner, index: i }, { tgas: 50 });
+                }}
+              >
+                Move share
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
       {!signedIn && <span className="text-xs text-muted">Anyone signed in can move a share once its claim window has passed.</span>}
     </div>
   );
 }
 
-/** Read-only summary plus, for the owner, the editor. */
-export function RulesCard({ view, now, rules, editable, act, busy, signedIn }: { view: PlanView; now: number; rules: ReleaseRules | null | undefined; editable: boolean; act: Act; busy: boolean; signedIn: boolean }) {
+/** Read-only summary plus, for the owner, the editor (in a dialog). */
+export function RulesCard({
+  view,
+  now,
+  rules,
+  editable,
+  act,
+  busy,
+  signedIn,
+  onChanged,
+  defaultOpen,
+}: {
+  view: PlanView;
+  now: number;
+  rules: ReleaseRules | null | undefined;
+  editable: boolean;
+  act: Act;
+  busy: boolean;
+  signedIn: boolean;
+  onChanged?: () => unknown;
+  defaultOpen?: boolean;
+}) {
   const [editing, setEditing] = useState(false);
   const lines = describeRules(rules ?? null);
+  const save = async (r: ReleaseRules | null) => {
+    const ok = await act(r ? "Save release rules" : "Clear release rules", "set_release_rules", { rules: r }, r ? { deposit: 10n ** 22n } : {});
+    if (ok) {
+      setEditing(false);
+      await onChanged?.();
+    }
+  };
   return (
-    <Card className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <Bracket>Release rules</Bracket>
-        {editable && !editing && (
-          <Button variant="outline" disabled={busy} onClick={() => setEditing(true)}>
-            {rules ? "Edit" : "Add rules"}
-          </Button>
-        )}
-      </div>
+    <Disclosure
+      id="rules"
+      icon={ListChecks}
+      title="Release rules"
+      sub={rules === undefined ? "Reading…" : lines.length ? `${lines.length} rule${lines.length === 1 ? "" : "s"}` : "Split by share, nothing else"}
+      defaultOpen={defaultOpen}
+      aside={editable ? <IconButton icon={Pencil} label={rules ? "Edit release rules" : "Add release rules"} disabled={busy} onClick={() => setEditing(true)} /> : undefined}
+    >
       {rules === undefined ? (
-        <span className="text-sm text-muted">Reading…</span>
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
       ) : lines.length ? (
-        <ul className="flex list-disc flex-col gap-1 pl-5">
+        <ul className="flex flex-col gap-2">
           {lines.map((l) => (
-            <li key={l}>{l}</li>
+            <li key={l} className="flex gap-2.5 text-[15px] leading-relaxed">
+              <span aria-hidden className="mt-2.5 size-1.5 shrink-0 rounded-full bg-signal" />
+              {l}
+            </li>
           ))}
         </ul>
       ) : (
-        <span className="text-sm text-muted">None. Everything is split by share, rounding leftovers stay in the plan, and unclaimed shares wait for their heir.</span>
+        <p className="text-sm leading-relaxed text-muted">None. Everything is split by share, rounding leftovers stay in the plan, and unclaimed shares wait for their heir.</p>
       )}
-      {editing && <RulesEditor view={view} initial={rules ?? null} busy={busy} onCancel={() => setEditing(false)} onSave={(r) => (setEditing(false), act(r ? "Save release rules" : "Clear release rules", "set_release_rules", { rules: r }, r ? 10n ** 22n : undefined))} />}
+      {editable && (
+        <Button variant="outline" size="sm" icon={rules ? Pencil : Plus} className="self-start" disabled={busy} onClick={() => setEditing(true)}>
+          {rules ? "Edit rules" : "Add rules"}
+        </Button>
+      )}
       <Reassign view={view} now={now} rules={rules} act={act} busy={busy} signedIn={signedIn} />
-    </Card>
+      <Dialog open={editing} onClose={() => setEditing(false)} title="Release rules" description="Optional extras on top of the share split. They can't change while a release is open." size="lg">
+        {editing && <RulesEditor view={view} initial={rules ?? null} busy={busy} onCancel={() => setEditing(false)} onSave={save} />}
+      </Dialog>
+    </Disclosure>
   );
 }
 
@@ -105,6 +170,7 @@ function unitsToText(amount: string, asset: Asset) {
 }
 
 function RulesEditor({ view, initial, busy, onCancel, onSave }: { view: PlanView; initial: ReleaseRules | null; busy: boolean; onCancel: () => void; onSave: (r: ReleaseRules | null) => void }) {
+  const confirm = useConfirm();
   const heirs = view.plan.policy.heirs;
   const btcDests = useBtcDests(view.plan.owner);
   const [config, setConfig] = useState<ContractConfig | null>(null);
@@ -160,94 +226,108 @@ function RulesEditor({ view, initial, busy, onCancel, onSave }: { view: PlanView
   }
 
   const recipientFields = (d: RecipientDraft, set: (d: RecipientDraft) => void, label: string) => (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-      <Field label={`${label}: account`}>
-        <input className={inputClass} value={d.account_id} placeholder="name.testnet" onChange={(e) => set({ ...d, account_id: e.target.value, near_destination: d.near_destination || "" })} />
+    <fieldset className="grid grid-cols-1 gap-3 rounded-row border border-line p-3 sm:grid-cols-3">
+      <legend className="px-1 text-sm font-semibold">{label}</legend>
+      <Field label="Account">{(p) => <input {...p} className={inputClass} value={d.account_id} placeholder="name.testnet" spellCheck={false} onChange={(e) => set({ ...d, account_id: e.target.value })} />}</Field>
+      <Field label="NEAR destination" optional>
+        {(p) => <input {...p} className={inputClass} value={d.near_destination} placeholder="name.testnet" spellCheck={false} onChange={(e) => set({ ...d, near_destination: e.target.value })} />}
       </Field>
-      <Field label="NEAR destination">
-        <input className={inputClass} value={d.near_destination} placeholder="optional" onChange={(e) => set({ ...d, near_destination: e.target.value })} />
+      <Field label="ETH address" optional>
+        {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} value={d.eth_destination} placeholder="0x…" spellCheck={false} onChange={(e) => set({ ...d, eth_destination: e.target.value })} />}
       </Field>
-      <Field label="ETH address">
-        <input className={`${inputClass} font-mono`} value={d.eth_destination} placeholder="optional 0x…" onChange={(e) => set({ ...d, eth_destination: e.target.value })} />
-      </Field>
-    </div>
+    </fieldset>
   );
 
   return (
-    <div className="flex flex-col gap-4 border-t border-line pt-3">
-      <div className="flex flex-col gap-2">
-        <span className="font-semibold">Fixed amounts, paid before shares</span>
+    <div className="flex flex-col gap-6">
+      <section className="flex flex-col gap-3">
+        <h3 className="font-semibold">Fixed amounts, paid before shares</h3>
+        {fixed.length === 0 && <p className="text-sm text-muted">None. Add one to give someone a set amount first.</p>}
         {fixed.map((f, i) => (
-          <div key={i} className="flex flex-wrap items-end gap-2">
+          <div key={i} className={cx("grid grid-cols-2 items-end gap-2 rounded-row border border-line p-3 sm:grid-cols-[1fr_1fr_1fr_auto]", "animate-fade-up")}>
             <Field label="Heir">
-              <select className={inputClass} value={f.heir} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, heir: e.target.value, asset: assetsFor(e.target.value)[0]?.key ?? "Near" } : x)))}>
-                {heirs.map((h) => (
-                  <option key={h.account_id} value={h.account_id}>
-                    {shortName(h.account_id)}
-                  </option>
-                ))}
-              </select>
+              {(p) => (
+                <select {...p} className={inputClass} value={f.heir} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, heir: e.target.value, asset: assetsFor(e.target.value)[0]?.key ?? "Near" } : x)))}>
+                  {heirs.map((h) => (
+                    <option key={h.account_id} value={h.account_id}>
+                      {shortName(h.account_id)}
+                    </option>
+                  ))}
+                </select>
+              )}
             </Field>
             <Field label="Asset">
-              <select className={inputClass} value={f.asset} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, asset: e.target.value } : x)))}>
-                {assetsFor(f.heir).map((a) => (
-                  <option key={a.key} value={a.key}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
+              {(p) => (
+                <select {...p} className={inputClass} value={f.asset} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, asset: e.target.value } : x)))}>
+                  {assetsFor(f.heir).map((a) => (
+                    <option key={a.key} value={a.key}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </Field>
-            <Field label="Amount">
-              <input className={`${inputClass} w-32`} inputMode="decimal" value={f.amount} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
-            </Field>
-            <Button variant="outline" onClick={() => setFixed(fixed.filter((_, j) => j !== i))}>
-              Remove
-            </Button>
+            <Field label="Amount">{(p) => <input {...p} className={inputClass} inputMode="decimal" value={f.amount} onChange={(e) => setFixed(fixed.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />}</Field>
+            <IconButton icon={Trash2} label={`Remove fixed amount ${i + 1}`} className="justify-self-end" onClick={() => setFixed(fixed.filter((_, j) => j !== i))} />
           </div>
         ))}
-        <Button variant="outline" className="self-start" onClick={() => setFixed([...fixed, { heir: heirs[0]!.account_id, asset: assetsFor(heirs[0]!.account_id)[0]?.key ?? "Near", amount: "1" }])}>
+        <Button variant="outline" size="sm" icon={Plus} className="self-start" onClick={() => setFixed([...fixed, { heir: heirs[0]!.account_id, asset: assetsFor(heirs[0]!.account_id)[0]?.key ?? "Near", amount: "1" }])}>
           Add a fixed amount
         </Button>
-      </div>
+      </section>
 
       <Field label="Rounding leftovers go to" hint="Otherwise a few units of each asset stay in the plan.">
-        <select className={inputClass} value={remainder} onChange={(e) => setRemainder(e.target.value)}>
-          <option value="">Nobody (stay in the plan)</option>
-          {heirs.map((h) => (
-            <option key={h.account_id} value={h.account_id}>
-              {shortName(h.account_id)}
-            </option>
-          ))}
-        </select>
+        {(p) => (
+          <select {...p} className={inputClass} value={remainder} onChange={(e) => setRemainder(e.target.value)}>
+            <option value="">Nobody (stay in the plan)</option>
+            {heirs.map((h) => (
+              <option key={h.account_id} value={h.account_id}>
+                {shortName(h.account_id)}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
 
-      <div className="flex flex-col gap-3">
-        <span className="font-semibold">If a heir doesn't claim</span>
-        <Field label="Claim window (days)" hint="How long each person has to claim before their share can be moved on.">
-          <input className={`${inputClass} w-32`} inputMode="decimal" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} />
+      <section className="flex flex-col gap-3">
+        <h3 className="font-semibold">If a heir doesn&apos;t claim</h3>
+        <Field label="Claim window (days)" tip="claimWindow" hint="How long each person has to claim before their share can be moved on.">
+          {(p) => <input {...p} className={`${inputClass} sm:w-40`} inputMode="decimal" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} />}
         </Field>
         {heirs.map((h) => (
           <div key={h.account_id}>{recipientFields(alts[h.account_id] ?? emptyRecipient, (d) => setAlts({ ...alts, [h.account_id]: d }), `Alternate for ${shortName(h.account_id)}`)}</div>
         ))}
         {recipientFields(fallback, setFallback, "Fallback for anything left")}
-        <span className="text-xs text-muted">Alternates and the fallback must not be you, a heir or a guardian. Each receives only on chains where they have a destination; a share they can't receive stays where it is.</span>
-      </div>
+        <span className="text-xs leading-relaxed text-muted">
+          Alternates and the fallback must not be you, a heir or a guardian. Each receives only on chains where they have a destination; a share they can&apos;t receive stays where it is.
+        </span>
+      </section>
 
       {error && <Notice tone="error">{error}</Notice>}
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={busy} onClick={save}>
+      <div className="sticky bottom-0 -mx-1 flex flex-wrap gap-2 bg-paper px-1 pt-2">
+        <Button variant="primary" loading={busy} onClick={save}>
           Save rules
         </Button>
-        {initial && (
-          <Button variant="outline" disabled={busy} onClick={() => onSave(null)}>
-            Remove all rules
-          </Button>
-        )}
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
+        {initial && (
+          <Button
+            variant="danger"
+            icon={Trash2}
+            className="sm:ml-auto"
+            disabled={busy}
+            onClick={async () => {
+              if (await confirm({ title: "Remove all release rules?", body: "Everything will be split by share only, and unclaimed shares will wait for their heir.", tone: "danger", confirmLabel: "Remove rules" })) onSave(null);
+            }}
+          >
+            Remove all
+          </Button>
+        )}
       </div>
-      <span className="text-xs text-muted">Rules can't change while a release is open. Saving attaches 0.01 NEAR for storage; what isn't used is refunded.</span>
+      <span className="text-xs text-muted">
+        Saving attaches 0.01 NEAR for storage; what isn&apos;t used is refunded. <Term k="claimWindow">About claim windows</Term>
+      </span>
     </div>
   );
 }
