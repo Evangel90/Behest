@@ -11,12 +11,14 @@ const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).jo
 // call to action, "ink" the dark default, "outline" a bordered neutral,
 // "subtle" the grey secondary, "danger" the soft red, "outline-light" for
 // dark surfaces. ("mint" is kept as an alias of primary for older call sites.)
-type Variant = "primary" | "ink" | "mint" | "outline" | "outline-light" | "subtle" | "ghost" | "danger";
+type Variant = "primary" | "ink" | "night" | "mint" | "outline" | "outline-light" | "subtle" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-primary text-white hover:bg-primary-hover active:bg-primary-hover",
   mint: "bg-primary text-white hover:bg-primary-hover active:bg-primary-hover",
   ink: "bg-ink text-ink-contrast hover:opacity-90",
+  // Always dark, for light backgrounds that don't change with the theme (the blue CTA band).
+  night: "bg-[#0A0A0A] text-white hover:bg-black",
   outline: "border border-line-strong bg-card text-ink hover:bg-subtle",
   "outline-light": "border border-white/20 text-white hover:bg-white/10",
   subtle: "bg-subtle text-ink hover:bg-line",

@@ -277,7 +277,7 @@ export default function Landing() {
           <div className="mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] sm:px-8">
             <h2 className={`${h2} text-black`}>Your plan is minutes away.</h2>
             <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, add your heirs, and you&apos;re set.</p>
-            <ButtonLink href="/setup" size="lg" iconRight={ArrowRight} className="mt-2 bg-[#171717] text-white hover:bg-black">
+            <ButtonLink href="/setup" size="lg" iconRight={ArrowRight} variant="night" className="mt-2">
               Create a plan
             </ButtonLink>
           </div>

@@ -19,6 +19,8 @@
   --primary: #2563EB;
   --frame: #262626;          /* dashboard frame, dark sections */
   --frame-text: #D4D4D4;
+  --void: #171717;           /* always-dark panels (check-in pulse) */
+  --panel: #1F1F1F;
   --error: #9F1239;
   --error-bg: #FFE4E6;
   --ok: #00573A;
@@ -46,30 +48,117 @@
 }
 
 :root[data-theme="dark"] {
-  --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
-  --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
-  --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #7EE2B8; --ok-bg: #11291F;
-  --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
-  --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
-  --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
-  --s-failed-bg: #4C0519; --s-failed-fg: #FECDD3; --s-partial-bg: #3B0764; --s-partial-fg: #E9D5FF;
-  --s-extended-bg: #2E1065; --s-extended-fg: #DDD6FE;
-    --warn-bg: #422006; --warn-fg: #FDE68A; --float-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08); --scrim: rgba(0, 0, 0, 0.65);
-    --toast-bg: #FAFAFA; --toast-fg: #0A0A0A; --toast-sub: #E5E5E5;
+  --paper: #0F0F10;
+  --card: #171718;
+  --subtle: #1F1F21;
+  --ink: #F4F4F5;
+  --ink-contrast: #0A0A0A;
+  --muted: #A1A1A6;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --signal: #4F83FF;
+  --signal-text: #A9C4FF;
+  --primary: #2F6BFF;
+  --primary-hover: #4F83FF;
+  --frame: #09090A;
+  --frame-text: #D4D4D8;
+  --void: #1B1B1E;
+  --panel: #202024;
+  --error: #FDA4AF;
+  --error-bg: rgba(244, 63, 94, 0.14);
+  --ok: #6EE7B7;
+  --ok-bg: rgba(16, 185, 129, 0.14);
+  --s-active-bg: rgba(16, 185, 129, 0.15);
+  --s-active-fg: #6EE7B7;
+  --s-overdue-bg: rgba(245, 158, 11, 0.15);
+  --s-overdue-fg: #FCD34D;
+  --s-proposed-bg: rgba(249, 115, 22, 0.15);
+  --s-proposed-fg: #FDBA74;
+  --s-approved-bg: rgba(59, 130, 246, 0.16);
+  --s-approved-fg: #93C5FD;
+  --s-waiting-bg: rgba(99, 102, 241, 0.17);
+  --s-waiting-fg: #C7D2FE;
+  --s-eligible-bg: rgba(234, 179, 8, 0.15);
+  --s-eligible-fg: #FDE68A;
+  --s-signing-bg: rgba(217, 70, 239, 0.15);
+  --s-signing-fg: #F0ABFC;
+  --s-broadcast-bg: rgba(6, 182, 212, 0.15);
+  --s-broadcast-fg: #67E8F9;
+  --s-cancelled-bg: rgba(255, 255, 255, 0.07);
+  --s-cancelled-fg: #D4D4D8;
+  --s-failed-bg: rgba(244, 63, 94, 0.15);
+  --s-failed-fg: #FDA4AF;
+  --s-partial-bg: rgba(168, 85, 247, 0.16);
+  --s-partial-fg: #D8B4FE;
+  --s-extended-bg: rgba(139, 92, 246, 0.16);
+  --s-extended-fg: #C4B5FD;
+  --warn-bg: rgba(245, 158, 11, 0.14);
+  --warn-fg: #FCD34D;
+  --float-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --scrim: rgba(0, 0, 0, 0.7);
+  --toast-bg: #26262A;
+  --toast-fg: #F4F4F5;
+  --toast-sub: #3A3A40;
   color-scheme: dark;
 }
+/* Same palette when the theme follows the system. Keep the two blocks identical. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #262626; --card: #1F1F1F; --subtle: #171717; --ink: #FAFAFA; --ink-contrast: #0A0A0A; --muted: #A1A1A1;
-    --line: rgba(255, 255, 255, 0.11); --line-soft: rgba(255, 255, 255, 0.06); --line-strong: #525252; --hairline: rgba(255, 255, 255, 0.11);
-    --signal-text: #A9C4FF; --frame: #171717; --error: #FECDD3; --error-bg: #4C0519; --ok: #7EE2B8; --ok-bg: #11291F;
-    --s-active-bg: #053B2A; --s-active-fg: #70FFCD; --s-overdue-bg: #422006; --s-overdue-fg: #FDE68A; --s-proposed-bg: #431407; --s-proposed-fg: #FDBA74;
-    --s-approved-bg: #172554; --s-approved-fg: #BFDBFE; --s-waiting-bg: #1E1B4B; --s-waiting-fg: #C7D2FE; --s-eligible-bg: #422006; --s-eligible-fg: #FEF08A;
-    --s-signing-bg: #4A044E; --s-signing-fg: #F5D0FE; --s-broadcast-bg: #083344; --s-broadcast-fg: #A5F3FC; --s-cancelled-bg: #262626; --s-cancelled-fg: #D4D4D4;
-    --s-failed-bg: #4C0519; --s-failed-fg: #FECDD3; --s-partial-bg: #3B0764; --s-partial-fg: #E9D5FF;
-    --s-extended-bg: #2E1065; --s-extended-fg: #DDD6FE;
-    --warn-bg: #422006; --warn-fg: #FDE68A; --float-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08); --scrim: rgba(0, 0, 0, 0.65);
-    --toast-bg: #FAFAFA; --toast-fg: #0A0A0A; --toast-sub: #E5E5E5;
+    --paper: #0F0F10;
+    --card: #171718;
+    --subtle: #1F1F21;
+    --ink: #F4F4F5;
+    --ink-contrast: #0A0A0A;
+    --muted: #A1A1A6;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-soft: rgba(255, 255, 255, 0.05);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --hairline: rgba(255, 255, 255, 0.08);
+    --signal: #4F83FF;
+    --signal-text: #A9C4FF;
+    --primary: #2F6BFF;
+    --primary-hover: #4F83FF;
+    --frame: #09090A;
+    --frame-text: #D4D4D8;
+    --void: #1B1B1E;
+    --panel: #202024;
+    --error: #FDA4AF;
+    --error-bg: rgba(244, 63, 94, 0.14);
+    --ok: #6EE7B7;
+    --ok-bg: rgba(16, 185, 129, 0.14);
+    --s-active-bg: rgba(16, 185, 129, 0.15);
+    --s-active-fg: #6EE7B7;
+    --s-overdue-bg: rgba(245, 158, 11, 0.15);
+    --s-overdue-fg: #FCD34D;
+    --s-proposed-bg: rgba(249, 115, 22, 0.15);
+    --s-proposed-fg: #FDBA74;
+    --s-approved-bg: rgba(59, 130, 246, 0.16);
+    --s-approved-fg: #93C5FD;
+    --s-waiting-bg: rgba(99, 102, 241, 0.17);
+    --s-waiting-fg: #C7D2FE;
+    --s-eligible-bg: rgba(234, 179, 8, 0.15);
+    --s-eligible-fg: #FDE68A;
+    --s-signing-bg: rgba(217, 70, 239, 0.15);
+    --s-signing-fg: #F0ABFC;
+    --s-broadcast-bg: rgba(6, 182, 212, 0.15);
+    --s-broadcast-fg: #67E8F9;
+    --s-cancelled-bg: rgba(255, 255, 255, 0.07);
+    --s-cancelled-fg: #D4D4D8;
+    --s-failed-bg: rgba(244, 63, 94, 0.15);
+    --s-failed-fg: #FDA4AF;
+    --s-partial-bg: rgba(168, 85, 247, 0.16);
+    --s-partial-fg: #D8B4FE;
+    --s-extended-bg: rgba(139, 92, 246, 0.16);
+    --s-extended-fg: #C4B5FD;
+    --warn-bg: rgba(245, 158, 11, 0.14);
+    --warn-fg: #FCD34D;
+    --float-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --scrim: rgba(0, 0, 0, 0.7);
+    --toast-bg: #26262A;
+    --toast-fg: #F4F4F5;
+    --toast-sub: #3A3A40;
     color-scheme: dark;
   }
 }
@@ -95,8 +184,8 @@
   --color-ok: var(--ok);
   --color-ok-bg: var(--ok-bg);
   /* fixed dark surfaces (pulse card, dark sections) */
-  --color-void: #171717;
-  --color-panel: #1F1F1F;
+  --color-void: var(--void);
+  --color-panel: var(--panel);
   --color-muted-dark: #A1A1A1;
   --color-line-dark: rgba(255, 255, 255, 0.11);
 
@@ -172,6 +261,10 @@ html { background: var(--paper); color: var(--ink); overscroll-behavior: none; }
 html:has([data-app-shell]) { background: var(--frame); }
 /* In dark mode the panel and frame are close greys: a hairline keeps the panel distinct. */
 .dark-panel { box-shadow: inset 0 0 0 1px var(--hairline); }
+:root[data-theme="dark"] .dark-panel { background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60%); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dark-panel { background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60%); }
+}
 body { min-width: 0; overflow-x: clip; }
 body { font-family: var(--font-sans); font-weight: 500; -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 4px; }

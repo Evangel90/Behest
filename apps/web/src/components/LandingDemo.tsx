@@ -76,39 +76,39 @@ export function LandingDemo() {
           ))}
         </div>
       </div>
-      <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${tab}`} className="m-2 min-h-[520px] overflow-hidden rounded-tile bg-[#FEFEFE] p-5 text-[#171717] sm:p-8 md:ml-0">
+      <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${tab}`} className="m-2 min-h-[520px] overflow-hidden rounded-tile bg-card p-5 text-ink sm:p-8 md:ml-0">
         <Swap id={tab} className="mx-auto flex max-w-[704px] flex-col gap-8">
           {tab === "plan" && (
             <>
               <header className="flex flex-wrap items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <span className="text-base text-[#737373]">Example plan · testnet</span>
+                  <span className="text-base text-muted">Example plan · testnet</span>
                   <span className="text-[40px] leading-none tracking-[-0.03em]">3 chains, 2 heirs</span>
                 </div>
                 <button
                   onClick={() => setCheckedIn((c) => !c)}
                   aria-pressed={checkedIn}
-                  className={cx("inline-flex h-11 items-center gap-2 rounded-[12px] px-4 text-sm font-semibold transition-colors active:scale-[0.97]", checkedIn ? "bg-[rgba(47,107,255,.14)] text-[#1D3FB8]" : "bg-[#171717] text-white hover:bg-black")}
+                  className={cx("inline-flex h-11 items-center gap-2 rounded-[12px] px-4 text-sm font-semibold transition-colors active:scale-[0.97]", checkedIn ? "bg-[rgba(47,107,255,.14)] text-signal-text" : "bg-ink text-ink-contrast hover:bg-black")}
                 >
                   {checkedIn ? <Check key="c" aria-hidden className="size-4 animate-pop" /> : <HeartPulse aria-hidden className="size-4" />}
                   {checkedIn ? "Checked in" : "Check in"}
                 </button>
               </header>
-              <div className="rounded-row border border-[#E5E5E5] bg-[#FAFAFA] px-1 pb-1">
+              <div className="rounded-row border border-line bg-subtle px-1 pb-1">
                 <div className="px-6 py-3 text-sm font-semibold">Balances</div>
-                <ul className="overflow-hidden rounded-tile border border-[#E5E5E5] bg-white">
+                <ul className="overflow-hidden rounded-tile border border-line bg-card">
                   {ASSETS.map((a, i) => (
-                    <li key={a.k} className={cx("grid items-center gap-3 px-5 py-4 sm:grid-cols-[1.4fr_1fr] sm:px-6", i > 0 && "border-t border-[#E5E5E5]")}>
+                    <li key={a.k} className={cx("grid items-center gap-3 px-5 py-4 sm:grid-cols-[1.4fr_1fr] sm:px-6", i > 0 && "border-t border-line")}>
                       <span className="flex items-center gap-3">
                         <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: a.c }}>
                           {a.k}
                         </span>
                         <span className="flex min-w-0 flex-col">
                           <span className="text-[15px]">{a.name}</span>
-                          <span className="text-sm text-[#737373]">{a.amt}</span>
+                          <span className="text-sm text-muted">{a.amt}</span>
                         </span>
                       </span>
-                      <span className="inline-flex h-6 items-center gap-1 justify-self-start rounded-tag bg-[rgba(34,197,94,.14)] pl-1.5 pr-2 text-[13px] text-[#15803D] sm:justify-self-end">
+                      <span className="inline-flex h-6 items-center gap-1 justify-self-start rounded-tag bg-ok-bg pl-1.5 pr-2 text-[13px] text-ok sm:justify-self-end">
                         <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
                         {a.tag}
                       </span>
@@ -117,19 +117,19 @@ export function LandingDemo() {
                 </ul>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="flex items-center gap-4 rounded-row border border-[#E5E5E5] p-5">
+                <div className="flex items-center gap-4 rounded-row border border-line p-5">
                   <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
                     <circle cx="28" cy="28" r="23" fill="none" stroke="#EDEDED" strokeWidth="6" />
                     <circle cx="28" cy="28" r="23" fill="none" stroke="#2F6BFF" strokeWidth="6" strokeLinecap="round" strokeDasharray={`${((C * days) / 90).toFixed(1)} ${C.toFixed(1)}`} transform="rotate(-90 28 28)" className="transition-[stroke-dasharray] duration-700 ease-ledger" />
                   </svg>
                   <div className="flex flex-col">
                     <span key={days} className="animate-fade-up text-[22px] tracking-[-0.02em]">{days} days</span>
-                    <span className="text-sm text-[#737373]">until the next check-in</span>
+                    <span className="text-sm text-muted">until the next check-in</span>
                   </div>
                 </div>
-                <div className="flex flex-col justify-center rounded-row border border-[#E5E5E5] p-5">
+                <div className="flex flex-col justify-center rounded-row border border-line p-5">
                   <span className="text-[22px] tracking-[-0.02em]">2 of 3</span>
-                  <span className="text-sm text-[#737373]">guardians to release</span>
+                  <span className="text-sm text-muted">guardians to release</span>
                 </div>
               </div>
             </>
@@ -141,46 +141,46 @@ export function LandingDemo() {
                 <span className="w-[60%] rounded-tag bg-[#2F6BFF]" />
                 <span className="w-[40%] rounded-tag bg-[#FB7A1E]" />
               </div>
-              <ul className="overflow-hidden rounded-tile border border-[#E5E5E5]">
+              <ul className="overflow-hidden rounded-tile border border-line">
                 {HEIRS.map((h, i) => (
-                  <li key={h.n} className={cx("grid items-center gap-2 px-5 py-4 sm:grid-cols-[1fr_1.3fr_auto] sm:px-6", i > 0 && "border-t border-[#E5E5E5]")}>
+                  <li key={h.n} className={cx("grid items-center gap-2 px-5 py-4 sm:grid-cols-[1fr_1.3fr_auto] sm:px-6", i > 0 && "border-t border-line")}>
                     <span className="flex items-center gap-3">
                       <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full text-sm" style={{ background: h.c }}>
                         {h.i}
                       </span>
                       {h.n}
                     </span>
-                    <span className="font-mono text-[13px] text-[#737373]">{h.d}</span>
+                    <span className="font-mono text-[13px] text-muted">{h.d}</span>
                     <span className="text-lg sm:text-right">{h.p}</span>
                   </li>
                 ))}
               </ul>
-              <span className="text-sm text-[#737373]">Destinations are fixed. Nobody else can change them.</span>
+              <span className="text-sm text-muted">Destinations are fixed. Nobody else can change them.</span>
             </>
           )}
           {tab === "guardians" && (
             <>
               <DemoHead k="Guardians" t="Any 2 of 3" />
-              <ul className="overflow-hidden rounded-tile border border-[#E5E5E5]">
+              <ul className="overflow-hidden rounded-tile border border-line">
                 {GUARDIANS.map((g, i) => (
-                  <li key={g} className={cx("flex items-center justify-between px-6 py-4", i > 0 && "border-t border-[#E5E5E5]")}>
+                  <li key={g} className={cx("flex items-center justify-between px-6 py-4", i > 0 && "border-t border-line")}>
                     <span>{g}</span>
-                    <span className="inline-flex h-6 items-center rounded-tag bg-[rgba(34,197,94,.14)] px-2 text-[13px] text-[#15803D]">Standing by</span>
+                    <span className="inline-flex h-6 items-center rounded-tag bg-ok-bg px-2 text-[13px] text-ok">Standing by</span>
                   </li>
                 ))}
               </ul>
-              <span className="text-sm text-[#737373]">They can start a release if you stop checking in. They can never redirect funds.</span>
+              <span className="text-sm text-muted">They can start a release if you stop checking in. They can never redirect funds.</span>
             </>
           )}
           {tab === "activity" && (
             <>
               <DemoHead k="Activity" t="Recent" />
-              <ul className="overflow-hidden rounded-tile border border-[#E5E5E5]">
+              <ul className="overflow-hidden rounded-tile border border-line">
                 {ACTIVITY.map(([t, d, w], i) => (
-                  <li key={t} className={cx("grid gap-1 px-6 py-4 sm:grid-cols-[1.2fr_1.2fr_auto] sm:items-center", i > 0 && "border-t border-[#E5E5E5]")}>
+                  <li key={t} className={cx("grid gap-1 px-6 py-4 sm:grid-cols-[1.2fr_1.2fr_auto] sm:items-center", i > 0 && "border-t border-line")}>
                     <span>{t}</span>
-                    <span className="text-sm text-[#737373]">{d}</span>
-                    <span className="text-sm text-[#737373] sm:text-right">{w}</span>
+                    <span className="text-sm text-muted">{d}</span>
+                    <span className="text-sm text-muted sm:text-right">{w}</span>
                   </li>
                 ))}
               </ul>
@@ -195,7 +195,7 @@ export function LandingDemo() {
 function DemoHead({ k, t }: { k: string; t: string }) {
   return (
     <header className="flex flex-col gap-1">
-      <span className="text-base text-[#737373]">{k}</span>
+      <span className="text-base text-muted">{k}</span>
       <span className="text-[40px] leading-none tracking-[-0.03em]">{t}</span>
     </header>
   );
