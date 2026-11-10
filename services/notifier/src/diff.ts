@@ -259,37 +259,63 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
     add({ key: `${o}:reminder2:${checkIn}`, kind: "reminder", to: ["owner"], subject: "Last reminder to check in", text: `Last reminder: your check-in window ends ${when(v.overdue_at_ms)}. After that your guardians are told you're unreachable.` });
   }
   if (v.status === "Overdue") {
-    add({ key: `${o}:overdue:${checkIn}`, kind: "overdue", to: ["owner", "guardians"], subject: `${who} hasn't checked in`, text: `${who} hasn't checked in and is now counted as unreachable. Guardians can propose a release; ${who} can still check in.` });
+    add({
+      key: `${o}:overdue:${checkIn}`,
+      kind: "overdue",
+      to: ["owner", "guardians"],
+      subject: `${who} hasn't checked in`,
+      text: `${who} hasn't checked in and is now counted as unreachable. Guardians can propose a release; ${who} can still check in.`,
+    });
   }
 
   // ---- the open proposal
   if (p) {
     const followUp = (cur.history ?? []).some((h) => h.id !== p.id && h.created_at_ms > checkIn);
     const proposer = p.proposer ? [p.proposer] : [];
-    add({
-      key: `${o}:proposed:${p.id}`,
-      kind: "proposed",
-      // a follow-up round can be started by an heir, and concerns all of them
-      to: followUp ? ["owner", "guardians", "heirs"] : ["owner", "guardians"],
-      except: proposer,
-      proposalId: p.id,
-      subject: followUp ? `Follow-up release proposed for ${who}'s plan` : `Release proposed for ${who}'s plan`,
-      text: followUp
-        ? `${p.proposer ? name(p.proposer) : "Someone"} proposed a follow-up release (#${p.id}) of what is still in ${who}'s plan. ${v.plan.policy.quorum} guardian approvals are needed. ${who} can cancel.`
-        : `A release of ${who}'s plan was proposed (#${p.id})${p.proposer ? ` by ${name(p.proposer)}` : ""}. ${v.plan.policy.quorum} guardian approvals are needed. ${who} can cancel.`,
-    });
+    // Each notice is sent only while it is still true: a plan first seen after
+    // approval gets the approval, not a stale "proposed" (or a "can cancel until"
+    // that already passed).
+    const waitingNow = v.status === "Waiting";
     if (!p.waiting_ends_at_ms) {
+      add({
+        key: `${o}:proposed:${p.id}`,
+        kind: "proposed",
+        // a follow-up round can be started by an heir, and concerns all of them
+        to: followUp ? ["owner", "guardians", "heirs"] : ["owner", "guardians"],
+        except: proposer,
+        proposalId: p.id,
+        subject: followUp ? `Follow-up release proposed for ${who}'s plan` : `Release proposed for ${who}'s plan`,
+        text: followUp
+          ? `${p.proposer ? name(p.proposer) : "Someone"} proposed a follow-up release (#${p.id}) of what is still in ${who}'s plan. ${v.plan.policy.quorum} guardian approvals are needed. ${who} can cancel.`
+          : `A release of ${who}'s plan was proposed (#${p.id})${p.proposer ? ` by ${name(p.proposer)}` : ""}. ${v.plan.policy.quorum} guardian approvals are needed. ${who} can cancel.`,
+      });
       // votes before the quorum; the vote that reaches it is the approval notice
       const n = p.approvals.length;
       for (const g of p.approvals) {
         if (g === p.proposer) continue;
-        add({ key: `${o}:vote:${p.id}:${g}`, kind: "vote", to: ["owner", "guardians"], except: [g], proposalId: p.id, subject: `${name(g)} approved release #${p.id}`, text: `${name(g)} approved release #${p.id} of ${who}'s plan (${n} of ${v.plan.policy.quorum} approvals so far).` });
+        add({
+          key: `${o}:vote:${p.id}:${g}`,
+          kind: "vote",
+          to: ["owner", "guardians"],
+          except: [g],
+          proposalId: p.id,
+          subject: `${name(g)} approved release #${p.id}`,
+          text: `${name(g)} approved release #${p.id} of ${who}'s plan (${n} of ${v.plan.policy.quorum} approvals so far).`,
+        });
       }
       for (const g of p.rejections ?? []) {
-        add({ key: `${o}:vote:${p.id}:${g}`, kind: "vote", to: ["owner", "guardians"], except: [g], proposalId: p.id, subject: `${name(g)} rejected release #${p.id}`, text: `${name(g)} rejected release #${p.id} of ${who}'s plan. It closes if too few guardians are left to approve it.` });
+        add({
+          key: `${o}:vote:${p.id}:${g}`,
+          kind: "vote",
+          to: ["owner", "guardians"],
+          except: [g],
+          proposalId: p.id,
+          subject: `${name(g)} rejected release #${p.id}`,
+          text: `${name(g)} rejected release #${p.id} of ${who}'s plan. It closes if too few guardians are left to approve it.`,
+        });
       }
     }
-    if (p.waiting_ends_at_ms) {
+    if (p.waiting_ends_at_ms && waitingNow) {
       add({
         key: `${o}:approved:${p.id}`,
         kind: "approved",
@@ -301,7 +327,7 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
     }
     // Delay signers (D18).
     const ext = cur.extension && cur.extension.proposal_id === p.id ? cur.extension : null;
-    if (ext?.pending && p.waiting_ends_at_ms) {
+    if (ext?.pending && p.waiting_ends_at_ms && waitingNow) {
       const by = ext.pending.votes[0];
       const reason = ext.pending.reason ? ` Reason given: "${ext.pending.reason}".` : "";
       const q = cur.options?.delay_quorum;
@@ -317,7 +343,7 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
     }
     const before = prev?.view.plan.proposal;
     const grew = !!p.waiting_ends_at_ms && before?.id === p.id && !!before.waiting_ends_at_ms && p.waiting_ends_at_ms > before.waiting_ends_at_ms;
-    if (p.waiting_ends_at_ms && (grew || (ext?.count ?? 0) > 0)) {
+    if (p.waiting_ends_at_ms && waitingNow && (grew || (ext?.count ?? 0) > 0)) {
       add({
         key: `${o}:extended:${p.id}:${p.waiting_ends_at_ms}`,
         kind: "extended",
@@ -327,7 +353,7 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
         text: `Delay signers extended the waiting period of release #${p.id}. ${who} can now cancel until ${when(p.waiting_ends_at_ms)}; heirs can receive after that.`,
       });
     }
-    if (v.status === "Eligible" || v.status === "Executing" || v.status === "Settled") {
+    if (v.status === "Eligible" || v.status === "Executing") {
       const mode = cur.options?.mode ?? "Claim";
       const how =
         mode === "Automatic"
@@ -344,18 +370,42 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
       const links = link ? [link] : [];
       const base = { proposalId: p.id, transferIndex: i, asset, amount, txHash: t.tx_hash ?? undefined, links };
       if (t.state === "Confirmed") {
-        add({ ...base, key: `${o}:confirmed:${p.id}:${i}`, kind: "transfer_confirmed", to: [], accounts: [t.heir], subject: `${amount} ${asset} from ${who}'s plan arrived`, text: `${amount} ${asset} from ${who}'s plan arrived${t.destination ? ` at ${t.destination}` : ""}.` });
+        add({
+          ...base,
+          key: `${o}:confirmed:${p.id}:${i}`,
+          kind: "transfer_confirmed",
+          to: [],
+          accounts: [t.heir],
+          subject: `${amount} ${asset} from ${who}'s plan arrived`,
+          text: `${amount} ${asset} from ${who}'s plan arrived${t.destination ? ` at ${t.destination}` : ""}.`,
+        });
       }
       if (t.state === "Failed" && t.failure && !SILENT_FAILURES.has(t.failure)) {
         // automatic retries are told once per reason, anything else once per attempt
         const key = AUTO_RETRY.has(t.failure) ? `${o}:failed:${p.id}:${i}:${t.failure}` : `${o}:failed:${p.id}:${i}:${t.attempts}:${t.failure}`;
         const what = FAILURE_TEXT[t.failure] ?? `didn't go through (${t.failure}). A guardian can retry it from Behest`;
-        add({ ...base, key, kind: "transfer_failed", to: ["guardians"], accounts: [t.heir], subject: `A transfer from ${who}'s plan needs attention`, text: `${name(t.heir)}'s ${amount} ${asset} transfer from ${who}'s plan ${what}. The funds are safe in the vault.` });
+        add({
+          ...base,
+          key,
+          kind: "transfer_failed",
+          to: ["guardians"],
+          accounts: [t.heir],
+          subject: `A transfer from ${who}'s plan needs attention`,
+          text: `${name(t.heir)}'s ${amount} ${asset} transfer from ${who}'s plan ${what}. The funds are safe in the vault.`,
+        });
       }
       // D22: a proven revert was re-issued under a new nonce.
       const was = before?.id === p.id ? before.transfers[i] : undefined;
       if (was && was.state === "Failed" && was.failure === "Reverted" && t.state !== "Failed" && (t.eth_tx?.nonce ?? -1) !== (was.eth_tx?.nonce ?? -1)) {
-        add({ ...base, key: `${o}:reissued:${p.id}:${i}:${t.eth_tx?.nonce ?? t.attempts}`, kind: "transfer_reissued", to: ["guardians"], accounts: [t.heir], subject: `A transfer from ${who}'s plan was re-sent`, text: `${name(t.heir)}'s ${amount} ${asset} transfer from ${who}'s plan reverted on Sepolia. The revert was proven on-chain, so it is being sent again as a new transaction. It can only pay once.` });
+        add({
+          ...base,
+          key: `${o}:reissued:${p.id}:${i}:${t.eth_tx?.nonce ?? t.attempts}`,
+          kind: "transfer_reissued",
+          to: ["guardians"],
+          accounts: [t.heir],
+          subject: `A transfer from ${who}'s plan was re-sent`,
+          text: `${name(t.heir)}'s ${amount} ${asset} transfer from ${who}'s plan reverted on Sepolia. The revert was proven on-chain, so it is being sent again as a new transaction. It can only pay once.`,
+        });
       }
       // D17: an unclaimed share moved to the heir's alternate or the plan's fallback.
       if (was && was.heir !== t.heir) {
@@ -371,7 +421,14 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
       }
     });
     if (v.status === "Settled") {
-      add({ key: `${o}:settled:${p.id}`, kind: "settled", to: ["owner", "guardians", "heirs"], proposalId: p.id, subject: `Release #${p.id} of ${who}'s plan is complete`, text: `Every transfer of release #${p.id} of ${who}'s plan has arrived. Receipts are in Behest.` });
+      add({
+        key: `${o}:settled:${p.id}`,
+        kind: "settled",
+        to: ["owner", "guardians", "heirs"],
+        proposalId: p.id,
+        subject: `Release #${p.id} of ${who}'s plan is complete`,
+        text: `Every transfer of release #${p.id} of ${who}'s plan has arrived. Receipts are in Behest.`,
+      });
     }
   }
 
@@ -380,7 +437,14 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
   if (prev && prevP && (!p || p.id !== prevP.id) && cur.history) {
     const approved = !!prevP.waiting_ends_at_ms;
     if (cur.history.some((h) => h.id === prevP.id)) {
-      add({ key: `${o}:settled:${prevP.id}`, kind: "settled", to: ["owner", "guardians", "heirs"], proposalId: prevP.id, subject: `Release #${prevP.id} of ${who}'s plan is complete`, text: `Every transfer of release #${prevP.id} of ${who}'s plan has arrived. Receipts are in Behest.` });
+      add({
+        key: `${o}:settled:${prevP.id}`,
+        kind: "settled",
+        to: ["owner", "guardians", "heirs"],
+        proposalId: prevP.id,
+        subject: `Release #${prevP.id} of ${who}'s plan is complete`,
+        text: `Every transfer of release #${prevP.id} of ${who}'s plan has arrived. Receipts are in Behest.`,
+      });
     } else if (v.plan.last_check_in_ms > prev.view.plan.last_check_in_ms || approved) {
       // cancel_release and check_in both record a check-in; rejection can't happen after approval
       add({
@@ -406,7 +470,11 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
   }
 
   // ---- the owner's own vault withdrawal (D7, D20)
-  const w = cur.withdrawal;
+  // Only a change since the last look is news (an old withdrawal on first sight isn't).
+  const pw = prev?.withdrawal;
+  const cw = cur.withdrawal;
+  const changed = prev && pw !== undefined && cw && (!pw || pw.state !== cw.state || pw.tx_hash !== cw.tx_hash || pw.attempts !== cw.attempts || pw.failure !== cw.failure);
+  const w = changed ? cw : null;
   if (w) {
     const asset = assetLabel(w.asset, ctx);
     const amount = formatAmount(w.amount, w.asset, ctx);
@@ -414,10 +482,22 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
     const base = { to: ["owner"] as Audience[], asset, amount, txHash: w.tx_hash ?? undefined, links: link ? [link] : [] };
     const id = w.tx_hash ?? `${w.eth_tx?.nonce ?? "n"}:${w.destination ?? ""}:${w.amount}`;
     if (w.state === "Confirmed") {
-      add({ ...base, key: `${o}:withdrawal:${id}:confirmed`, kind: "withdrawal_confirmed", subject: `Your ${asset} withdrawal arrived`, text: `Your withdrawal of ${amount} ${asset} from the plan's vault arrived${w.destination ? ` at ${w.destination}` : ""}.` });
+      add({
+        ...base,
+        key: `${o}:withdrawal:${id}:confirmed`,
+        kind: "withdrawal_confirmed",
+        subject: `Your ${asset} withdrawal arrived`,
+        text: `Your withdrawal of ${amount} ${asset} from the plan's vault arrived${w.destination ? ` at ${w.destination}` : ""}.`,
+      });
     } else if (w.state === "Failed" && w.failure && !SILENT_FAILURES.has(w.failure)) {
       const what = FAILURE_TEXT[w.failure] ?? `didn't go through (${w.failure}). You can retry or cancel it in Behest`;
-      add({ ...base, key: `${o}:withdrawal:${id}:${AUTO_RETRY.has(w.failure) ? "" : w.attempts}:${w.failure}`, kind: "withdrawal_failed", subject: `Your ${asset} withdrawal needs attention`, text: `Your withdrawal of ${amount} ${asset} ${what}. The funds are safe in the vault.` });
+      add({
+        ...base,
+        key: `${o}:withdrawal:${id}:${AUTO_RETRY.has(w.failure) ? "" : w.attempts}:${w.failure}`,
+        kind: "withdrawal_failed",
+        subject: `Your ${asset} withdrawal needs attention`,
+        text: `Your withdrawal of ${amount} ${asset} ${what}. The funds are safe in the vault.`,
+      });
     }
   }
   return out;

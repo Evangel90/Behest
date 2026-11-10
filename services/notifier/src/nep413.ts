@@ -117,6 +117,8 @@ export function rpcKeyLookup(rpcUrl: string, ttlMs = 60_000, fetchFn: typeof fet
 /** Does `publicKey` control `account`? Full-access key, or the implicit account's own key. */
 export async function controls(account: string, publicKey: string, lookup: KeyLookup): Promise<boolean> {
   const keys = await lookup(account);
-  if (keys === null) return implicitKey(account) === publicKey; // implicit account not created yet
+  // An implicit account that doesn't exist yet has no keys on chain (RPCs answer
+  // either UNKNOWN_ACCOUNT or an empty list); its id is its key.
+  if (!keys?.length) return implicitKey(account) === publicKey;
   return keys.includes(publicKey);
 }

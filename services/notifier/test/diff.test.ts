@@ -63,8 +63,10 @@ describe("release lifecycle", () => {
     expect(proposed.map((n) => n.kind)).toEqual(["proposed"]);
     // the proposer isn't told about their own proposal
     expect(recipients(s("Proposed"), proposed[0]!)).toEqual(["kemi.testnet", "funmi.testnet", "chidi.testnet"]);
-    expect(kinds(null, s("Waiting", { proposal: waiting() }))).toEqual(["proposed", "approved"]);
-    expect(kinds(null, s("Eligible", { proposal: waiting() }))).toContain("eligible");
+    // first seen already approved: the approval, not a stale "proposed"
+    expect(kinds(null, s("Waiting", { proposal: waiting() }))).toEqual(["approved"]);
+    // first seen once the waiting period is over: only what is still true
+    expect(kinds(null, s("Eligible", { proposal: waiting() }))).toEqual(["eligible"]);
     const a = notices(null, s("Proposed", { proposal: proposal(), now: 1 }));
     const b = notices(null, s("Proposed", { proposal: proposal(), now: 999 }));
     expect(a.map((n) => n.key)).toEqual(b.map((n) => n.key));
@@ -184,11 +186,16 @@ describe("transfers", () => {
 
 describe("owner vault withdrawals", () => {
   it("tells the owner when a withdrawal arrives or needs attention", () => {
-    const ok = notices(null, s("Active", { withdrawal: tr({ heir: "kemi.testnet", asset: "Btc", amount: "5000", state: "Confirmed", tx_hash: "cd".repeat(32) }) }));
+    const before = s("Active", { withdrawal: tr({ heir: "kemi.testnet", asset: "Btc", amount: "5000", state: "Broadcast", tx_hash: "cd".repeat(32) }) });
+    const ok = notices(before, s("Active", { withdrawal: tr({ heir: "kemi.testnet", asset: "Btc", amount: "5000", state: "Confirmed", tx_hash: "cd".repeat(32) }) }));
     expect(ok.map((n) => [n.kind, n.to])).toEqual([["withdrawal_confirmed", ["owner"]]]);
     expect(ok[0]!.links[0]!.url).toContain("mempool.space/testnet4/tx/");
-    const bad = notices(null, s("Active", { withdrawal: tr({ heir: "kemi.testnet", state: "Failed", failure: "Dropped", attempts: 1, eth_tx: { nonce: 3 } }) }));
+    const bad = notices(before, s("Active", { withdrawal: tr({ heir: "kemi.testnet", state: "Failed", failure: "Dropped", attempts: 1, eth_tx: { nonce: 3 } }) }));
     expect(bad.map((n) => n.kind)).toEqual(["withdrawal_failed"]);
+    // an old withdrawal seen on the first look at a plan isn't news
+    expect(kinds(null, s("Active", { withdrawal: tr({ state: "Confirmed", tx_hash: "0x1" }) }))).toEqual([]);
+    const done = s("Active", { withdrawal: tr({ state: "Confirmed", tx_hash: "0x1" }) });
+    expect(kinds(done, done)).toEqual([]);
   });
 });
 

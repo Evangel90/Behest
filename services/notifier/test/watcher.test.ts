@@ -47,7 +47,7 @@ describe("watcher", () => {
     const p: Proposal = { id: 3, proposer: "dayo.testnet", created_at_ms: 11 * MIN, approvals: ["dayo.testnet"], rejections: [], waiting_ends_at_ms: 20 * MIN, transfers: [] };
     state.plans.set("bola.testnet", plan("bola.testnet", "Waiting", p));
     state.open = ["bola.testnet"];
-    expect((await w.tick()).notices).toBe(3); // kemi overdue; bola proposed + approved
+    expect((await w.tick()).notices).toBe(2); // kemi overdue; bola approved
     expect(store.deliveries("kemi.testnet:overdue:0")).toHaveLength(1);
     expect((await w.tick()).notices).toBe(0); // nothing new, nothing repeated
     // bola cancels: the release leaves list_open_releases but the snapshot remembers it

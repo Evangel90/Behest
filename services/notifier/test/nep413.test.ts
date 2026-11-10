@@ -50,6 +50,8 @@ describe("NEP-413 verification", () => {
     expect(implicitKey(hex)).toBe(VEC.publicKey);
     expect(await controls(hex, VEC.publicKey, lookup)).toBe(true);
     expect(await controls("ghost.testnet", VEC.publicKey, lookup)).toBe(false);
+    expect(await controls(hex, VEC.publicKey, async () => [])).toBe(true);
+    expect(await controls("ghost.testnet", VEC.publicKey, async () => [])).toBe(false);
   });
 
   it("reads keys over RPC and drops function-call keys", async () => {
