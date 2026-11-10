@@ -10,10 +10,10 @@ import { HeirList, ShareBar } from "@/components/PlanParts";
 import { Swap } from "@/components/motion";
 import { SignInDialog } from "@/components/SignIn";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
-import { getConfig, getPlan } from "@/lib/contract";
+import { getConfig, getPlan, getSponsorship, sponsorshipAvailable, type Sponsorship } from "@/lib/contract";
 import { humanError } from "@/lib/hooks";
 import { describePlan, duration, parseNear, percent, shortName, validateDraft } from "@/lib/plan";
-import { useSession } from "@/lib/session";
+import { SponsorRefused, useSession } from "@/lib/session";
 import type { PlanInput, PlanView } from "@/lib/types";
 import {
   WIZARD_STEPS,
@@ -81,6 +81,8 @@ function Setup() {
   const [error, setError] = useState<string | null>(null);
   const [signIn, setSignIn] = useState(false);
   const [ack, setAck] = useState(false);
+  const [spons, setSpons] = useState<Sponsorship | null | undefined>(undefined);
+  const [paidBy, setPaidBy] = useState<"behest" | "you">("you");
   const top = useRef<HTMLDivElement>(null);
   // An owner who already has a plan always edits it (the contract keeps one plan per account).
   const editing = asked || !!existing;
@@ -113,6 +115,14 @@ function Setup() {
       })
       .catch(() => setExisting(null));
   }, [session]);
+  // D24: can Behest's sponsor pool cover this owner's storage?
+  useEffect(() => {
+    if (!session) return;
+    setSpons(undefined);
+    getSponsorship(session.accountId)
+      .then(setSpons)
+      .catch(() => setSpons(null));
+  }, [session]);
   // Keep an unsent new-plan draft for this tab.
   useEffect(() => {
     if (existing !== null) return;
@@ -138,9 +148,13 @@ function Setup() {
     }),
     [d],
   );
+  // Ethereum wallets can't attach NEAR: no deposit, and storage must be sponsored.
+  const evm = session?.kind === "evm";
+  const sponsored = !!session?.canSponsorStorage && sponsorshipAvailable(spons ?? null, !editing);
+  const evmBlocked = evm && spons !== undefined && !sponsored;
   let depositYocto: bigint | null = null;
   try {
-    depositYocto = parseNear(d.deposit || "0");
+    depositYocto = evm ? 0n : parseNear(d.deposit || "0");
   } catch {}
 
   const errs: Record<WizardStep, FieldErrors> = {
@@ -177,8 +191,23 @@ function Setup() {
     setError(null);
     try {
       setPhase("plan");
+      let saved = false;
+      // D24: no deposit, Behest's sponsor pool pays the storage. If the relayer
+      // or the pool says no, a NEAR account pays as before (nothing changed yet).
+      if (sponsored || evm) {
+        try {
+          await session.call("set_plan", { plan }, { sponsor: true, summary: editing ? "Update your inheritance plan" : "Create your inheritance plan" });
+          saved = true;
+          setPaidBy("behest");
+        } catch (e) {
+          if (evm || !(e instanceof SponsorRefused)) throw e;
+        }
+      }
       // Storage deposit; the contract refunds whatever it doesn't use.
-      await session.call("set_plan", { plan }, { deposit: 100_000_000_000_000_000_000_000n });
+      if (!saved) {
+        await session.call("set_plan", { plan }, { deposit: 100_000_000_000_000_000_000_000n });
+        setPaidBy("you");
+      }
       if (!editing && depositYocto && depositYocto > 0n) {
         setPhase("deposit");
         await session.call("deposit", { owner: session.accountId }, { deposit: depositYocto });
@@ -231,7 +260,7 @@ function Setup() {
           </span>
           <h1 className="text-[clamp(32px,6vw,48px)] font-medium leading-none tracking-[-0.04em]">{editing ? "Plan updated." : "Your plan is live."}</h1>
           <p role="status" className="max-w-[420px] text-lg text-muted">
-            Taking you to it now. Remember to check in every {duration(plan.check_in_interval_ms)}.
+            Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.
           </p>
           <ButtonLink href={`/plan/${encodeURIComponent(owner)}`} variant="primary" iconRight={ArrowRight}>
             Open your plan
@@ -248,7 +277,7 @@ function Setup() {
       <div ref={top} className="scroll-mt-24 flex flex-col gap-2">
         <span className="text-sm font-semibold text-muted">{editing ? "Edit your plan" : "Create a plan"}</span>
         <h1 className="text-[clamp(32px,5vw,52px)] font-medium leading-[0.95] tracking-[-0.045em]">{meta.title}</h1>
-        <p className="max-w-[680px] text-[17px] leading-relaxed text-muted">{meta.lede}</p>
+        <p className="max-w-[680px] text-[17px] leading-relaxed text-muted">{evm && step === "funding" ? "Your plan's Ethereum and Bitcoin vaults appear on your plan page once it's saved. Fund them by sending to their addresses." : meta.lede}</p>
       </div>
 
       <Stepper steps={steps} current={step} ok={stepOk} reachable={reachable} onGo={go} />
@@ -261,9 +290,9 @@ function Setup() {
             {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} />}
             {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} />}
             {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} />}
-            {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} />}
+            {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
-              <ReviewStep plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} />
+              <ReviewStep plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
             )}
           </Swap>
 
@@ -272,7 +301,7 @@ function Setup() {
               {error}
             </Notice>
           )}
-          {signing && <SigningProgress phase={phase} withDeposit={!editing && !!depositYocto && depositYocto > 0n} />}
+          {signing && <SigningProgress phase={phase} withDeposit={!editing && !!depositYocto && depositYocto > 0n} evm={evm} />}
 
           <div className="sticky bottom-[calc(68px+env(safe-area-inset-bottom))] z-10 -mx-4 flex items-center justify-between gap-2 border-t border-line bg-paper/90 px-4 py-3 backdrop-blur-md sm:-mx-0 sm:rounded-row sm:border sm:px-3 lg:bottom-2">
             <Button type="button" variant="ghost" icon={ArrowLeft} disabled={idx === 0 || signing} onClick={() => go(steps[idx - 1]!)}>
@@ -286,7 +315,7 @@ function Setup() {
                 Continue
               </Button>
             ) : (
-              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || !ack || (!editing && depositYocto === null)} onClick={submit}>
+              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || !ack || (!editing && depositYocto === null) || evmBlocked || (evm && spons === undefined)} onClick={submit}>
                 {editing ? "Sign and update" : "Sign and create"}
               </Button>
             )}
@@ -532,7 +561,27 @@ function HeirStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldError
   );
 }
 
-function FundingStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldErrors }) {
+function FundingStep({ d, set, errors, evm, sponsored }: { d: Draft; set: SetFn; errors: FieldErrors; evm: boolean; sponsored: boolean }) {
+  if (evm)
+    return (
+      <Card className="flex flex-col gap-4">
+        <SectionTitle icon={Coins} title="Nothing to send now" sub="An Ethereum wallet can't attach NEAR, so this plan starts without a NEAR balance." />
+        <ul className="flex flex-col gap-2 text-[15px] leading-relaxed">
+          <li className="flex gap-2">
+            <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />
+            <span>Send Sepolia ETH, allowed tokens or testnet Bitcoin to the plan&apos;s vault addresses, shown on your plan page after saving.</span>
+          </li>
+          <li className="flex gap-2">
+            <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />
+            <span>Anyone with a NEAR wallet can add NEAR to your plan for you.</span>
+          </li>
+          <li className="flex gap-2">
+            <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />
+            <span>{sponsored ? "Behest covers the plan's storage and gas, so saving costs you nothing." : "Behest pays the gas for everything you sign."}</span>
+          </li>
+        </ul>
+      </Card>
+    );
   return (
     <Card className="flex flex-col gap-4">
       <Field label="NEAR to set aside" error={errors.deposit} hint="You can add or withdraw later, while no release is open. Zero is fine.">
@@ -552,8 +601,8 @@ function FundingStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldEr
           </div>
         )}
       </Field>
-      <Notice>
-        Saving also attaches 0.1 NEAR for the plan&apos;s storage; the contract refunds what it doesn&apos;t use. {Number(d.deposit) > 0 ? "Adding NEAR is a second transaction." : ""}
+      <Notice tone={sponsored ? "ok" : "info"}>
+        {sponsored ? "Behest covers the plan's storage, so saving needs no deposit." : "Saving also attaches 0.1 NEAR for the plan's storage; the contract refunds what it doesn't use."} {Number(d.deposit) > 0 ? "Adding NEAR is a second transaction." : ""}
       </Notice>
     </Card>
   );
@@ -594,7 +643,13 @@ function ReviewStep({
   finalErrors,
   ack,
   setAck,
+  evm,
+  sponsored,
+  spons,
 }: {
+  evm: boolean;
+  sponsored: boolean;
+  spons: Sponsorship | null | undefined;
   plan: PlanInput;
   d: Draft;
   owner: string;
@@ -646,7 +701,8 @@ function ReviewStep({
           {edit("funding")}
         </Card>
       )}
-      <Disclosure icon={ScrollText} title="Exact contract call" sub="set_plan, as it will be signed">
+      <StorageNote evm={evm} sponsored={sponsored} spons={spons} />
+      <Disclosure icon={ScrollText} title="Exact contract call" sub={evm ? "set_plan, inside the message your wallet signs" : "set_plan, as it will be signed"}>
         <pre className="overflow-auto rounded-tile bg-void p-4 font-mono text-xs leading-relaxed text-white">{JSON.stringify({ method: "set_plan", args: { plan } }, null, 2)}</pre>
       </Disclosure>
       {finalErrors.length > 0 && (
@@ -666,7 +722,25 @@ function ReviewStep({
   );
 }
 
-function SigningProgress({ phase, withDeposit }: { phase: "idle" | "plan" | "deposit" | "done"; withDeposit: boolean }) {
+/** Who pays for the plan's storage (D24), and what an Ethereum wallet can't do. */
+function StorageNote({ evm, sponsored, spons }: { evm: boolean; sponsored: boolean; spons: Sponsorship | null | undefined }) {
+  if (spons === undefined) return <Skeleton className="h-14 w-full rounded-row" />;
+  if (sponsored)
+    return (
+      <Notice tone="ok" title="Behest covers the plan's storage">
+        {evm ? "Your wallet signs a message; Behest sends it and pays the gas and storage. No ETH or NEAR leaves your wallet." : "No deposit needed. If Behest can't cover it this time, your wallet asks you to attach 0.1 NEAR instead (unused storage is refunded)."}
+      </Notice>
+    );
+  if (evm)
+    return (
+      <Notice tone="warn" title="Behest can't cover storage right now">
+        {spons === null ? "This deployment doesn't sponsor plan storage yet" : "Its sponsor pool or your allowance is used up"}, and an Ethereum wallet can&apos;t attach NEAR. Try again later, or sign in with a NEAR wallet.
+      </Notice>
+    );
+  return <Notice>Saving attaches 0.1 NEAR for the plan&apos;s storage; the contract refunds what it doesn&apos;t use.</Notice>;
+}
+
+function SigningProgress({ phase, withDeposit, evm }: { phase: "idle" | "plan" | "deposit" | "done"; withDeposit: boolean; evm: boolean }) {
   const rows: [string, boolean, boolean][] = [
     ["Saving your plan", phase === "plan", phase === "deposit" || phase === "done"],
     ...(withDeposit ? [["Adding NEAR to the plan", phase === "deposit", phase === "done"] as [string, boolean, boolean]] : []),
@@ -679,7 +753,7 @@ function SigningProgress({ phase, withDeposit }: { phase: "idle" | "plan" | "dep
             {done ? <Check aria-hidden className="size-3.5" /> : on ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
           </span>
           <span className={cx(!on && !done && "text-muted")}>{label}</span>
-          {on && <span className="text-sm text-muted">· confirm in your wallet</span>}
+          {on && <span className="text-sm text-muted">· {evm ? "sign the message in your wallet" : "confirm in your wallet"}</span>}
         </li>
       ))}
     </ol>
