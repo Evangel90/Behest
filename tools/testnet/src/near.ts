@@ -12,6 +12,20 @@ export const DEPLOYMENT_NAME = process.env.BEHEST_DEPLOYMENT || "testnet";
 export const DEPLOYMENT_FILE = join(ROOT, `deployments/${DEPLOYMENT_NAME}.json`);
 
 export const provider = new JsonRpcProvider({ url: process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com" });
+/** Reads can go to another RPC (NEAR_VIEW_RPC_URL) so a per-IP limit on the transaction RPC doesn't starve them. */
+export const viewProvider = process.env.NEAR_VIEW_RPC_URL ? new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL }) : provider;
+
+/** Retries `fn` while the RPC answers 429 (rate limited), with exponential backoff. */
+export async function retry429<T>(fn: () => Promise<T>, tries = 6): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i + 1 >= tries || !/-429|Rate limits exceeded|\b429\b/.test(`${String(e)} ${String((e as { cause?: unknown })?.cause ?? "")}`)) throw e;
+      await new Promise((r) => setTimeout(r, 2_000 * 2 ** i));
+    }
+  }
+}
 
 export function keyOf(accountId: string): KeyPairString {
   const file = join(homedir(), ".near-credentials/testnet", `${accountId}.json`);
@@ -45,7 +59,7 @@ export function saveDeployment(d: Deployment) {
 // Optimistic finality: `call` returns once its receipts executed optimistically,
 // and a "final" read can lag that by a block or two (seen as a flaky null proposal).
 export const view = <T>(contractId: string, method: string, args: Record<string, unknown> = {}) =>
-  provider.callFunction({ contractId, method, args, blockQuery: { finality: "optimistic" } }) as Promise<T>;
+  retry429(() => viewProvider.callFunction({ contractId, method, args, blockQuery: { finality: "optimistic" } }) as Promise<T>);
 
 export async function call(
   signer: string,
@@ -54,13 +68,16 @@ export async function call(
   args: Record<string, unknown>,
   opts: { tgas?: number; deposit?: bigint } = {},
 ) {
-  return account(signer).callFunction({
-    contractId,
-    methodName,
-    args,
-    gas: teraToGas(opts.tgas ?? 30),
-    deposit: opts.deposit ?? 0n,
-  });
+  // A rate-limited send never reached the chain, so it is safe to repeat.
+  return retry429(() =>
+    account(signer).callFunction({
+      contractId,
+      methodName,
+      args,
+      gas: teraToGas(opts.tgas ?? 30),
+      deposit: opts.deposit ?? 0n,
+    }),
+  );
 }
 
 /** Rewrites KEY=value lines in the root .env, leaving every other line untouched. */

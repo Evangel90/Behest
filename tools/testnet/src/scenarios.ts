@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { sponsoredCall } from "@behest/relayer/client";
-import { account, call, loadDeployment, log, provider, view, reclaimScenarioOwners, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, provider, retry429, view, reclaimScenarioOwners, waitForKey } from "./near.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -63,7 +63,7 @@ async function waitForStatus(owner: string, want: Status, timeoutMs = 120_000) {
 }
 
 async function balance(id: string): Promise<bigint> {
-  return BigInt((await account(id).getState()).balance.total);
+  return BigInt((await retry429(() => account(id).getState())).balance.total);
 }
 
 /** Creates <prefix><ts>.<owner> with 0.45 NEAR and stores its key in the legacy keychain. */
@@ -71,7 +71,7 @@ async function freshOwner(prefix: string): Promise<string> {
   const kp = KeyPair.fromRandom("ed25519");
   const sub = `${prefix}${Date.now().toString(36)}`;
   const id = `${sub}.${d.owner}`;
-  await account(d.owner).createSubAccount({ accountOrPrefix: sub, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("0.45") });
+  await retry429(() => account(d.owner).createSubAccount({ accountOrPrefix: sub, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("0.45") }));
   await waitForKey(id, kp.getPublicKey().toString());
   const dir = join(homedir(), ".near-credentials/testnet");
   mkdirSync(dir, { recursive: true });
