@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, Geist_Mono } from "next/font/google";
+import { Providers } from "@/components/feedback";
 import { SessionProvider } from "@/lib/session";
 import "./globals.css";
 
@@ -30,7 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="min-h-dvh bg-paper text-ink">
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <Providers>{children}</Providers>
+        </SessionProvider>
       </body>
     </html>
   );
