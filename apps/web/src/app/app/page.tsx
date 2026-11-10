@@ -154,7 +154,7 @@ function MyPlan({ view, onChange }: { view: PlanView; onChange: () => Promise<vo
   const now = live + (view.now_ms - live > 60_000 || live - view.now_ms > 60_000 ? view.now_ms - live : 0);
   const p = view.plan;
   const s = view.status;
-  const open = !!p.proposal && s !== "Settled";
+  const open = s === "Proposed" || s === "Waiting";
   const canCheckIn = s === "Active" || s === "Overdue" || open;
   const step = nextStep(view, "owner", { now, me: p.owner });
   const facts = [`${p.policy.heirs.length} heir${p.policy.heirs.length === 1 ? "" : "s"}`, `${p.policy.quorum} of ${p.policy.guardians.length} guardians`, `${formatNear(p.escrow)} NEAR held`, `version ${p.version}`];
