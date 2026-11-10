@@ -206,6 +206,11 @@ html:has(dialog[open]) { overflow: hidden; }
 .disclosure-body[data-open="true"] { grid-template-rows: 1fr; }
 .disclosure-body > * { min-height: 0; overflow: hidden; }
 
+/* FAQ: animate <details> open where the browser supports it. */
+.faq { interpolate-size: allow-keywords; }
+.faq::details-content { height: 0; overflow: clip; transition: height 300ms var(--ease-ledger), content-visibility 300ms allow-discrete; }
+.faq[open]::details-content { height: auto; }
+
 /* Native number/select polish. */
 select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B6B6B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px !important; }
 

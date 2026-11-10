@@ -1,15 +1,17 @@
 "use client";
 // Landing-page demo: an example plan in the dashboard frame. Tabs and the
 // check-in button work locally; nothing touches the chain.
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
+import { Ban, Check, Coins, Gift, HeartPulse, History, LayoutGrid, ShieldCheck, Split, type LucideIcon } from "lucide-react";
 import { Mark } from "./chrome";
+import { motion, Swap } from "./motion";
 import { cx } from "./ui";
 
 const TABS = [
-  ["plan", "Plan"],
-  ["heirs", "Heirs"],
-  ["guardians", "Guardians"],
-  ["activity", "Activity"],
+  ["plan", "Plan", LayoutGrid],
+  ["heirs", "Heirs", Gift],
+  ["guardians", "Guardians", ShieldCheck],
+  ["activity", "Activity", History],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -33,6 +35,15 @@ const ACTIVITY = [
 export function LandingDemo() {
   const [tab, setTab] = useState<Tab>("plan");
   const [checkedIn, setCheckedIn] = useState(false);
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKey = (e: KeyboardEvent, i: number) => {
+    const d = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const j = (i + d + TABS.length) % TABS.length;
+    setTab(TABS[j]![0]);
+    tabs.current[j]?.focus();
+  };
   const days = checkedIn ? 90 : 18;
   const C = 2 * Math.PI * 23;
   return (
@@ -42,21 +53,31 @@ export function LandingDemo() {
           <Mark size={22} light />
           <span className="font-semibold">behest</span>
         </div>
-        <nav aria-label="Demo" className="flex gap-0.5 overflow-x-auto p-3 md:flex-col">
-          {TABS.map(([k, label]) => (
+        <div role="tablist" aria-label="Example plan" aria-orientation="vertical" className="flex gap-0.5 overflow-x-auto p-3 md:flex-col">
+          {TABS.map(([k, label, I], i) => (
             <button
               key={k}
+              ref={(el) => {
+                tabs.current[i] = el;
+              }}
+              role="tab"
+              id={`demo-tab-${k}`}
+              aria-selected={tab === k}
+              aria-controls="demo-panel"
+              tabIndex={tab === k ? 0 : -1}
               onClick={() => setTab(k)}
-              aria-current={tab === k ? "page" : undefined}
-              className={cx("h-11 shrink-0 rounded-tile px-3 text-left text-[15px]", tab === k ? "bg-white/[0.06] text-white" : "hover:bg-white/[0.04]")}
+              onKeyDown={(e) => onKey(e, i)}
+              className={cx("relative flex h-11 shrink-0 items-center gap-2.5 rounded-tile px-3 text-left text-[15px] transition-colors", tab === k ? "text-white" : "hover:bg-white/[0.04] hover:text-white")}
             >
-              {label}
+              {tab === k && <motion.span layoutId="demo-tab" aria-hidden className="absolute inset-0 rounded-tile bg-white/[0.08]" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+              <I aria-hidden className="relative size-[18px]" />
+              <span className="relative">{label}</span>
             </button>
           ))}
-        </nav>
+        </div>
       </div>
-      <div className="m-2 min-h-[520px] rounded-tile bg-[#FEFEFE] p-5 text-[#171717] sm:p-8 md:ml-0">
-        <div className="mx-auto flex max-w-[704px] flex-col gap-8">
+      <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${tab}`} className="m-2 min-h-[520px] overflow-hidden rounded-tile bg-[#FEFEFE] p-5 text-[#171717] sm:p-8 md:ml-0">
+        <Swap id={tab} className="mx-auto flex max-w-[704px] flex-col gap-8">
           {tab === "plan" && (
             <>
               <header className="flex flex-wrap items-end justify-between gap-4">
@@ -65,9 +86,11 @@ export function LandingDemo() {
                   <span className="text-[40px] leading-none tracking-[-0.03em]">3 chains, 2 heirs</span>
                 </div>
                 <button
-                  onClick={() => setCheckedIn(true)}
-                  className={cx("h-10 rounded-[10px] px-3.5 text-sm", checkedIn ? "bg-[rgba(47,107,255,.14)] text-[#1D3FB8]" : "bg-[#171717] text-white")}
+                  onClick={() => setCheckedIn((c) => !c)}
+                  aria-pressed={checkedIn}
+                  className={cx("inline-flex h-11 items-center gap-2 rounded-[12px] px-4 text-sm font-semibold transition-colors active:scale-[0.97]", checkedIn ? "bg-[rgba(47,107,255,.14)] text-[#1D3FB8]" : "bg-[#171717] text-white hover:bg-black")}
                 >
+                  {checkedIn ? <Check key="c" aria-hidden className="size-4 animate-pop" /> : <HeartPulse aria-hidden className="size-4" />}
                   {checkedIn ? "Checked in" : "Check in"}
                 </button>
               </header>
@@ -97,10 +120,10 @@ export function LandingDemo() {
                 <div className="flex items-center gap-4 rounded-row border border-[#E5E5E5] p-5">
                   <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
                     <circle cx="28" cy="28" r="23" fill="none" stroke="#EDEDED" strokeWidth="6" />
-                    <circle cx="28" cy="28" r="23" fill="none" stroke="#2F6BFF" strokeWidth="6" strokeLinecap="round" strokeDasharray={`${((C * days) / 90).toFixed(1)} ${C.toFixed(1)}`} transform="rotate(-90 28 28)" className="transition-[stroke-dasharray] duration-500" />
+                    <circle cx="28" cy="28" r="23" fill="none" stroke="#2F6BFF" strokeWidth="6" strokeLinecap="round" strokeDasharray={`${((C * days) / 90).toFixed(1)} ${C.toFixed(1)}`} transform="rotate(-90 28 28)" className="transition-[stroke-dasharray] duration-700 ease-ledger" />
                   </svg>
                   <div className="flex flex-col">
-                    <span className="text-[22px] tracking-[-0.02em]">{days} days</span>
+                    <span key={days} className="animate-fade-up text-[22px] tracking-[-0.02em]">{days} days</span>
                     <span className="text-sm text-[#737373]">until the next check-in</span>
                   </div>
                 </div>
@@ -163,7 +186,7 @@ export function LandingDemo() {
               </ul>
             </>
           )}
-        </div>
+        </Swap>
       </div>
     </div>
   );
@@ -178,13 +201,13 @@ function DemoHead({ k, t }: { k: string; t: string }) {
   );
 }
 
-const FEATURES = [
-  { t: "Split across your heirs", b: "Give each person a share and a fixed address on the chain they use: NEAR, Ethereum or Bitcoin. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split" },
-  { t: "Protected by guardians", b: "People you trust approve a release together. None of them can act alone, and none of them can change where funds go.", p: "quorum" },
-  { t: "Check in with one tap", b: "Prove you're here every few months. Behest pays the gas, so a check-in costs you nothing.", p: "checkin" },
-  { t: "Cancel until the last moment", b: "Even after a release is proposed and approved, one tap stops it until the waiting period ends. Delay signers can extend that wait.", p: "quorum" },
-  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their wallet. Or have transfers start automatically.", p: "split" },
-] as const;
+const FEATURES: { t: string; b: string; p: "split" | "quorum" | "checkin"; icon: LucideIcon }[] = [
+  { t: "Split across your heirs", b: "Give each person a share and a fixed address on the chain they use: NEAR, Ethereum or Bitcoin. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split", icon: Split },
+  { t: "Protected by guardians", b: "People you trust approve a release together. None of them can act alone, and none of them can change where funds go.", p: "quorum", icon: ShieldCheck },
+  { t: "Check in with one tap", b: "Prove you're here every few months. Behest pays the gas, so a check-in costs you nothing.", p: "checkin", icon: HeartPulse },
+  { t: "Cancel until the last moment", b: "Even after a release is proposed and approved, one tap stops it until the waiting period ends. Delay signers can extend that wait.", p: "quorum", icon: Ban },
+  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their wallet. Or have transfers start automatically.", p: "split", icon: Coins },
+];
 
 /** Feature accordion with the matching panel on the blue gradient. */
 export function FeatureExplorer() {
@@ -193,23 +216,34 @@ export function FeatureExplorer() {
   return (
     <div className="grid border-t border-hairline md:grid-cols-2">
       <div className="flex flex-col">
-        {FEATURES.map((f, i) => (
-          <div key={f.t} className="border-b border-hairline">
-            <h3>
-              <button
-                onClick={() => setOpen(i)}
-                aria-expanded={open === i}
-                className={cx("w-full px-4 py-6 text-left text-lg tracking-[-0.015em] sm:px-8", open === i ? "text-ink" : "text-muted hover:text-ink")}
-              >
-                {f.t}
-              </button>
-            </h3>
-            {open === i && <p className="max-w-[520px] px-4 pb-6 text-base leading-6 text-muted sm:px-8">{f.b}</p>}
-          </div>
-        ))}
+        {FEATURES.map((f, i) => {
+          const I = f.icon;
+          const on = open === i;
+          return (
+            <div key={f.t} className="relative border-b border-hairline">
+              {on && <motion.span layoutId="feature-rail" aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-signal" />}
+              <h3>
+                <button
+                  onClick={() => setOpen(i)}
+                  aria-expanded={on}
+                  aria-controls={`feature-${i}`}
+                  className={cx("flex w-full items-center gap-3 px-4 py-6 text-left text-lg tracking-[-0.015em] transition-colors sm:px-8", on ? "text-ink" : "text-muted hover:text-ink")}
+                >
+                  <I aria-hidden className={cx("size-5 shrink-0 transition-colors", on ? "text-signal" : "")} />
+                  {f.t}
+                </button>
+              </h3>
+              <div id={`feature-${i}`} className="disclosure-body" data-open={on} inert={!on}>
+                <div>
+                  <p className="max-w-[520px] px-4 pb-6 pl-12 text-base leading-6 text-muted sm:px-8 sm:pl-16">{f.b}</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
       <div className="flex min-h-[420px] items-center justify-center bg-gradient-to-b from-[#A9CCFF] via-[#6E9BFF] to-[#2F6BFF] p-6">
-        <div className="flex w-full max-w-[416px] flex-col gap-1 rounded-row border border-white/5 bg-[#171717] p-1 text-white">
+        <Swap id={String(open)} className="flex w-full max-w-[416px] flex-col gap-1 rounded-row border border-white/5 bg-[#171717] p-1 text-white">
           {panel === "split" && (
             <>
               <div className="flex flex-col gap-4 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
@@ -277,7 +311,7 @@ export function FeatureExplorer() {
               </div>
             </>
           )}
-        </div>
+        </Swap>
       </div>
     </div>
   );

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
+import { ArrowRight, Eye, FileText, FlaskConical, Lock, Plus, RotateCcw } from "lucide-react";
+import { Reveal } from "@/components/motion";
 import { ButtonLink } from "@/components/ui";
 
 // Hairline-framed 1280px column used by every section.
@@ -12,10 +14,10 @@ const h2 = "text-[clamp(30px,3.4vw,40px)] font-medium leading-none tracking-[-0.
 const lede = "text-lg leading-7";
 
 const SAFETY = [
-  { t: "You keep control", b: "Funds sit in plan escrow and in vault addresses only your plan's contract can sign for. Behest never holds keys.", icon: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4" },
-  { t: "Rules are public", b: "Anyone can read a plan's rules in plain words and in code, before and after a release.", icon: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" },
-  { t: "Failures are visible", b: "If a transfer fails you see why, that the funds are safe, and who can retry. A retry never pays twice.", icon: "M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" },
-  { t: "Not a will", b: "Behest follows your instructions. Pair it with legal estate planning that refers to it.", icon: "M7 3h7l4 4v14H7zM14 3v4h4M10 13h5M10 17h5" },
+  { t: "You keep control", b: "Funds sit in plan escrow and in vault addresses only your plan's contract can sign for. Behest never holds keys.", icon: Lock },
+  { t: "Rules are public", b: "Anyone can read a plan's rules in plain words and in code, before and after a release.", icon: Eye },
+  { t: "Failures are visible", b: "If a transfer fails you see why, that the funds are safe, and who can retry. A retry never pays twice.", icon: RotateCcw },
+  { t: "Not a will", b: "Behest follows your instructions. Pair it with legal estate planning that refers to it.", icon: FileText },
 ];
 
 const TECH = [
@@ -65,10 +67,13 @@ export default function Landing() {
       <TestnetBar />
       <SiteHeader links={[["#features", "How it works"], ["#safety", "Safety"], ["#faq", "FAQ"], ["/inspect", "Inspect"]]} />
 
-      <main>
+      <a href="#main" className="sr-only z-50 rounded-tile bg-ink px-4 py-3 text-ink-contrast focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
+        Skip to content
+      </a>
+      <main id="main">
         <section>
           <div className={frame}>
-            <div className="flex flex-col items-start gap-6 px-4 pb-16 pt-[clamp(64px,8vw,96px)] sm:px-8">
+            <div className="flex animate-fade-up flex-col items-start gap-6 px-4 pb-16 pt-[clamp(64px,8vw,96px)] sm:px-8">
               <h1 className="max-w-[900px] text-[clamp(36px,5vw,60px)] font-medium leading-none tracking-[-0.025em]">
                 Everything you own,
                 <br />
@@ -78,10 +83,10 @@ export default function Landing() {
                 Bitcoin, Ethereum and NEAR in one plan. Choose who receives what, check in now and then, and stay in control until the very last moment.
               </p>
               <div className="flex flex-wrap items-center gap-5">
-                <ButtonLink href="/setup" variant="ink">
+                <ButtonLink href="/setup" variant="ink" size="lg" iconRight={ArrowRight}>
                   Create a plan
                 </ButtonLink>
-                <ButtonLink href="/try" variant="subtle">
+                <ButtonLink href="/try" variant="subtle" size="lg" icon={FlaskConical}>
                   Try it as a guardian or heir
                 </ButtonLink>
               </div>
@@ -89,47 +94,47 @@ export default function Landing() {
             </div>
             <figure className="flex flex-col px-2 pb-24 sm:px-8">
               <figcaption className="flex items-center justify-center gap-2 px-4 pb-6 pt-2 text-base text-muted">
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-signal/25" aria-hidden="true">
+                <span className="flex h-4 w-4 animate-breathe items-center justify-center rounded-full bg-signal/25" aria-hidden="true">
                   <span className="h-2 w-2 rounded-full bg-signal" />
                 </span>
                 Example plan. Explore the tabs, then check in.
               </figcaption>
-              <LandingDemo />
+              <Reveal y={24}>
+                <LandingDemo />
+              </Reveal>
             </figure>
           </div>
         </section>
 
         <section id="features" className="border-t border-hairline">
           <div className={`${frame} ${air}`}>
-            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+            <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
               <h2 className={`${h2} max-w-[820px]`}>Your crypto deserves better than a seed phrase in a drawer.</h2>
               <p className={`max-w-[760px] text-muted ${lede}`}>Set it up once. Behest quietly keeps watch, and only acts the way you told it to.</p>
-            </header>
+            </Reveal>
             <FeatureExplorer />
           </div>
         </section>
 
         <section id="safety" className="bg-frame text-white">
           <div className={`${frameDark} ${air}`}>
-            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+            <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
               <h2 className={h2}>Nobody can redirect a single coin.</h2>
               <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>
                 Not your guardians, not the people who send transactions, not us. The destinations you set are the only ones the contract will ever sign for.
               </p>
-            </header>
+            </Reveal>
             <div className="grid gap-px bg-white/[0.11] py-px sm:grid-cols-2 lg:grid-cols-4">
-              {SAFETY.map((s) => (
-                <div key={s.t} className="flex flex-col gap-16 bg-frame p-8">
+              {SAFETY.map((s, i) => (
+                <Reveal key={s.t} delay={i * 0.06} className="flex flex-col gap-16 bg-frame p-8">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[rgba(47,107,255,.16)]">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8DB4FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d={s.icon} />
-                    </svg>
+                    <s.icon aria-hidden className="size-5 text-[#8DB4FF]" />
                   </span>
                   <div className="flex flex-col gap-0.5">
                     <h3 className="text-lg font-medium tracking-[-0.015em]">{s.t}</h3>
                     <p className="text-sm leading-5 text-[#A1A1A1]">{s.b}</p>
                   </div>
-                </div>
+                </Reveal>
               ))}
             </div>
             <div className="h-[clamp(96px,10vw,128px)]" />
@@ -138,19 +143,19 @@ export default function Landing() {
 
         <section className="border-t border-white/[0.11] bg-frame text-white">
           <div className={`${frameDark} ${air}`}>
-            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+            <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
               <h2 className={h2}>Built on open infrastructure.</h2>
               <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>Behest runs on NEAR technology that controls assets across chains without bridges or custodians.</p>
-            </header>
+            </Reveal>
             <div className="grid gap-px bg-white/[0.11] py-px sm:grid-cols-2 lg:grid-cols-4">
-              {TECH.map((t) => (
-                <div key={t.t} className="flex min-h-[240px] flex-col justify-between gap-16 bg-frame p-8">
+              {TECH.map((t, i) => (
+                <Reveal key={t.t} delay={i * 0.06} className="flex min-h-[240px] flex-col justify-between gap-16 bg-frame p-8">
                   <span className="h-2 w-2 rounded-full" style={{ background: t.c }} aria-hidden="true" />
                   <div className="flex flex-col gap-0.5">
                     <h3 className="text-lg font-medium tracking-[-0.015em]">{t.t}</h3>
                     <p className="text-sm leading-5 text-[#A1A1A1]">{t.b}</p>
                   </div>
-                </div>
+                </Reveal>
               ))}
             </div>
             <div aria-label="Supported assets" className="flex flex-wrap items-center justify-between gap-8 px-4 py-12 text-xl font-semibold tracking-[-0.02em] text-[#A1A1A1] sm:px-8">
@@ -173,12 +178,33 @@ export default function Landing() {
 
         <section>
           <div className={`${frame} ${air}`}>
-            <header className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
+            <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
               <h2 className={h2}>Everyone has a job. Nobody can redirect.</h2>
               <p className={`max-w-[760px] text-muted ${lede}`}>Only the owner sets destinations, and only while no release is open.</p>
-            </header>
+            </Reveal>
             <div className="px-4 pb-16 sm:px-8">
-              <div className="overflow-x-auto rounded-row border border-line bg-card">
+              <ul className="flex flex-col gap-2 md:hidden">
+                {ROWS.map(([a, cells]) => {
+                  const who = cells.split("").flatMap((c, i) => (c === "y" ? [COLS[i]!] : []));
+                  return (
+                    <li key={a} className="flex flex-col gap-2 rounded-row border border-line bg-card p-4">
+                      <span className="font-medium">{a}</span>
+                      <span className="flex flex-wrap gap-1.5">
+                        {who.length ? (
+                          who.map((w) => (
+                            <span key={w} className="inline-flex h-7 items-center rounded-tag bg-s-active px-2.5 text-sm font-semibold text-[var(--s-active-fg)]">
+                              {w}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="inline-flex h-7 items-center rounded-tag bg-subtle px-2.5 text-sm font-semibold text-muted">Nobody</span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="hidden overflow-x-auto rounded-row border border-line bg-card md:block">
                 <table className="w-full min-w-[720px] border-collapse text-left text-[15px]">
                   <thead>
                     <tr className="bg-subtle text-[13px] text-muted">
@@ -233,15 +259,13 @@ export default function Landing() {
             <header className="flex flex-col items-start gap-4 border-b border-hairline px-4 pb-16 pt-[clamp(96px,10vw,128px)] sm:px-8">
               <h2 className={h2}>Frequently asked questions</h2>
               <p className={`text-muted ${lede}`}>Want to see a real plan? Look one up by its owner&apos;s account.</p>
-              <InspectForm />
+              <InspectForm recent />
             </header>
             {FAQ.map((f) => (
-              <details key={f.q} className="group border-b border-hairline">
-                <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-4 px-4 py-6 text-lg tracking-[-0.015em] sm:px-8">
+              <details key={f.q} className="faq group border-b border-hairline">
+                <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-4 px-4 py-6 text-lg tracking-[-0.015em] transition-colors hover:text-signal-text sm:px-8 [&::-webkit-details-marker]:hidden">
                   {f.q}
-                  <span className="text-[22px] leading-7 text-muted transition-transform duration-200 group-open:rotate-45" aria-hidden="true">
-                    +
-                  </span>
+                  <Plus aria-hidden className="mt-1 size-5 shrink-0 text-muted transition-transform duration-300 ease-ledger group-open:rotate-45" />
                 </summary>
                 <p className="max-w-[760px] px-4 pb-6 text-base leading-6 text-muted sm:px-8">{f.a}</p>
               </details>
@@ -253,7 +277,7 @@ export default function Landing() {
           <div className="mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] sm:px-8">
             <h2 className={`${h2} text-black`}>Your plan is minutes away.</h2>
             <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, add your heirs, and you&apos;re set.</p>
-            <ButtonLink href="/setup" className="mt-2 bg-[#171717] text-white hover:bg-black">
+            <ButtonLink href="/setup" size="lg" iconRight={ArrowRight} className="mt-2 bg-[#171717] text-white hover:bg-black">
               Create a plan
             </ButtonLink>
           </div>
