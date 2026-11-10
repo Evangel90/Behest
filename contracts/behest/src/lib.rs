@@ -7,6 +7,7 @@ mod errors;
 pub mod btc;
 pub mod eth;
 pub mod ethproof;
+pub mod evm;
 mod legacy;
 mod policy;
 mod types;
@@ -157,6 +158,7 @@ pub struct ConfigView {
     pub nep141_tokens: Vec<Nep141Token>,
     pub btc: BtcConfig,
     pub eth_light_client: Option<AccountId>,
+    pub sponsor: evm::SponsorConfig,
     pub paused: bool,
     pub executors: Vec<AccountId>,
     pub demo_timers: bool,
@@ -173,7 +175,23 @@ fn now() -> u64 {
     env::block_timestamp_ms()
 }
 
+/// Who is calling: the predecessor, or during an `evm_call` dispatch (D23)
+/// the EVM signer's eth-implicit account. Never a callback: those are
+/// separate receipts, and a self-call can't carry an override.
 fn caller() -> AccountId {
+    match evm::acting_as() {
+        Some(a) if env::predecessor_account_id() != env::current_account_id() => a,
+        Some(_) => fail(Error::Unauthorized),
+        None => env::predecessor_account_id(),
+    }
+}
+
+/// The predecessor for privileged checks (admin, executor). An EVM
+/// signature never grants those, so this refuses under `evm_call`.
+fn direct_caller() -> AccountId {
+    if evm::acting_as().is_some() {
+        fail(Error::Unauthorized);
+    }
     env::predecessor_account_id()
 }
 
@@ -251,6 +269,7 @@ impl Contract {
             self.archive_settled(&owner);
         }
         let storage_before = env::storage_usage();
+        let new_plan = !self.plans.contains_key(&owner);
         // A new plan version restates the owner's wishes: fixed amounts count afresh.
         env::storage_remove(&fixed_paid_key(&owner));
 
@@ -285,7 +304,7 @@ impl Contract {
             }
         };
         self.plans.flush();
-        self.charge_storage(storage_before, &owner);
+        self.charge_storage(storage_before, &owner, new_plan);
         emit("plan_set", near_sdk::serde_json::json!({"owner": owner, "version": version}));
     }
 
@@ -359,7 +378,7 @@ impl Contract {
                 emit("release_rules_cleared", near_sdk::serde_json::json!({"owner": owner}));
             }
         }
-        self.charge_storage(storage_before, &owner);
+        self.charge_storage(storage_before, &owner, false);
     }
 
     /// D18/D19. The owner sets (or clears) release mode and delay signers.
@@ -382,7 +401,7 @@ impl Contract {
                 emit("release_options_cleared", near_sdk::serde_json::json!({"owner": owner}));
             }
         }
-        self.charge_storage(storage_before, &owner);
+        self.charge_storage(storage_before, &owner, false);
     }
 
     pub fn get_release_options(&self, owner: AccountId) -> Option<ReleaseOptions> {
@@ -540,7 +559,7 @@ impl Contract {
     /// versions can land. The owner or an executor may call it.
     pub fn cancel_vault_withdrawal(&mut self, owner: AccountId) -> PromiseOrValue<()> {
         let who = caller();
-        if who != owner && !self.executors.contains(&who) {
+        if who != owner && (evm::acting_as().is_some() || !self.executors.contains(&who)) {
             fail(Error::Unauthorized);
         }
         let mut w = read_withdrawal(&owner).unwrap_or_else(|| fail(Error::NoWithdrawal));
@@ -638,7 +657,7 @@ impl Contract {
         let before = env::storage_usage();
         env::storage_write(&btc_dests_key(&owner), &near_sdk::borsh::to_vec(&destinations).expect("borsh"));
         emit("btc_destinations_set", near_sdk::serde_json::json!({"owner": owner, "destinations": destinations}));
-        self.charge_storage(before, &owner);
+        self.charge_storage(before, &owner, false);
     }
 
     pub fn get_btc_destinations(&self, owner: AccountId) -> Vec<BtcDestination> {
@@ -1225,7 +1244,8 @@ impl Contract {
             fail(Error::Paused);
         }
         let who = caller();
-        let is_executor = self.executors.contains(&who);
+        // An EVM signature acts as a heir, never as an executor.
+        let is_executor = evm::acting_as().is_none() && self.executors.contains(&who);
         let tr = self.tr_get(&owner, index);
         if tr.heir != who && !is_executor {
             fail(Error::Unauthorized);
@@ -1621,12 +1641,196 @@ impl Contract {
             nep141_tokens: nep141_tokens(),
             btc: btc_config(),
             eth_light_client: eth_light_client(),
+            sponsor: evm::config(),
             eth_max_fee_cap: self.eth_max_fee_cap,
             eth_initial_max_fee: self.eth_initial_max_fee,
             eth_priority_fee: self.eth_priority_fee,
             paused: self.paused,
             executors: self.executors.iter().cloned().collect(),
             demo_timers: cfg!(feature = "demo-timers"),
+        }
+    }
+
+    // ------------------------------------------------- EVM wallets (D23/D24)
+
+    /// D23. Runs one allowlisted method as the EVM wallet that signed
+    /// `message` with `personal_sign` (see evm.rs for the format and checks).
+    /// Anyone may submit it; the signature is the authority. The actor's nonce
+    /// is used up even if a promise the method starts fails later.
+    pub fn evm_call(&mut self, message: String, signature: String) -> PromiseOrValue<near_sdk::serde_json::Value> {
+        if env::predecessor_account_id() == env::current_account_id() || evm::acting_as().is_some() {
+            fail(Error::EvmMethod);
+        }
+        let v = evm::verify(&message, &signature);
+        if !EVM_METHODS.contains(&v.method.as_str()) {
+            fail(Error::EvmMethod);
+        }
+        evm::set_nonce(&v.actor, v.nonce + 1);
+        emit("evm_call", near_sdk::serde_json::json!({"actor": v.actor, "method": v.method, "nonce": U64(v.nonce)}));
+        let _acting = evm::ActingAs::enter(v.actor);
+        self.evm_dispatch(&v.method, v.args)
+    }
+
+    /// The nonce the next signed action of `account` (`0x…`) must carry.
+    pub fn get_evm_nonce(&self, account: AccountId) -> U64 {
+        U64(evm::get_nonce(&account))
+    }
+
+    /// D24. Anyone may add NEAR to the pool that pays sponsored plan storage.
+    #[payable]
+    pub fn fund_sponsor_pool(&mut self) -> U128 {
+        let amount = env::attached_deposit().as_yoctonear();
+        if amount == 0 {
+            fail(Error::InsufficientDeposit);
+        }
+        let pool = evm::pool() + amount;
+        evm::set_pool(pool);
+        emit("sponsor_pool_funded", near_sdk::serde_json::json!({"by": env::predecessor_account_id(), "amount": U128(amount), "pool": U128(pool)}));
+        U128(pool)
+    }
+
+    pub fn get_sponsorship(&self, owner: AccountId) -> evm::SponsorshipView {
+        evm::view(&owner)
+    }
+
+    /// D24. Admin: the sponsor relayer, the per-owner lifetime allowance and
+    /// the daily cap on sponsored new plans.
+    pub fn set_sponsor_config(&mut self, config: evm::SponsorConfig) {
+        self.assert_admin();
+        evm::set_config(&config);
+        emit("sponsor_config_set", near_sdk::serde_json::json!({"config": config}));
+    }
+}
+
+/// D23. What an EVM signature may do: the calls the relayer already sponsors
+/// for heirs, guardians, delay signers and owners; the owner's configuration
+/// (storage paid under D24); and the owner's withdrawals, which pay only the
+/// owner's own account or a destination named in the signed text. Never
+/// `deposit` (needs attached NEAR), admin or executor methods, or `evm_call`.
+pub const EVM_METHODS: &[&str] = &[
+    "claim",
+    "retry_transfer",
+    "propose_release",
+    "approve_release",
+    "reject_release",
+    "check_in",
+    "cancel_release",
+    "reassign_unclaimed",
+    "request_extension",
+    "approve_extension",
+    "release",
+    "register_btc_vault",
+    "rebase_btc",
+    "set_plan",
+    "set_release_rules",
+    "set_release_options",
+    "set_btc_destinations",
+    "withdraw",
+    "withdraw_ft",
+    "withdraw_vault",
+    "withdraw_btc",
+    "cancel_vault_withdrawal",
+];
+
+impl Contract {
+    fn evm_dispatch(&mut self, method: &str, args: near_sdk::serde_json::Value) -> PromiseOrValue<near_sdk::serde_json::Value> {
+        use near_sdk::serde_json::{json, Value};
+        use evm::evm_args;
+        let unit = |()| PromiseOrValue::Value(Value::Null);
+        match method {
+            "claim" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                PromiseOrValue::Value(json!(self.claim(owner)))
+            }
+            "retry_transfer" => {
+                let (owner, index) = evm_args!(args, { owner: AccountId, index: u32 });
+                PromiseOrValue::Promise(self.retry_transfer(owner, index))
+            }
+            "propose_release" => {
+                let (owner, eth_balance, erc20_balances, btc_utxos) =
+                    evm_args!(args, { owner: AccountId, eth_balance: Option<U128>, erc20_balances: Option<Vec<TokenBalance>>, btc_utxos: Option<Vec<BtcUtxo>> });
+                PromiseOrValue::Value(json!(self.propose_release(owner, eth_balance, erc20_balances, btc_utxos)))
+            }
+            "approve_release" => {
+                let (owner, proposal_id) = evm_args!(args, { owner: AccountId, proposal_id: u64 });
+                unit(self.approve_release(owner, proposal_id))
+            }
+            "reject_release" => {
+                let (owner, proposal_id) = evm_args!(args, { owner: AccountId, proposal_id: u64 });
+                unit(self.reject_release(owner, proposal_id))
+            }
+            "check_in" => {
+                evm_args!(args, {});
+                unit(self.check_in())
+            }
+            "cancel_release" => {
+                evm_args!(args, {});
+                unit(self.cancel_release())
+            }
+            "reassign_unclaimed" => {
+                let (owner, index) = evm_args!(args, { owner: AccountId, index: u32 });
+                unit(self.reassign_unclaimed(owner, index))
+            }
+            "request_extension" => {
+                let (owner, proposal_id, extension_ms, reason) = evm_args!(args, { owner: AccountId, proposal_id: u64, extension_ms: u64, reason: Option<String> });
+                unit(self.request_extension(owner, proposal_id, extension_ms, reason))
+            }
+            "approve_extension" => {
+                let (owner, proposal_id) = evm_args!(args, { owner: AccountId, proposal_id: u64 });
+                unit(self.approve_extension(owner, proposal_id))
+            }
+            "release" => {
+                let (owner, heir) = evm_args!(args, { owner: AccountId, heir: AccountId });
+                PromiseOrValue::Value(json!(self.release(owner, heir)))
+            }
+            "register_btc_vault" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                PromiseOrValue::Promise(self.register_btc_vault(owner))
+            }
+            "rebase_btc" => {
+                let (owner, utxos) = evm_args!(args, { owner: AccountId, utxos: Vec<BtcUtxo> });
+                unit(self.rebase_btc(owner, utxos))
+            }
+            "set_plan" => {
+                let plan = evm_args!(args, { plan: PlanInput });
+                unit(self.set_plan(plan))
+            }
+            "set_release_rules" => {
+                let rules = evm_args!(args, { rules: Option<ReleaseRules> });
+                unit(self.set_release_rules(rules))
+            }
+            "set_release_options" => {
+                let options = evm_args!(args, { options: Option<ReleaseOptions> });
+                unit(self.set_release_options(options))
+            }
+            "set_btc_destinations" => {
+                let destinations = evm_args!(args, { destinations: Vec<BtcDestination> });
+                unit(self.set_btc_destinations(destinations))
+            }
+            "withdraw" => {
+                let amount = evm_args!(args, { amount: U128 });
+                PromiseOrValue::Promise(self.withdraw(amount))
+            }
+            "withdraw_ft" => {
+                let (token, amount) = evm_args!(args, { token: AccountId, amount: U128 });
+                PromiseOrValue::Promise(self.withdraw_ft(token, amount))
+            }
+            "withdraw_vault" => {
+                let (asset, amount, to) = evm_args!(args, { asset: Asset, amount: U128, to: String });
+                PromiseOrValue::Promise(self.withdraw_vault(asset, amount, to))
+            }
+            "withdraw_btc" => {
+                let (utxos, amount, to) = evm_args!(args, { utxos: Vec<BtcUtxo>, amount: U64, to: String });
+                PromiseOrValue::Promise(self.withdraw_btc(utxos, amount, to))
+            }
+            "cancel_vault_withdrawal" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                match self.cancel_vault_withdrawal(owner) {
+                    PromiseOrValue::Promise(p) => PromiseOrValue::Promise(p),
+                    PromiseOrValue::Value(()) => PromiseOrValue::Value(Value::Null),
+                }
+            }
+            _ => fail(Error::EvmMethod),
         }
     }
 }
@@ -1958,7 +2162,7 @@ fn erc20_tokens() -> Vec<Erc20Token> {
 
 /// The (to, value, data) a vault transaction carries for an EVM transfer:
 /// ETH goes straight to the heir; a token transfer calls the token contract.
-fn evm_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
+fn vault_call(tr: &Transfer) -> Option<([u8; 20], u128, Vec<u8>)> {
     let dest = eth::parse_address(&tr.destination)?;
     match &tr.asset {
         Asset::Eth => Some((dest, tr.amount.0, vec![])),
@@ -1986,7 +2190,7 @@ fn signed_nonce_of(tr: &Transfer, tx_hash: &str) -> Option<u64> {
 }
 
 fn raw_signed_tx(tr: &Transfer, params: &EthTxParams, sig: &EthSignature) -> Option<String> {
-    let (to, value, data) = evm_call(tr)?;
+    let (to, value, data) = vault_call(tr)?;
     let big_r = eth::hex_decode(&sig.big_r)?;
     let tx = eth::EthTransfer {
         chain_id: params.chain_id,
@@ -2108,7 +2312,7 @@ impl Contract {
     }
 
     fn assert_executor(&self) {
-        if !self.executors.contains(&caller()) {
+        if !self.executors.contains(&direct_caller()) {
             fail(Error::Unauthorized);
         }
     }
@@ -2387,7 +2591,7 @@ impl Contract {
                 (prev.nonce, max_fee, eth::bump(prev.max_priority_fee_per_gas.0, max_fee), gas, false)
             }
         };
-        let (to, value, data) = evm_call(tr).unwrap_or_else(|| fail(Error::BadDestination));
+        let (to, value, data) = vault_call(tr).unwrap_or_else(|| fail(Error::BadDestination));
         let hash = eth::EthTransfer {
             chain_id,
             nonce,
@@ -2436,15 +2640,32 @@ impl Contract {
     }
 
     fn assert_admin(&self) {
-        if caller() != self.admin {
+        if direct_caller() != self.admin {
             fail(Error::Unauthorized);
         }
     }
 
-    fn charge_storage(&self, before: u64, payer: &AccountId) {
-        let used = env::storage_usage().saturating_sub(before) as u128;
-        let cost = used * STORAGE_BYTE_COST;
+    /// Charges the storage an owner call grew since `before`: from the
+    /// attached deposit (excess refunded), or with no deposit from the sponsor
+    /// pool when the sponsor relayer signed the transaction (D24). Storage the
+    /// call freed returns to the pool for the part the pool paid for.
+    fn charge_storage(&self, before: u64, payer: &AccountId, new_plan: bool) {
         let attached = env::attached_deposit().as_yoctonear();
+        let mut usage = env::storage_usage();
+        let sponsored = attached == 0 && usage > before && evm::sponsor_signer();
+        if sponsored {
+            evm::prepare(payer, new_plan);
+            usage = env::storage_usage();
+        }
+        if usage < before {
+            evm::credit(payer, before - usage, STORAGE_BYTE_COST);
+        }
+        let used = usage.saturating_sub(before);
+        let cost = used as u128 * STORAGE_BYTE_COST;
+        if sponsored {
+            evm::spend(payer, cost, used, new_plan);
+            return;
+        }
         if attached < cost {
             fail(Error::InsufficientDeposit);
         }

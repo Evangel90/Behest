@@ -2731,3 +2731,344 @@ mod outcome_proofs {
         e.as_("amara.testnet", 0).set_eth_light_client(Some(acc("evil.testnet")));
     }
 }
+
+// ------------------------------------------------- EVM wallets (D23) and D24
+
+const RELAYER: &str = "relayer.testnet";
+
+fn evm_vectors() -> near_sdk::serde_json::Value {
+    near_sdk::serde_json::from_str(include_str!("testdata/evm-vectors.json")).unwrap()
+}
+
+/// (message, signature) of a vector made by tools/testnet/src/gen-evm-vectors.ts.
+fn vector(name: &str) -> (String, String) {
+    let v = &evm_vectors()["vectors"][name];
+    (v["message"].as_str().unwrap_or_else(|| panic!("no vector {name}")).to_string(), v["signature"].as_str().unwrap().to_string())
+}
+
+fn evm_addr(k: &str) -> AccountId {
+    evm_vectors()["addresses"][k].as_str().unwrap().parse().unwrap()
+}
+
+/// Runs `f` and returns the panic message (the contract's error code).
+fn panic_code<R>(f: impl FnOnce() -> R) -> String {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    std::panic::set_hook(prev);
+    let msg = match r {
+        Ok(_) => return "no panic".into(),
+        Err(e) => e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default(),
+    };
+    // The mocked VM wraps the code: `…GuestPanic { panic_msg: "E_…" }`.
+    match msg.find("E_") {
+        Some(i) => msg[i..].chars().take_while(|c| c.is_ascii_uppercase() || *c == '_' || c.is_ascii_digit()).collect(),
+        None => msg,
+    }
+}
+
+impl Env {
+    /// A call whose transaction `signer` signed and `who` is the predecessor
+    /// of (a meta-transaction: who = the user, signer = the relayer).
+    fn via(&mut self, who: &str, signer: &str, deposit: u128) -> &mut Contract {
+        let ctx = VMContextBuilder::new()
+            .current_account_id(acc("behest.testnet"))
+            .predecessor_account_id(acc(who))
+            .signer_account_id(acc(signer))
+            .block_timestamp(self.t * 1_000_000)
+            .attached_deposit(NearToken::from_yoctonear(deposit))
+            .account_balance(NearToken::from_near(1_000))
+            .build();
+        testing_env!(ctx);
+        &mut self.c
+    }
+
+    /// The relayer submits a signed action.
+    fn evm(&mut self, name: &str) -> PromiseOrValue<near_sdk::serde_json::Value> {
+        let (m, s) = vector(name);
+        self.via(RELAYER, RELAYER, 0).evm_call(m, s)
+    }
+
+    fn evm_err(&mut self, name: &str) -> String {
+        let (m, s) = vector(name);
+        self.evm_raw_err(m, s)
+    }
+
+    fn evm_raw_err(&mut self, m: String, s: String) -> String {
+        let c = self.via(RELAYER, RELAYER, 0);
+        panic_code(move || c.evm_call(m, s))
+    }
+
+    fn sponsor(&mut self, pool: u128) {
+        self.as_("admin.testnet", 0).set_sponsor_config(evm::SponsorConfig { relayer: Some(acc(RELAYER)), ..Default::default() });
+        if pool > 0 {
+            self.as_("anyone.testnet", pool).fund_sponsor_pool();
+        }
+    }
+
+    fn sponsorship(&mut self, owner: &AccountId) -> evm::SponsorshipView {
+        self.as_("anyone.testnet", 0).get_sponsorship(owner.clone())
+    }
+}
+
+fn value(r: PromiseOrValue<near_sdk::serde_json::Value>) -> near_sdk::serde_json::Value {
+    match r {
+        PromiseOrValue::Value(v) => v,
+        PromiseOrValue::Promise(_) => panic!("expected a value"),
+    }
+}
+
+#[test]
+fn evm_vectors_recover_their_signers() {
+    let mut e = Env::new();
+    e.as_("anyone.testnet", 0);
+    let (m, s) = vector("owner_check_in_0");
+    assert_eq!(evm::recover(&m, &s), evm_addr("a").to_string());
+    let (m, s) = vector("utf8_summary"); // the length prefix counts UTF-8 bytes
+    assert_eq!(evm::recover(&m, &s), evm_addr("a").to_string());
+    let (m, s) = vector("heir_claim");
+    assert_eq!(evm::recover(&m, &s), evm_addr("c").to_string());
+    // v as 0/1 is accepted like 27/28.
+    let (m, s) = vector("owner_check_in_0");
+    let v = u8::from_str_radix(&s[130..], 16).unwrap() - 27;
+    assert_eq!(evm::recover(&m, &format!("{}{:02x}", &s[..130], v)), evm_addr("a").to_string());
+}
+
+#[test]
+fn evm_owner_creates_a_sponsored_plan_and_checks_in() {
+    let mut e = Env::new();
+    e.sponsor(NEAR);
+    let a = evm_addr("a");
+    assert_eq!(e.as_("anyone.testnet", 0).get_evm_nonce(a.clone()), U64(0));
+    let before = e.sponsorship(&a);
+    assert_eq!((before.pool, before.allowance_left, before.daily_left), (U128(NEAR), U128(evm::DEFAULT_ALLOWANCE), 50));
+
+    assert_eq!(value(e.evm("owner_set_plan")), near_sdk::serde_json::Value::Null);
+    let p = e.as_("anyone.testnet", 0).get_plan(a.clone()).expect("plan created for the 0x account");
+    assert_eq!(p.plan.owner, a);
+    assert_eq!(e.as_("anyone.testnet", 0).get_evm_nonce(a.clone()), U64(1));
+    let after = e.sponsorship(&a);
+    let cost = NEAR - after.pool.0;
+    assert!(cost > 0 && cost < NEAR / 100, "storage cost {cost}");
+    assert_eq!(after.allowance_left.0, evm::DEFAULT_ALLOWANCE - cost);
+    assert_eq!(after.daily_left, 49);
+
+    // Replay of the same signed action.
+    assert_eq!(e.evm_err("owner_set_plan"), "E_EVM_NONCE");
+    // The next nonce works, and acting-as is gone afterwards.
+    e.advance(DAY);
+    let _ = e.evm("owner_check_in_1");
+    assert_eq!(evm::acting_as(), None);
+    assert_eq!(e.as_("anyone.testnet", 0).get_plan(a.clone()).unwrap().plan.last_check_in_ms, e.t);
+    assert_eq!(e.as_("anyone.testnet", 0).get_evm_nonce(a), U64(2));
+}
+
+#[test]
+fn evm_signed_action_checks() {
+    let mut e = Env::new();
+    e.sponsor(NEAR);
+    for (name, code) in [
+        ("wrong_contract", "E_EVM_WRONG_CONTRACT"),
+        ("wrong_network", "E_EVM_WRONG_CONTRACT"),
+        ("wrong_actor", "E_EVM_ACTOR"),
+        ("expired", "E_EVM_EXPIRED"),
+        ("wrong_nonce", "E_EVM_NONCE"),
+        ("padded_nonce", "E_EVM_MESSAGE"),
+        ("high_s", "E_EVM_SIGNATURE"),
+        ("method_deposit", "E_EVM_METHOD"),
+        ("method_set_paused", "E_EVM_METHOD"),
+        ("method_add_executor", "E_EVM_METHOD"),
+        ("method_evm_call", "E_EVM_METHOD"),
+        ("extra_field", "E_EVM_MESSAGE"),
+        ("no_blank_line", "E_EVM_MESSAGE"),
+    ] {
+        assert_eq!(e.evm_err(name), code, "{name}");
+        assert_eq!(evm::acting_as(), None, "{name}");
+    }
+    let (m, s) = vector("owner_check_in_0");
+    // Wrong length, not hex, no 0x, bad v.
+    assert_eq!(e.evm_raw_err(m.clone(), s[..130].to_string()), "E_EVM_SIGNATURE");
+    assert_eq!(e.evm_raw_err(m.clone(), format!("{s}00")), "E_EVM_SIGNATURE");
+    assert_eq!(e.evm_raw_err(m.clone(), s[2..].to_string()), "E_EVM_SIGNATURE");
+    assert_eq!(e.evm_raw_err(m.clone(), format!("{}zz", &s[..130])), "E_EVM_SIGNATURE");
+    assert_eq!(e.evm_raw_err(m.clone(), format!("{}1d", &s[..130])), "E_EVM_SIGNATURE");
+    // r = 0 / s = 0.
+    assert_eq!(e.evm_raw_err(m.clone(), format!("0x{}{}", "0".repeat(64), &s[66..])), "E_EVM_SIGNATURE");
+    assert_eq!(e.evm_raw_err(m.clone(), format!("{}{}{}", &s[..66], "0".repeat(64), &s[130..])), "E_EVM_SIGNATURE");
+    // A changed message no longer recovers to the actor.
+    assert_eq!(e.evm_raw_err(m.replace("Check in", "Check in!"), s.clone()), "E_EVM_ACTOR");
+    // A different header.
+    assert_eq!(e.evm_raw_err(m.replace("Behest signed action", "Behest signed actions"), s.clone()), "E_EVM_MESSAGE");
+    // Unknown argument: what was signed must be exactly what runs. Needs a plan first.
+    let _ = e.evm("owner_set_plan");
+    // None of the refused actions above used up a nonce.
+    assert_eq!(e.as_("anyone.testnet", 0).get_evm_nonce(evm_addr("a")), U64(1));
+    assert_eq!(e.evm_err("unknown_arg"), "E_EVM_ARGS");
+}
+
+#[test]
+fn evm_acting_as_is_cleared_when_the_method_fails() {
+    let mut e = Env::new();
+    // No plan for 0x…a: check_in panics inside the dispatch, after acting-as was set.
+    assert_eq!(e.evm_err("owner_check_in_0"), "E_NO_PLAN");
+    assert_eq!(evm::acting_as(), None);
+    // A later direct call sees its own predecessor.
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    assert!(e.as_("anyone.testnet", 0).get_plan(acc("owner.testnet")).is_some());
+    assert!(e.as_("anyone.testnet", 0).get_plan(acc(RELAYER)).is_none());
+}
+
+#[test]
+fn evm_never_runs_from_the_contract_itself() {
+    let mut e = Env::new();
+    let (m, s) = vector("owner_check_in_0");
+    let c = e.via("behest.testnet", "behest.testnet", 0);
+    assert_eq!(panic_code(move || c.evm_call(m, s)), "E_EVM_METHOD");
+}
+
+/// owner.testnet's plan with an EVM guardian (b) and an EVM heir (c).
+fn evm_roles_plan() -> Env {
+    let mut e = Env::new();
+    let mut p = plan_input();
+    p.guardians[0] = evm_addr("b");
+    p.heirs[0] = HeirInput { account_id: evm_addr("c"), share_bps: 6000, near_destination: Some(evm_addr("c")), eth_destination: None };
+    e.as_("owner.testnet", NEAR).set_plan(p);
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    e
+}
+
+#[test]
+fn evm_guardian_proposes_and_heir_claims() {
+    let mut e = evm_roles_plan();
+    let id = value(e.evm("guardian_propose")).as_u64().unwrap();
+    let p = e.plan().proposal.unwrap();
+    assert_eq!(p.approvals, vec![evm_addr("b")], "the EVM guardian's proposal counts as its approval");
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    assert_eq!(value(e.evm("heir_claim")), near_sdk::serde_json::json!(1));
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    let tr = e.plan().proposal.unwrap().transfers.into_iter().find(|t| t.heir == evm_addr("c")).unwrap();
+    assert_eq!(tr.state, TransferState::Sending);
+    assert_eq!(tr.destination, evm_addr("c").to_string());
+    assert!(receipts.iter().any(|r| r.receiver_id == evm_addr("c")), "NEAR goes to the heir's 0x account");
+}
+
+#[test]
+fn evm_signature_never_grants_executor_or_admin() {
+    let mut e = evm_roles_plan();
+    let d = evm_addr("d");
+    e.as_("admin.testnet", 0).add_executor(d.clone());
+    // Even an admin key can't use admin methods through a signature.
+    let admin = std::mem::replace(&mut e.c.admin, d.clone());
+    assert_eq!(e.evm_err("method_set_paused"), "E_EVM_METHOD");
+    e.c.admin = admin;
+    // As a registered executor, d may cancel anyone's withdrawal directly (E_NO_WITHDRAWAL:
+    // past the role check); through evm_call the executor role doesn't apply.
+    let c = e.as_(d.as_str(), 0);
+    assert_eq!(panic_code(move || c.cancel_vault_withdrawal(acc("owner.testnet"))), "E_NO_WITHDRAWAL");
+    assert_eq!(e.evm_err("executor_cancel_withdrawal"), "E_UNAUTHORIZED");
+    // And the privileged checks refuse under acting-as outright.
+    let g = evm::ActingAs::enter(acc("admin.testnet"));
+    let c = e.as_("admin.testnet", 0);
+    assert_eq!(panic_code(move || c.set_paused(true)), "E_UNAUTHORIZED");
+    drop(g);
+    assert_eq!(evm::acting_as(), None);
+}
+
+// ----------------------------------------------------------------- D24
+
+#[test]
+fn sponsored_meta_tx_plan_uses_the_pool() {
+    // (The mocked chain keeps state written before a panic, so each failing
+    // attempt uses its own owner.)
+    let mut e = Env::new();
+    let owner = acc("owner.testnet");
+    // Not configured: a 0-deposit plan still needs a deposit.
+    let c = e.via("o1.testnet", RELAYER, 0);
+    assert_eq!(panic_code(move || c.set_plan(plan_input())), "E_INSUFFICIENT_DEPOSIT");
+    // Configured but empty.
+    e.sponsor(0);
+    let c = e.via("o2.testnet", RELAYER, 0);
+    assert_eq!(panic_code(move || c.set_plan(plan_input())), "E_SPONSOR_EXHAUSTED");
+    e.sponsor(NEAR);
+    // Someone else's transaction isn't sponsored.
+    let c = e.via("o3.testnet", "o3.testnet", 0);
+    assert_eq!(panic_code(move || c.set_plan(plan_input())), "E_INSUFFICIENT_DEPOSIT");
+    e.via("owner.testnet", RELAYER, 0).set_plan(plan_input());
+    assert!(near_sdk::test_utils::get_created_receipts().is_empty(), "nothing is paid out");
+    let s = e.sponsorship(&owner);
+    assert!(s.pool.0 < NEAR && s.daily_left == 49);
+    let paid = evm::sponsored(&owner).unwrap();
+    assert_eq!(paid.spent, NEAR - s.pool.0);
+    assert_eq!(paid.spent, paid.bytes as u128 * STORAGE_BYTE_COST);
+}
+
+#[test]
+fn sponsorship_caps() {
+    let mut e = Env::new();
+    e.as_("admin.testnet", 0).set_sponsor_config(evm::SponsorConfig { relayer: Some(acc(RELAYER)), allowance_per_owner: U128(NEAR), daily_new_plans: 1 });
+    e.as_("anyone.testnet", NEAR).fund_sponsor_pool();
+    e.via("owner.testnet", RELAYER, 0).set_plan(plan_input());
+    // Second new plan the same day.
+    let c = e.via("other.testnet", RELAYER, 0);
+    assert_eq!(panic_code(move || c.set_plan(plan_input())), "E_SPONSOR_EXHAUSTED");
+    assert_eq!(e.sponsorship(&acc("other.testnet")).daily_left, 0);
+    // Paying works; and the next day the cap resets.
+    e.via("other.testnet", RELAYER, NEAR).set_plan(plan_input());
+    e.advance(DAY);
+    assert_eq!(e.sponsorship(&acc("x.testnet")).daily_left, 1);
+    // Per-owner allowance: a tiny one is exhausted by any growth.
+    e.as_("admin.testnet", 0).set_sponsor_config(evm::SponsorConfig { relayer: Some(acc(RELAYER)), allowance_per_owner: U128(1), daily_new_plans: 50 });
+    let c = e.via("third.testnet", RELAYER, 0);
+    assert_eq!(panic_code(move || c.set_plan(plan_input())), "E_SPONSOR_EXHAUSTED");
+    // Admin only.
+    let c = e.as_("owner.testnet", 0);
+    assert_eq!(panic_code(move || c.set_sponsor_config(evm::SponsorConfig::default())), "E_UNAUTHORIZED");
+}
+
+#[test]
+fn freed_sponsored_storage_returns_to_the_pool_not_the_owner() {
+    let mut e = Env::new();
+    e.sponsor(NEAR);
+    let owner = acc("owner.testnet");
+    e.via("owner.testnet", RELAYER, 0).set_plan(plan_input());
+    let pool0 = e.sponsorship(&owner).pool.0;
+    e.via("owner.testnet", RELAYER, 0).set_release_rules(Some(rules()));
+    let pool1 = e.sponsorship(&owner).pool.0;
+    assert!(pool1 < pool0);
+    let spent = evm::sponsored(&owner).unwrap().spent;
+    // Clearing the rules (paying nothing, not sponsored) frees storage: the
+    // pool gets its part back, the owner nothing, the allowance stays spent.
+    e.via("owner.testnet", "owner.testnet", 0).set_release_rules(None);
+    assert!(near_sdk::test_utils::get_created_receipts().is_empty(), "no refund to the owner");
+    assert_eq!(e.sponsorship(&owner).pool.0, pool0);
+    assert_eq!(evm::sponsored(&owner).unwrap().spent, spent);
+    // Storage the owner paid for isn't credited to the pool beyond what the pool paid.
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    let bytes = evm::sponsored(&owner).unwrap().bytes;
+    e.as_("owner.testnet", 0).set_release_rules(None);
+    let back = e.sponsorship(&owner).pool.0 - pool0;
+    assert_eq!(back, (bytes - evm::sponsored(&owner).unwrap().bytes) as u128 * STORAGE_BYTE_COST);
+    assert!(e.sponsorship(&owner).pool.0 <= NEAR);
+}
+
+#[test]
+fn paying_owners_are_not_charged_to_the_pool() {
+    let mut e = Env::new();
+    e.sponsor(NEAR);
+    let owner = acc("owner.testnet");
+    // Attached deposit with the relayer as signer: the deposit pays.
+    e.via("owner.testnet", RELAYER, NEAR).set_plan(plan_input());
+    assert_eq!(e.sponsorship(&owner).pool.0, NEAR);
+    assert!(evm::sponsored(&owner).is_none());
+}
+
+#[test]
+fn fund_sponsor_pool_needs_a_deposit() {
+    let mut e = Env::new();
+    let c = e.as_("anyone.testnet", 0);
+    assert_eq!(panic_code(move || c.fund_sponsor_pool()), "E_INSUFFICIENT_DEPOSIT");
+    assert_eq!(e.as_("anyone.testnet", 5).fund_sponsor_pool(), U128(5));
+    assert_eq!(e.as_("anyone.testnet", 0).get_config().sponsor, evm::SponsorConfig::default());
+}

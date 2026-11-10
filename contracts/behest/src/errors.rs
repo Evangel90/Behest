@@ -53,6 +53,15 @@ pub enum Error {
     NoLightClient,
     InvalidProof,
     RevertNotProven,
+    EvmMessage,
+    EvmSignature,
+    EvmWrongContract,
+    EvmActor,
+    EvmNonce,
+    EvmExpired,
+    EvmMethod,
+    EvmArgs,
+    SponsorExhausted,
 }
 
 impl Error {
@@ -108,6 +117,15 @@ impl Error {
             Error::NoLightClient => "E_NO_LIGHT_CLIENT",
             Error::InvalidProof => "E_INVALID_PROOF",
             Error::RevertNotProven => "E_REVERT_NOT_PROVEN",
+            Error::EvmMessage => "E_EVM_MESSAGE",
+            Error::EvmSignature => "E_EVM_SIGNATURE",
+            Error::EvmWrongContract => "E_EVM_WRONG_CONTRACT",
+            Error::EvmActor => "E_EVM_ACTOR",
+            Error::EvmNonce => "E_EVM_NONCE",
+            Error::EvmExpired => "E_EVM_EXPIRED",
+            Error::EvmMethod => "E_EVM_METHOD",
+            Error::EvmArgs => "E_EVM_ARGS",
+            Error::SponsorExhausted => "E_SPONSOR_EXHAUSTED",
         }
     }
 }
