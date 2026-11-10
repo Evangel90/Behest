@@ -87,7 +87,16 @@ pnpm --filter @behest/relayer test
 pnpm --filter @behest/relayer start     # needs RELAYER_ACCOUNT_ID / RELAYER_PRIVATE_KEY in .env
 ```
 
-Clients sign a delegate action and `POST /relay {"signed_delegate": "<base64 borsh>"}`; `@behest/relayer/client` exports `sponsoredCall()` for this. The relayer only pays gas. It sponsors a single, zero-deposit call to the Behest contract, limited to `claim`, `retry_transfer`, `propose_release`, `approve_release`, `reject_release`, `check_in` and `cancel_release`, and only when the sender actually holds that role in the plan. Rate limits apply per sender and globally. Plan edits, deposits and withdrawals are never sponsored. The contract still authorizes everything, so a compromised relayer can waste its own NEAR but cannot move funds.
+Clients sign a delegate action and `POST /relay {"signed_delegate": "<base64 borsh>"}`; `@behest/relayer/client` exports `sponsoredCall()` for this. The relayer only pays gas. It sponsors a single, zero-deposit call to the Behest contract, limited to the allowlist in `services/relayer/src/methods.ts` (heir, guardian, delay-signer and owner calls, plus owner configuration with no deposit under D24), and only when the sender actually holds that role in the plan. Rate limits apply per sender and globally. Deposits are never sponsored, and NEAR owners pay for their own withdrawals. The contract still authorizes everything, so a compromised relayer can waste its own NEAR but cannot move funds.
+
+### EVM wallets and sponsored storage (D23, D24)
+
+EVM wallets act through signatures the contract verifies itself. The wallet signs a readable `personal_sign` message (`Behest signed action`, a summary line, a blank line, then `{"contract","network","actor","method","args","nonce","deadline_ms"}`; build it with `signedActionMessage` from `@behest/relayer/evm`), and `POST /evm-call {"message","signature"}` submits it as `evm_call`, which runs one allowlisted method as the wallet's eth-implicit account `0x…`. `GET /evm-nonce?account=0x…` returns the nonce to sign (also the contract view `get_evm_nonce {account}`). Responses match `/relay`: `{tx_hash, status, failure?, result?}`, where `result` is the method's return value. Owner configuration (`set_plan`, rules, options, Bitcoin destinations) sent with no deposit through the relayer, by meta-transaction or `evm_call`, is paid from the contract's sponsor pool within a per-owner allowance and a daily cap on new plans (`get_sponsorship {owner}`). The notifier accepts `{scheme: "eip191", accountId: "0x…", message, signature}` envelopes next to NEP-413. Set `NEAR_VIEW_RPC_URL` to send the relayer's policy reads to another RPC than its transactions.
+
+```sh
+pnpm --filter @behest/testnet gen-evm-vectors   # regenerate the contract's signature test vectors (viem)
+pnpm --filter @behest/testnet e2e-evm           # live: a plan run entirely by throwaway EVM wallets
+```
 
 ## Testnet deployment and live e2e
 
@@ -158,6 +167,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 ### Follow-up rounds (Stage 2)
 
 `e2e-followup`, 2026-11-09. A release split 0.05 NEAR as 0.026 to Tobi (0.01 fixed + 40%) and 0.024 to Amara, and settled. Afterwards a friend deposited 0.02 NEAR; the owner never checked in, so Amara herself proposed a follow-up round. Two guardians approved, and after the waiting period the heirs received 0.012 and 0.008: a plain 60/40 split, because Tobi's fixed amount was already paid. Both rounds are in the plan's history, and the owner could check in again afterwards (before D21 a settled release blocked check-ins and deposits for good).
+
+### First release run by EVM wallets (D23, D24)
+
+`e2e-evm`, 2026-11-10, on the upgraded main contract (no migration; wasm `fa5568e6…`). Five throwaway secp256k1 keys were the owner, both guardians and both heirs, each acting as its eth-implicit account and never holding NEAR. The owner created the plan by signature with no deposit ([F1pa…GiH](https://testnet.nearblocks.io/txns/F1pab7GMX3wwkf7omm52Lsivv6d7zxhqPKXSCDCabGiH)); the sponsor pool paid its 0.00605 NEAR of storage, charged to the owner's 0.1 NEAR allowance. A NEAR account deposited 0.2 NEAR of escrow for it. The owner checked in by signature; replaying that signature was refused by the relayer and, sent straight to the contract, by `E_EVM_NONCE`. A guardian's signed `claim` was refused (not a heir) and a signed `deposit` too (never allowed). Once overdue, the guardians proposed ([Gefc…cs](https://testnet.nearblocks.io/txns/Gefcivntzn8rTeXwvTsS8rvQ1RmZpnfa3wTzss3Bq1cs)) and approved ([3fSe…b7](https://testnet.nearblocks.io/txns/3fSeyHwjavnhaT3wFZJZXYRgRxkBWsDG4LQ9asF5Hbb7)) by signature; after the waiting period both heirs claimed ([HaWd…p](https://testnet.nearblocks.io/txns/HaWdzMYxrcm71qjLcPKGGggjPYDqgXyvZsCy9TgHZu2p), [Fwbc…co](https://testnet.nearblocks.io/txns/Fwbcya4EFbDkm5F6psy6m9DRVmD55ThjVpHTxifLUwco)). The payouts created both 0x accounts with exactly 0.12 and 0.08 NEAR and the Ethereum wallet contract installed. The relayer paid every transaction. The first runs hit fastnear's per-IP rate limit, so the relayer now reads through `NEAR_VIEW_RPC_URL` and retries rate-limited sends.
 
 ### First NEP-141 release (Stage 2)
 
