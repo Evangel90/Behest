@@ -110,8 +110,12 @@ export function personaSession(p: Persona): Session {
           const { signedDelegate } = await acct.createSignedMetaTransaction({ receiverId: CONTRACT_ID, actions: [fc], blockHeightTtl: 120 });
           return { txHash: await relay(base64Encode(encodeSignedDelegate(signedDelegate))), sponsored: true };
         } catch (e) {
-          // Relayer down: the persona holds a little NEAR, so pay gas directly.
-          if (!(e instanceof RelayError) || e.code !== "UNREACHABLE") throw e instanceof RelayError ? new Error(`Relayer: ${e.message}`) : e;
+          // Relayer down, or up but unable to reach the chain: the persona holds
+          // a little NEAR, so pay gas directly. Policy refusals (4xx) still fail.
+          // If the relayed call did land after all, the repeat is rejected or
+          // harmless: every sponsored method is guarded against running twice.
+          const infra = e instanceof RelayError && (e.code === "UNREACHABLE" || e.code === "RELAY_FAILED" || /^HTTP_5/.test(e.code));
+          if (!infra) throw e instanceof RelayError ? new Error(`Relayer: ${e.message}`) : e;
         }
       }
       const out = await acct.signAndSendTransaction({ receiverId, actions: [fc], throwOnFailure: false });
