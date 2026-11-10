@@ -108,12 +108,19 @@ const ERRORS: Record<string, string> = {
   E_INVALID_UTXOS: "The Bitcoin coins reported don't match the vault. Refresh and try again.",
   E_BTC_NOT_HEAD: "Only the latest Bitcoin payout can be re-sent with a higher fee; this one confirms once the network catches up.",
   E_FEE_AT_CAP: "The network fee is already at the cap.",
+  // D23/D24: Ethereum-wallet signed actions and sponsored storage
+  E_SPONSOR_EXHAUSTED: "Behest can't cover storage for this right now (its sponsor pool or your allowance is used up). Nothing changed.",
+  E_EVM_METHOD: "An Ethereum wallet can't do this through Behest. Nothing changed.",
+  E_EVM_NONCE: "Another signed action went through first. Try again: you'll be asked to sign once more.",
+  E_EVM_EXPIRED: "The signature expired before it reached the chain. Try again.",
+  E_EVM_DEADLINE: "The signature expired before it reached the chain. Try again.",
 };
 
 export function humanError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   const code = msg.match(/E_[A-Z_]+/)?.[0];
   if (code && ERRORS[code]) return ERRORS[code];
+  if (code?.startsWith("E_EVM_")) return `Behest couldn't accept that signature (${code}). Nothing changed.`;
   if (/rejected|cancel|denied/i.test(msg)) return "You cancelled in your wallet. Nothing was sent.";
   return msg.length > 220 ? `${msg.slice(0, 220)}…` : msg;
 }

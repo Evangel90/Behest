@@ -38,6 +38,8 @@ export function relative(target: number, now: number): string {
 const PERSONA_NAMES: Record<string, string> = { owner: "Kemi", g1: "Dayo", g2: "Funmi", g3: "Chidi" };
 
 export function shortName(account: string): string {
+  // Ethereum-wallet accounts (0x…): the short address, as wallets show it.
+  if (/^0x[0-9a-fA-F]{40}$/.test(account)) return shortAddr(account.toLowerCase());
   const first = account.split(".")[0] ?? account;
   // persona accounts look like "x7f2-amara.demo…": show "Amara"
   const role = first.includes("-") ? first.slice(first.lastIndexOf("-") + 1) : first;

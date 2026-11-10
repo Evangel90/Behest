@@ -109,3 +109,32 @@ export async function btcUtxos(address: string): Promise<BtcUtxo[]> {
 
 /** At most this many coins per payout (each needs its own MPC signature). */
 export const MAX_BTC_INPUTS = 2;
+
+// ------------------------------------------------- Ethereum wallets (D23/D24)
+
+/** The contract has no such method (a deployment from before it was added). */
+export const isMissingMethod = (e: unknown) => /MethodNotFound|MethodResolveError|method .*not found|does not exist/i.test(e instanceof Error ? `${e.name} ${e.message}` : JSON.stringify(e));
+
+/** Next signed-action nonce of an Ethereum account (0x…), as the contract counts them. */
+export async function getEvmNonce(account: string): Promise<bigint> {
+  const n = await view<string | number>("get_evm_nonce", { account: account.toLowerCase() });
+  return BigInt(n);
+}
+
+export interface Sponsorship {
+  pool: string;
+  allowance_left: string;
+  daily_left: number;
+}
+/** What Behest's sponsor pool can still cover for an owner's storage (D24); null on a contract without the pool. */
+export async function getSponsorship(owner: string): Promise<Sponsorship | null> {
+  try {
+    return await view<Sponsorship>("get_sponsorship", { owner });
+  } catch (e) {
+    if (isMissingMethod(e)) return null;
+    throw e;
+  }
+}
+
+/** Whether the pool can cover an owner's next storage-growing change. The contract has the final say. */
+export const sponsorshipAvailable = (s: Sponsorship | null, newPlan: boolean) => !!s && BigInt(s.allowance_left) > 0n && BigInt(s.pool) > 0n && (!newPlan || s.daily_left > 0);

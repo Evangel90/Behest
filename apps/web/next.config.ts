@@ -17,6 +17,8 @@ const config: NextConfig = {
     NEXT_PUBLIC_RELAYER_URL: process.env.RELAYER_URL ?? "http://localhost:8787",
     // Never the private SEPOLIA_RPC_URL (it may embed an API key).
     NEXT_PUBLIC_SEPOLIA_RPC_URL: process.env.PUBLIC_SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
+    // Public by design (WalletConnect project ids ship in every dapp); empty hides the phone-wallet option.
+    NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: process.env.WALLETCONNECT_PROJECT_ID ?? "",
   },
 };
 export default config;
