@@ -12,7 +12,7 @@ Non-custodial inheritance for digital assets, enforced by a NEAR contract and NE
 | `contracts/behest/` | Rust NEAR contract (near-sdk 5.x) |
 | `services/executor/` | TypeScript executor: broadcasts contract-signed Sepolia transfers, tracks confirmations, retries |
 | `apps/web/` | Next.js web app: landing, owner dashboard and setup, guardian approval, mobile heir claim, public inspector, “Try as…” personas |
-| `services/notifier/` | Read-only notifier: check-in reminders and lifecycle notices to the console and an optional webhook |
+| `services/notifier/` | Notifier: watches plans (read-only) and delivers reminders and lifecycle notices per person by email, Telegram and signed webhooks |
 | `services/relayer/` | Gas relayer: pays NEAR gas (NEP-366 meta-transactions) so heirs, guardians and owner check-ins need no NEAR |
 | `tools/testnet/` | Testnet deploy script and live end-to-end scenarios |
 | `deployments/testnet.json` | Current testnet deployment (public account IDs, wasm hash) |
@@ -58,18 +58,27 @@ Sign-in options:
 
 Heirs see the paper theme in plain language; hashes appear only under "Technical details". Anyone can open `/plan/<owner>?view=inspect`.
 
-## Notifier
+## Notifications
+
+`services/notifier` watches plans with view calls only (it holds no NEAR keys, so nothing it does or fails to do can change a plan) and delivers notices to each person over email, Telegram and webhooks. People choose channels on the web app's **Notifications** screen; contacts stay in the notifier's own SQLite database, never on-chain, and every change is a NEP-413 message signed by the account (a signature, not a transaction).
 
 ```sh
 pnpm --filter @behest/notifier test
-NOTIFY_OWNERS=kemi.testnet pnpm --filter @behest/notifier start   # optional NOTIFY_WEBHOOK_URL (Slack/Discord-style JSON)
+pnpm --filter @behest/notifier start          # reads the root .env; API on NOTIFY_PORT (8790)
+NEXT_PUBLIC_NOTIFIER_URL=http://localhost:8790 pnpm --filter @behest/web dev
 ```
 
-It sends:
-- an owner reminder once 75% of the check-in window has passed;
-- notices on unreachable, proposed, approved (with the cancel deadline), cancelled, ready to receive, transfer failed, and settled.
+What it sends, and to whom: check-in reminders at 75% and 95% of the window (owner); owner unreachable (owner, guardians); release proposed, guardian votes (owner, guardians; heirs too for follow-up rounds); approved with the cancel deadline, delay requested / extended (owner, guardians, heirs, delay signers); rejected, cancelled, settled; ready to receive, worded by release mode (heirs); each transfer's arrival with an Etherscan / mempool.space / NEAR Blocks link (that heir); failures, proven reverts re-issued, unclaimed shares moved (that heir, guardians); owner vault withdrawals. Wording never says more than the contract knows: "hasn't checked in", "unreachable".
 
-Each notice has a stable key, so restarts never repeat one. The notifier holds no keys, and a missed notice can't change a plan. It watches every open release plus the owners in `NOTIFY_OWNERS`; the contract doesn't list all plans.
+Plans watched: every open release, every subscriber's own plan, plans a subscriber is part of and chose to follow, and `NOTIFY_OWNERS`. A notice's key is recorded once, so restarts never repeat one; each (notice, person, channel) delivery retries with exponential backoff independently and gives up after `NOTIFY_MAX_ATTEMPTS`. `NOTIFY_WEBHOOK_URL` still receives every notice as an operator feed. An older `.notifier-state.json` is imported on first start.
+
+**Email** (any SMTP provider). Set `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS or 465 with `SMTP_SECURE=1`), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (e.g. `Behest <notify@your-domain>`), or one `SMTP_URL`. For Resend: host `smtp.resend.com`, port 465, user `resend`, password = API key; Postmark: `smtp.postmarkapp.com`, 587, server token as user and password; SES: the region's SMTP endpoint and SMTP credentials. The From domain needs SPF/DKIM set up with the provider. Set `NOTIFY_PUBLIC_URL` to the notifier's public https URL (confirmation and unsubscribe links) and `NOTIFY_APP_URL` to the web app.
+
+**Telegram.** In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name and a username ending in `bot`, and put the token in `TELEGRAM_BOT_TOKEN` and the username (no @) in `TELEGRAM_BOT_USERNAME`. Optionally `/setcommands` with `status - what this chat receives` and `stop - unlink this chat`. The notifier long-polls `getUpdates`, so no public URL is needed; run one instance per bot.
+
+**Webhooks.** Any https URL (Slack and Discord incoming webhooks work as they are). Each POST carries `X-Behest-Event`, `X-Behest-Delivery` (de-duplicate on it), `X-Behest-Timestamp` and `X-Behest-Signature: v1=<hex HMAC-SHA256(secret, "<timestamp>.<body>")>`; the secret is shown once when the webhook is added. The body has `kind`, `owner`, `account`, `proposal_id`, `transfer_index`, `asset`, `amount`, `tx_hash`, `explorer_url`, `links`, `subject`, plus `text` (Slack) and `content` (Discord). Private, loopback and link-local addresses are refused; `NOTIFY_WEBHOOK_ALLOW_INSECURE=1` allows http and local hosts for development only.
+
+All variables are listed in `.env.example`. Threats 32–38 cover the new surface.
 
 ## Gas relayer
 
@@ -190,4 +199,5 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Fixed amounts with explicit remainder, named alternate, unclaimed-share fallback (D17, threat 25; live `e2e-rules`)
 - [x] Owner ETH/token withdrawal from the vault (D7): `withdraw_vault`, `E_VAULT_BUSY`, executor-driven same-nonce cancel; live scenarios reclaim their unspent fee reserve
 - [x] Follow-up release rounds: settled releases archived, heirs can start a round for what is left, fixed amounts paid once, reported balances recorded and checked against the live vaults before voting; rejection returns NEP-141 shares; owners can check in after a release (D21, threat 4; live `e2e-followup`)
+- [x] Notifications per person by email, Telegram and signed webhooks, with NEP-413-signed contact management, retries per channel and every Stage 2 event (D11, threats 32–38; live run against `behest-ekkr6.testnet`)
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)
