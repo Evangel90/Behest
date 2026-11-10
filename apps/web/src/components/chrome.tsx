@@ -139,6 +139,7 @@ const APP_LINKS = [
   { href: "/setup", label: "Create a plan" },
   { href: "/try", label: "Try as…" },
   { href: "/inspect", label: "Inspect a plan" },
+  { href: "/notifications", label: "Notifications" },
 ];
 
 export function NavItem({ active, children, ...p }: { active?: boolean; children: ReactNode } & ({ href: string; onClick?: never } | { onClick: () => void; href?: never })) {
