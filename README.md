@@ -98,6 +98,18 @@ pnpm --filter @behest/testnet gen-evm-vectors   # regenerate the contract's sign
 pnpm --filter @behest/testnet e2e-evm           # live: a plan run entirely by throwaway EVM wallets
 ```
 
+### Plan tiers (D25)
+
+A plan with one heir and NEAR only is free. **Standard** ($49, once) adds up to 5 heirs and guardians, Ethereum and Bitcoin destinations, NEP-141 escrow and release rules; **Complete** ($149) adds automatic and hybrid release, per-heir modes and delay signers. Prices are an admin schedule in the fee token (`get_tier_config`). Anyone pays for any owner with `ft_transfer_call` of the fee token to Behest and `msg = {"pay_tier":"<owner>"}`. Payments add up as credit, so an upgrade costs only the difference. Tiers limit what an owner can save (`E_TIER_REQUIRED`), never a check-in, proposal or release. Fee revenue sits in a treasury apart from escrow, network-fee reserves and the sponsor pool (`get_treasury`; the admin pays it out with `withdraw_treasury`).
+
+- Testnet: `deploy-contract` deploys a mock USDC with a public faucet (`behest-<suffix>-usdc.testnet`, `mint {account_id, amount}` ≤ 500 USDC) and turns tiers on. The app pays with test USDC; owners without NEAR (Ethereum wallets) are paid for by `/api/demo/usdc` from `DEMO_FUNDER_ACCOUNT_ID`.
+- Mainnet: set `USDC_TOKEN_ID` to Circle's USDC on NEAR. The app's "Any asset" option quotes NEAR Intents' 1Click API, which swaps a deposit on almost any chain into USDC and pays Behest with the owner in `customRecipientMsg`.
+- `/pay/<owner>` lets a relative pay; the owner screen shows the tier and keeps the service fee, storage and network fees on separate lines; `/inspect` shows the treasury.
+
+```sh
+pnpm --filter @behest/testnet e2e-tiers   # live: free plan, refusals, part payments by a relative, upgrades, treasury payout
+```
+
 ## Testnet deployment and live e2e
 
 Current deployment: see `deployments/testnet.json` (contract `behest-ekkr6.testnet`, demo timers).
@@ -137,6 +149,7 @@ pnpm --filter @behest/testnet bootstrap <suffix> --parent <funded.testnet> --tea
 | `e2e-followup` | Follow-up rounds (D21): a release with Tobi's 0.01 NEAR fixed amount settles; a friend deposits 0.02 NEAR afterwards; Amara (an heir) proposes a follow-up round, guardians approve, both heirs receive a plain 60/40 split (the fixed amount isn't paid twice); the history holds both rounds and the owner can check in again |
 | `e2e-revert` | Proven reverts (D22): a transfer signed with too little gas reverts on Sepolia; a re-issue on the admin's word is refused; once the Ethereum light client on NEAR finalizes the block, a proof of the revert is checked by the contract and the executor re-issues under the next nonce; the heir receives exactly her share |
 | `e2e-partial` | Partial failure across two assets: a guardian over-reports the vault's WETH, Amara's ETH confirms, and her WETH is caught before broadcast (`WouldRevert`: no fee spent, nonce kept). After a top-up she retries; WETH is re-signed at the same nonce and confirms, the confirmed ETH transfer is never touched, and she ends with exactly one share of each |
+| `e2e-tiers` | Plan tiers (D25): a fresh owner saves a free one-heir plan; a second heir with an Ethereum destination is refused and a wNEAR deposit refunded; a relative pays 20 USDC (credit, still Free) and a dust payment for a stranger is refunded; the owner pays the remaining 29 for Standard and saves the two-heir plan; automatic release is refused until the 100 USDC still missing for Complete is paid; the treasury collected exactly 149 and the admin pays 1 out |
 | `topup <account> [rounds] [--pool <NEAR>]` | Refills a testnet account from NEAR's account-creation faucet (≈10 NEAR a round: a throwaway account is created, then deleted into the target), optionally paying NEAR into the D24 sponsor pool; keys are kept in the keychain until swept, so an interrupted run loses nothing |
 | `recover-vaults <owner>…` | Withdraws what earlier runs left in plan vaults back to the funder via D7 (re-creates deleted scenario owner accounts by name) |
 | `reissue <owner> --run` | Recovery: proves each reverted Sepolia transfer against the Ethereum light client (D22), then re-issues it on a fresh nonce with the current gas limit |
@@ -177,6 +190,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 
 `e2e-nep141`, 2026-11-08, on the upgraded main contract (no migration). The owner deposited 0.01 wNEAR with `ft_transfer_call`, and a deposit naming a plan that doesn't exist was refunded by the token. The owner withdrew 0.001. On release the remaining 0.009 wNEAR went 60/40 to two fresh implicit accounts (0.0054 and 0.0036); the contract registered each with `wrap.testnet` first, from 0.0025 NEAR it had reserved out of the plan's escrow. The first attempt found a gap: a token only pays registered accounts, and Behest itself wasn't registered. Listing a token now registers the contract with it.
 
+### First tier payments (D25)
+
+`e2e-tiers`, 2026-11-11, after upgrading `behest-ekkr6.testnet` in place (no migration; wasm `b908c3c8…`) and deploying the mock USDC at `behest-ekkr6-usdc.testnet`. A fresh owner saved a one-heir NEAR plan for free. Adding a second heir with an Ethereum destination was refused with `E_TIER_REQUIRED`, and a 0.005 wNEAR deposit was refunded by the token. A relative paid 20 USDC: the plan stayed Free with 29 due for Standard. A 0.5 USDC first payment for an account Behest had never seen was refunded. The owner paid 29 and the two-heir plan saved, with the wNEAR now accepted into escrow. Automatic release was refused until the owner paid the 100 USDC still missing for Complete, after which it saved. The treasury showed exactly 149 USDC from 3 payments; the admin paid 1 USDC out, and the owner's attempt was refused. Every existing scenario now pays its owner's tier the same way before creating a plan.
+
 ### Clean reproduction (Stage 1 exit gate)
 
 On 2026-11-08 a second deployment was built from scratch with no faucet: `bootstrap r1`, a source rebuild (same wasm sha256 `0e2c65ea…` as the main deployment), then `deploy-contract r1 --parent` (`deployments/r1.json`). Every NEAR scenario passed on it. So did `e2e-eth`: [Tobi, nonce 0](https://sepolia.etherscan.io/tx/0x5f1abb07f7b96c33cbc22676dc0b0cf959fba10519beff9d1875def09035de21) and [Amara, nonce 1](https://sepolia.etherscan.io/tx/0x020eccf530488d8991f0e8db5d91d23ba7176c1ae9230497fca055d46f743e85), each with its exact share. The run surfaced two tooling issues, both fixed: scenario owners were never reclaimed, and an error check crashed on BigInt fields.
@@ -215,4 +232,5 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Follow-up release rounds: settled releases archived, heirs can start a round for what is left, fixed amounts paid once, reported balances recorded and checked against the live vaults before voting; rejection returns NEP-141 shares; owners can check in after a release (D21, threat 4; live `e2e-followup`)
 - [x] Notifications per person by email, Telegram and signed webhooks, with NEP-413-signed contact management, retries per channel and every Stage 2 event (D11, threats 32–38; live run against `behest-ekkr6.testnet`)
 - [x] Heir recovery packet: a printable page per heir (`/plan/<owner>/packet?heir=…`) and a JSON download with where the plan lives (contract, vaults, explorer links), each heir's share, fixed amounts, alternate/fallback, destinations and release mode, the timeline in words, and claim steps in the app, with `near` CLI commands, or by Ethereum wallet; public data only, linked from the owner and heir screens and the "ready to receive" notice
+- [x] Plan tiers and service-fee accounting: Free / Standard / Complete paid once in USDC by anyone, credit toward upgrades, saves gated and releases never; fee revenue in a treasury separate from escrow, network-fee reserves and the sponsor pool, shown apart on the owner screen and on Inspect; NEAR Intents for any asset on mainnet, test USDC on testnet (D25, threats 44–46; live `e2e-tiers`)
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)
