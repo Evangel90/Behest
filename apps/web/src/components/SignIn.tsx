@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, FlaskConical, Hexagon, LoaderCircle, Mail, Puzzle, Smartphone, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, FlaskConical, Hexagon, Landmark, LoaderCircle, Mail, Puzzle, Smartphone, Wallet, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { humanError } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
@@ -18,6 +18,8 @@ interface FoundWallet {
 }
 
 type View = "main" | "evm" | "qr";
+/** Set when someone chose "A DAO or multisig": the account menu opens the DAO picker once signed in. */
+export const PICK_DAO = "behest.pick-dao";
 
 export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { connectWallet, connectEvm } = useSession();
@@ -53,8 +55,12 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
     };
   }, [open, view]);
 
-  async function nearWallet() {
+  async function nearWallet(thenDao = false) {
     setError(null);
+    try {
+      if (thenDao) sessionStorage.setItem(PICK_DAO, "1");
+      else sessionStorage.removeItem(PICK_DAO);
+    } catch {}
     try {
       onClose();
       await connectWallet();
@@ -165,7 +171,7 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Dialog open={open} onClose={close} title="Sign in" description="Behest never holds your keys. Pick whatever you already use.">
       <div className="flex flex-col gap-2">
-        <Option icon={Wallet} onClick={nearWallet} title="NEAR wallet" body="HOT, Meteor, Intear, MyNearWallet, Ledger and more." tag="Gas sponsored" />
+        <Option icon={Wallet} onClick={() => void nearWallet()} title="NEAR wallet" body="HOT, Meteor, Intear, MyNearWallet, Ledger and more." tag="Gas sponsored" />
         <Option
           icon={Hexagon}
           onClick={() => {
@@ -175,6 +181,13 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
           title="Ethereum wallet"
           body="MetaMask, Rabby, Coinbase Wallet, or a phone wallet. You act from a NEAR account at your own 0x address."
           tag="Gas sponsored"
+        />
+        <Option
+          icon={Landmark}
+          onClick={() => void nearWallet(true)}
+          title="A DAO or multisig"
+          body="Sign in as a council member with a NEAR wallet, then pick the SputnikDAO (Trezu) you act for. Each action becomes a proposal."
+          tag="Proposals"
         />
         <Option
           icon={Mail}

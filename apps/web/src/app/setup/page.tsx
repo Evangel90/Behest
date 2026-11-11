@@ -10,8 +10,10 @@ import { HeirList, ShareBar } from "@/components/PlanParts";
 import { Swap } from "@/components/motion";
 import { SignInDialog } from "@/components/SignIn";
 import { TierNeeded } from "@/components/Tiers";
+import { DaoBanner, DaoSetupNotes } from "@/components/Dao";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
 import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
+import type { DaoCall } from "@/lib/dao";
 import { humanError } from "@/lib/hooks";
 import { describePlan, duration, parseNear, percent, shortName, validateDraft } from "@/lib/plan";
 import { SponsorRefused, useSession } from "@/lib/session";
@@ -85,9 +87,11 @@ function Setup() {
   const [ack, setAck] = useState(false);
   const [spons, setSpons] = useState<Sponsorship | null | undefined>(undefined);
   const [paidBy, setPaidBy] = useState<"behest" | "you">("you");
+  /** D26: acting as a DAO, saving is a proposal; this is its id. */
+  const [proposed, setProposed] = useState<number | null | undefined>(undefined);
   // D25: what the saved plan already has beside the policy (rules, options,
   // Bitcoin destinations, token escrow) counts toward the tier it needs.
-  const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean }>({ rules: null, options: null, btc: 0, tokens: false });
+  const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean; delegates: number }>({ rules: null, options: null, btc: 0, tokens: false, delegates: 0 });
   const tierCfg = useTierConfig();
   const { tier, reload: reloadTier } = useTier(session?.accountId);
   const top = useRef<HTMLDivElement>(null);
@@ -129,7 +133,8 @@ function Setup() {
       viewCall<ReleaseRules | null>("get_release_rules", { owner }).catch(() => null),
       viewCall<ReleaseOptions | null>("get_release_options", { owner }).catch(() => null),
       getBtcDestinations(owner).catch(() => []),
-    ]).then(([rules, options, btc]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n) }));
+      viewCall<string[]>("get_checkin_delegates", { owner }).catch(() => []),
+    ]).then(([rules, options, btc, delegates]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n), delegates: delegates.length }));
   }, [existing]);
   // D24: can Behest's sponsor pool cover this owner's storage?
   useEffect(() => {
@@ -185,7 +190,7 @@ function Setup() {
   const finalErrors = session ? validateDraft(plan, session.accountId) : [];
   // D25: the tier this draft needs, and whether the owner has it (or already uses it).
   const tiersOn = !!tierCfg?.fee_token;
-  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens);
+  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates);
   const needTier = tierCfg && tiersOn ? requiredTier(tierCfg, draftFeatures) : 0;
   const allowance = tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0;
   const tierBlocked = tiersOn && (!tier || needTier > allowance);
@@ -213,6 +218,18 @@ function Setup() {
     setError(null);
     try {
       setPhase("plan");
+      // D26: a DAO saves the plan and its first deposit in one proposal (one vote), paying its own storage.
+      if (session.propose) {
+        const calls: DaoCall[] = [{ method: "set_plan", args: { plan }, deposit: 100_000_000_000_000_000_000_000n }];
+        if (!editing && depositYocto && depositYocto > 0n) calls.push({ method: "deposit", args: { owner: session.accountId }, deposit: depositYocto });
+        const r = await session.propose(calls);
+        setProposed(r.proposalId ?? null);
+        setPhase("done");
+        try {
+          sessionStorage.removeItem(DRAFT_KEY);
+        } catch {}
+        return;
+      }
       let saved = false;
       // D24: no deposit, Behest's sponsor pool pays the storage. If the relayer
       // or the pool says no, a NEAR account pays as before (nothing changed yet).
@@ -280,12 +297,18 @@ function Setup() {
           <span className="flex size-20 animate-pop items-center justify-center rounded-full bg-ok-bg text-ok">
             <CircleCheck aria-hidden className="size-10" />
           </span>
-          <h1 className="text-[clamp(32px,6vw,48px)] font-medium leading-none tracking-[-0.04em]">{editing ? "Plan updated." : "Your plan is live."}</h1>
-          <p role="status" className="max-w-[420px] text-lg text-muted">
-            Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.
-          </p>
+          <h1 className="text-[clamp(32px,6vw,48px)] font-medium leading-none tracking-[-0.04em]">{proposed !== undefined ? "Proposed to the DAO." : editing ? "Plan updated." : "Your plan is live."}</h1>
+          {proposed !== undefined ? (
+            <p role="status" className="max-w-[460px] text-lg text-muted">
+              {proposed !== null ? `Proposal #${proposed}` : "The proposal"} {editing ? "updates" : "creates"} the plan once {owner}&apos;s council approves it. Vote on it from the plan page or your DAO app.
+            </p>
+          ) : (
+            <p role="status" className="max-w-[420px] text-lg text-muted">
+              Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.
+            </p>
+          )}
           <ButtonLink href={`/plan/${encodeURIComponent(owner)}`} variant="primary" iconRight={ArrowRight}>
-            Open your plan
+            {proposed !== undefined ? "Go to the proposals" : "Open your plan"}
           </ButtonLink>
         </div>
       </AppShell>
@@ -303,6 +326,9 @@ function Setup() {
       </div>
 
       <Stepper steps={steps} current={step} ok={stepOk} reachable={reachable} onGo={go} />
+
+      <DaoBanner />
+      <DaoSetupNotes step={step} intervalMs={plan.check_in_interval_ms} heirs={plan.heirs.map((h) => h.account_id)} mode={extras.options?.mode ?? null} />
 
       {editing && existing && step === steps[0] && <Notice tone="info">Your current plan is filled in. Saving makes a new version, which counts as a check-in; any open release must be cancelled first.</Notice>}
 

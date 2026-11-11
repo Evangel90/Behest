@@ -10,6 +10,7 @@ import { PlanHeader, type PlanCtx } from "@/components/plan/common";
 import { DelayView, GuardianView } from "@/components/plan/GuardianView";
 import { HeirView } from "@/components/plan/HeirView";
 import { OwnerView } from "@/components/plan/OwnerView";
+import { DaoBanner, DaoProposals, DelegateCheckIn } from "@/components/Dao";
 import { PublicView } from "@/components/plan/PublicView";
 import { useOptions } from "@/components/ReleaseOptions";
 import { useRules } from "@/components/ReleaseRules";
@@ -77,6 +78,8 @@ function PlanScreen() {
           </Button>
         </EmptyState>
       )}
+      {view !== undefined && <DaoBanner />}
+      {view !== undefined && <DaoProposals owner={owner} onChange={refresh} />}
       {view === null && (
         <EmptyState icon={FileQuestion} title={`No plan for ${owner}`} body="Check the account name. If it's yours, you can create a plan in a few minutes.">
           <ButtonLink href="/inspect" variant="outline" icon={Search}>
@@ -93,6 +96,7 @@ function PlanScreen() {
         <>
           <PlanHeader view={ctx.view} role={role} roles={roles} onRole={setRole} />
           {error && <p className="text-sm text-muted">Showing the last update; reconnecting…</p>}
+          <DelegateCheckIn owner={owner} me={me ?? ""} open={!!ctx.view.plan.proposal && ctx.view.status !== "Settled"} onDone={refresh} />
           <Swap id={role} className="flex flex-col gap-6">
             {role === "owner" && <OwnerView ctx={ctx} />}
             {role === "guardian" && <GuardianView ctx={ctx} />}

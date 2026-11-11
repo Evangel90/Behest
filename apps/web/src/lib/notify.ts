@@ -58,6 +58,8 @@ export interface Settings {
   contacts: Contact[];
   preferences: Record<string, boolean>;
   watches: string[];
+  /** D26: DAOs whose notices this account sent to their whole council. */
+  councils?: string[];
   recent: RecentNotice[];
 }
 
@@ -199,6 +201,15 @@ export async function savePreferences(session: Session, preferences: Record<stri
 
 export async function saveWatches(session: Session, owners: string[]) {
   return request<{ watches: string[]; refused: string[] }>("PUT", "/v1/watches", await signAction(session, `watch ${owners.length} plan${owners.length === 1 ? "" : "s"}`, "watches.set", { owners }));
+}
+
+/** D26: a council member sends the DAO's notices to every council member (or stops). */
+export async function setCouncil(session: Session, dao: string, enabled: boolean) {
+  return request<{ dao: string; enabled: boolean; members: string[] }>(
+    "PUT",
+    "/v1/council",
+    await signAction(session, `${enabled ? "send" : "stop sending"} ${dao}'s notices to its whole council`, "council.set", { dao, enabled }),
+  );
 }
 
 export const resendConfirmation = (token: string, id: number) => request<{ ok: true }>("POST", `/v1/contacts/${id}/resend`, undefined, token);

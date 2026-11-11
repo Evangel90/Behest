@@ -22,12 +22,22 @@ export function useTx(after?: () => unknown) {
   afterRef.current = after;
 
   const run = useCallback(
-    async (label: string, fn: () => Promise<{ txHash: string; sponsored?: boolean } | void>, opts: { done?: string } = {}): Promise<boolean> => {
+    async (label: string, fn: () => Promise<{ txHash: string; sponsored?: boolean; proposalId?: number } | void>, opts: { done?: string } = {}): Promise<boolean> => {
       setBusy(label);
       const id = toast.show({ tone: "pending", title: `${label}…`, body: "Confirm in your wallet if it asks. This usually takes a few seconds." });
       try {
         const r = await fn();
         await Promise.resolve(afterRef.current?.()).catch(() => {});
+        if (r && session?.dao) {
+          // D26: nothing ran yet; the DAO's council votes on it.
+          toast.update(id, {
+            tone: "ok",
+            title: `Proposed to ${session.dao.id}${r.proposalId !== undefined ? ` as #${r.proposalId}` : ""}`,
+            body: "It runs as the DAO once the council approves. Vote below or in your DAO app.",
+            href: r.txHash ? `${NEAR_EXPLORER}/txns/${r.txHash}` : undefined,
+          });
+          return true;
+        }
         toast.update(id, {
           tone: "ok",
           title: opts.done ?? `${label}: done.`,
@@ -42,7 +52,7 @@ export function useTx(after?: () => unknown) {
         setBusy(null);
       }
     },
-    [toast],
+    [toast, session],
   );
 
   const act = useCallback<Act>(

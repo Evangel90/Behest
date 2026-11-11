@@ -21,6 +21,7 @@ import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
 import { TierCard } from "../Tiers";
+import { DelegatesCard } from "../Dao";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -121,6 +122,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
 
       <Group title="Plan and fees">
         <TierCard view={view} editable={!view.plan.proposal || s === "Settled"} />
+        <DelegatesCard owner={view.plan.owner} editable={!view.plan.proposal || s === "Settled"} onSaved={ctx.refresh} />
       </Group>
 
       <Group title="Advanced">

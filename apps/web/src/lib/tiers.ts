@@ -15,7 +15,11 @@ export interface TierSpec {
   external_assets: boolean;
   release_rules: boolean;
   advanced_release: boolean;
+  /** D26: check-in delegates. Absent or null on a schedule saved before D26: follows release_rules. */
+  checkin_delegates?: boolean | null;
 }
+
+export const delegatesAllowed = (s: TierSpec) => s.checkin_delegates ?? s.release_rules;
 
 export interface TierConfig {
   fee_token: string | null;
@@ -30,6 +34,8 @@ export interface Features {
   external_assets: boolean;
   release_rules: boolean;
   advanced_release: boolean;
+  /** D26 */
+  checkin_delegates?: boolean;
 }
 
 export interface TierView {
@@ -57,18 +63,20 @@ export function tierPerks(s: TierSpec): string[] {
   const out = [`${s.max_heirs === 1 ? "1 heir" : `Up to ${s.max_heirs} heirs`}`, `Up to ${s.max_guardians} guardians`];
   out.push(s.external_assets ? "NEAR, tokens, ETH and Bitcoin" : "NEAR only");
   if (s.release_rules) out.push("Fixed amounts, alternates and a fallback");
+  if (delegatesAllowed(s)) out.push("Check-in delegates (for DAOs and busy owners)");
   if (s.advanced_release) out.push("Automatic or hybrid release, per-heir modes, delay signers");
   else out.push("Heirs claim their share");
   return out;
 }
 
-export function features(plan: Pick<PlanInput, "heirs" | "guardians">, rules: ReleaseRules | null, options: ReleaseOptions | null, btcDestinations: number, tokenEscrow: boolean): Features {
+export function features(plan: Pick<PlanInput, "heirs" | "guardians">, rules: ReleaseRules | null, options: ReleaseOptions | null, btcDestinations: number, tokenEscrow: boolean, delegates = 0): Features {
   return {
     heirs: plan.heirs.length,
     guardians: plan.guardians.length,
     external_assets: tokenEscrow || btcDestinations > 0 || plan.heirs.some((h) => !!h.eth_destination),
     release_rules: !!rules,
     advanced_release: !!options && (options.mode !== "Claim" || options.delay_signers.length > 0 || (options.overrides ?? []).length > 0),
+    checkin_delegates: delegates > 0,
   };
 }
 
@@ -78,7 +86,8 @@ export function allows(s: TierSpec, f: Features): boolean {
     f.guardians <= s.max_guardians &&
     (s.external_assets || !f.external_assets) &&
     (s.release_rules || !f.release_rules) &&
-    (s.advanced_release || !f.advanced_release)
+    (s.advanced_release || !f.advanced_release) &&
+    (delegatesAllowed(s) || !f.checkin_delegates)
   );
 }
 
@@ -97,6 +106,7 @@ export function reasonFor(cfg: TierConfig, t: number, f: Features): string | nul
   if (f.external_assets && !s.external_assets) return "Ethereum, Bitcoin or token assets";
   if (f.release_rules && !s.release_rules) return "release rules";
   if (f.advanced_release && !s.advanced_release) return "automatic or hybrid release, per-heir modes or delay signers";
+  if (f.checkin_delegates && !delegatesAllowed(s)) return "check-in delegates";
   return null;
 }
 
@@ -155,9 +165,11 @@ export function payFromWallet(session: Session, cfg: TierConfig, owner: string, 
 /** Testnet: mints test USDC from the mock token's faucet (≤ 500 per call) to `to`. */
 export async function mintTest(session: Session, cfg: TierConfig, to: string, amount: bigint) {
   if (!cfg.fee_token || !isTestnet) throw new Error("Test USDC exists only on testnet.");
+  // D26: acting as a DAO, the member mints to the DAO directly (anyone may; no proposal needed for a faucet).
+  const signer = session.dao?.member ?? session;
   for (let left = amount; left > 0n; ) {
     const n = left > 500_000_000n ? 500_000_000n : left;
-    await session.call("mint", { account_id: to, amount: n.toString() }, { receiverId: cfg.fee_token, tgas: 30 });
+    await signer.call("mint", { account_id: to, amount: n.toString() }, { receiverId: cfg.fee_token, tgas: 30 });
     left -= n;
   }
 }

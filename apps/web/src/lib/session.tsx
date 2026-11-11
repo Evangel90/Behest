@@ -5,6 +5,9 @@
 //  - "evm": an Ethereum wallet (MetaMask, Rabby, Coinbase Wallet, WalletConnect)
 //    connected in the app. The user acts as the NEAR account named by their
 //    address (0x…); every action is a signed message the relayer submits (D23).
+//  - "dao": a council member (signed in with a NEAR wallet or a persona) acts
+//    as a SputnikDAO. Every call becomes an add_proposal on the DAO with the
+//    bond attached; it runs as the DAO once the council approves (D26).
 // Calls that the relayer sponsors (heirs, guardians, owner check-in/cancel) go
 // as NEP-366 meta-transactions whenever the signer can produce one, so those
 // people need no NEAR. Everything else is a normal transaction.
@@ -17,6 +20,7 @@ import { sharedConnector } from "./connector";
 import { provider } from "./contract";
 import { loadSandbox, type Persona } from "./demo";
 import type { EvmConnection } from "./evm/wallets";
+import { getPolicy, proposalArgs, type DaoCall, type DaoPolicy } from "./dao";
 
 export interface CallOptions {
   deposit?: bigint;
@@ -35,11 +39,13 @@ export interface CallOptions {
 export interface CallResult {
   txHash: string;
   sponsored: boolean;
+  /** D26: the call was proposed to the DAO, not run; it runs once the council approves. */
+  proposalId?: number;
 }
 
 export interface Session {
   accountId: string;
-  kind: "persona" | "wallet" | "evm";
+  kind: "persona" | "wallet" | "evm" | "dao";
   label: string;
   /** Short name of the wallet, or the persona's role. */
   via: string;
@@ -48,6 +54,10 @@ export interface Session {
   /** Ethereum wallets: EIP-191 personal_sign of UTF-8 text. */
   personalSign?(message: string): Promise<string>;
   call(method: string, args: Record<string, unknown>, opts?: CallOptions): Promise<CallResult>;
+  /** D26: the DAO this session acts for, and the member who signs its proposals. */
+  dao?: { id: string; member: Session; policy: DaoPolicy };
+  /** D26: several calls to one contract in one proposal (one vote runs them together). */
+  propose?(calls: DaoCall[], description?: string): Promise<CallResult>;
 }
 
 interface Ctx {
@@ -57,6 +67,10 @@ interface Ctx {
   /** Connects an Ethereum wallet by id (EIP-6963 rdns or "walletconnect"). WalletConnect reports its pairing link through onUri. */
   connectEvm(walletId: string, opts?: { onUri?: (uri: string) => void }): Promise<void>;
   actAsPersona(p: Persona): void;
+  /** D26: act as a DAO the signed-in NEAR account can propose to. */
+  actAsDao(dao: string): Promise<void>;
+  /** Back to the member's own account. */
+  leaveDao(): void;
   signOut(): Promise<void>;
 }
 
@@ -196,7 +210,45 @@ function walletSession(wallet: NearWalletBase, accountId: string): Session {
   };
 }
 
+/**
+ * D26: `member` proposes; the DAO acts. Deposits ride inside the proposal (the
+ * DAO pays them from its own balance when it runs); the member attaches only
+ * the bond, which Sputnik returns when the proposal passes or is rejected.
+ * Nothing is sponsored: the council member who casts the deciding vote signs
+ * the transaction that runs the call, so the relayer never sees it.
+ */
+export function daoSession(member: Session, dao: string, policy: DaoPolicy): Session {
+  const propose = async (calls: DaoCall[], description?: string): Promise<CallResult> => {
+    let feeToken: string | null = null;
+    try {
+      feeToken = (await (await import("./tiers")).getTierConfig()).fee_token;
+    } catch {}
+    const r = await member.call("add_proposal", proposalArgs(dao, calls, description, feeToken), { receiverId: dao, deposit: BigInt(policy.proposal_bond), tgas: 50 });
+    // add_proposal returns the new id; reading the counter right after is good enough (ids only grow).
+    let proposalId: number | undefined;
+    try {
+      proposalId = (await (await import("./contract")).view<number>("get_last_proposal_id", {}, dao)) - 1;
+    } catch {}
+    return { txHash: r.txHash, sponsored: false, proposalId };
+  };
+  return {
+    accountId: dao,
+    kind: "dao",
+    label: dao,
+    via: `DAO · ${member.label}`,
+    canSponsorStorage: false,
+    dao: { id: dao, member, policy },
+    propose,
+    async call(method, args, opts = {}) {
+      if (opts.sponsor) throw new SponsorRefused("a DAO's calls are signed by the member who casts the last vote, so they attach their own storage deposit");
+      return propose([{ method, args, deposit: opts.deposit, tgas: opts.tgas, receiverId: opts.receiverId }], opts.summary);
+    },
+  };
+}
+
 const PERSONA_KEY = "behest.persona";
+/** D26: the DAO the signed-in member acts as, re-entered on reload. */
+const DAO_KEY = "behest.dao";
 /** The Ethereum wallet last connected: { wallet: id, address }. Reconnected silently on load. */
 const EVM_KEY = "behest.evm";
 const evm = () => import("./evm/wallets");
@@ -218,7 +270,13 @@ const forget = (key: string) => {
 };
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  // `base` is the signed-in account; `dao` (D26) wraps it while acting for a DAO.
+  const [session, setBase] = useState<Session | null>(null);
+  const [dao, setDao] = useState<Session | null>(null);
+  const setSession = useCallback((s: Session | null | ((prev: Session | null) => Session | null)) => {
+    setBase(s);
+    setDao(null);
+  }, []);
   const [ready, setReady] = useState(false);
   const connector = useRef<NearConnector | null>(null);
   const evmConn = useRef<EvmConnection | null>(null);
@@ -301,10 +359,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })();
   }, [getConnector, adoptEvm]);
 
+  // Re-enter the DAO after a reload, once the member's session is back.
+  useEffect(() => {
+    if (!session || session.kind === "evm") return;
+    let saved: { dao?: string; member?: string } | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(DAO_KEY) ?? "null");
+    } catch {}
+    if (!saved?.dao || saved.member !== session.accountId) return;
+    let live = true;
+    getPolicy(saved.dao).then(
+      (p) => live && setDao(daoSession(session, saved!.dao!, p)),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [session]);
+
   const value = useMemo<Ctx>(
     () => ({
-      session,
+      session: dao ?? session,
       ready,
+      async actAsDao(id) {
+        if (!session || session.kind === "evm") throw new Error("Sign in with a NEAR wallet to act for a DAO.");
+        let policy: DaoPolicy;
+        try {
+          policy = await getPolicy(id);
+        } catch {
+          throw new Error(`${id} isn't a SputnikDAO (it has no get_policy).`);
+        }
+        try {
+          localStorage.setItem(DAO_KEY, JSON.stringify({ dao: id, member: session.accountId }));
+        } catch {}
+        setDao(daoSession(session, id, policy));
+      },
+      leaveDao() {
+        forget(DAO_KEY);
+        setDao(null);
+      },
       async connectWallet() {
         const c = await getConnector();
         await c.connect();
@@ -324,12 +417,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       },
       async signOut() {
         forget(PERSONA_KEY);
+        forget(DAO_KEY);
         if (session?.kind === "wallet") await (await getConnector()).disconnect().catch(() => {});
         if (session?.kind === "evm") dropEvm(true);
         setSession(null);
       },
     }),
-    [session, ready, getConnector, adoptEvm, dropEvm],
+    [session, dao, ready, getConnector, adoptEvm, dropEvm],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

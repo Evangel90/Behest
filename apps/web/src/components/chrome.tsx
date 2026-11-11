@@ -2,13 +2,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, LogOut, Menu, Monitor, Moon, Search, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Search, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { loadSandbox, PERSONA_ROLES, type Sandbox } from "@/lib/demo";
 import { shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
+import { DaoPicker } from "./Dao";
 import { CopyButton, Dialog, Segmented } from "./interactive";
-import { SignInDialog } from "./SignIn";
+import { PICK_DAO, SignInDialog } from "./SignIn";
 import { useTheme, type Theme } from "./theme";
 import { Button, Kbd, cx } from "./ui";
 
@@ -104,9 +105,20 @@ function initials(label: string) {
 
 /** Signed in: an account chip that opens a menu (copy id, switch persona, theme, sign out). Signed out: a sign-in button. */
 export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: boolean; compact?: boolean }) {
-  const { session, ready, signOut, actAsPersona } = useSession();
+  const { session, ready, signOut, actAsPersona, leaveDao } = useSession();
   const router = useRouter();
   const [signIn, setSignIn] = useState(false);
+  const [daoPick, setDaoPick] = useState(false);
+  // Signed in through "A DAO or multisig": go straight to picking the DAO.
+  useEffect(() => {
+    if (!session || session.kind === "evm" || session.dao) return;
+    try {
+      if (sessionStorage.getItem(PICK_DAO)) {
+        sessionStorage.removeItem(PICK_DAO);
+        setDaoPick(true);
+      }
+    } catch {}
+  }, [session]);
   const [open, setOpen] = useState(false);
   const [sandbox, setSandbox] = useState<Sandbox | null>(null);
   useEffect(() => {
@@ -173,8 +185,30 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
               router.push(`/plan/${encodeURIComponent(session.accountId)}`);
             }}
           >
-            Your plan
+            {session.dao ? "The DAO's plan" : "Your plan"}
           </MenuLink>
+          {session.kind !== "evm" && (
+            <MenuLink
+              icon={Landmark}
+              onClick={() => {
+                setOpen(false);
+                setDaoPick(true);
+              }}
+            >
+              {session.dao ? "Act as another DAO" : "Act as a DAO"}
+            </MenuLink>
+          )}
+          {session.dao && (
+            <MenuLink
+              icon={UserRound}
+              onClick={() => {
+                setOpen(false);
+                leaveDao();
+              }}
+            >
+              Back to {session.dao.member.label}
+            </MenuLink>
+          )}
         </div>
         {sandbox && (
           <div className="flex flex-col gap-2">
@@ -220,6 +254,7 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
           Sign out
         </Button>
       </Dialog>
+      <DaoPicker open={daoPick} onClose={() => setDaoPick(false)} onDone={(dao) => router.push(`/plan/${encodeURIComponent(dao)}`)} />
     </>
   );
 }

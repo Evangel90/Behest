@@ -194,10 +194,17 @@ export function PayTierDialog({ cfg, owner, target, tier, onClose, onPaid }: { c
   }, [cfg, session]);
 
   const done = useCallback(() => {
+    if (session?.dao) {
+      // D26: the DAO pays from its own USDC once its council approves the ft_transfer_call proposal.
+      toast.show({ tone: "ok", title: `Payment proposed to ${session.dao.id}`, body: `The ${spec.name} tier is paid from the DAO's USDC once the council approves. Vote on it from the plan page.` });
+      onPaid();
+      onClose();
+      return;
+    }
     toast.show({ tone: "ok", title: `${spec.name} tier paid`, body: "The plan can now use everything in it." });
     onPaid();
     onClose();
-  }, [onClose, onPaid, spec.name, toast]);
+  }, [onClose, onPaid, spec.name, toast, session]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);

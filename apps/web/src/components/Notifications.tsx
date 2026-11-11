@@ -4,7 +4,7 @@
 // Contacts are kept by the notifier service, never on-chain; each change is
 // signed by the account (a message, not a transaction).
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { BellRing, Eye, History, KeyRound, ListChecks, Mail, Plus, RefreshCw, Send, Trash2, UserRound, Webhook, WifiOff, type LucideIcon } from "lucide-react";
+import { BellRing, Eye, History, KeyRound, ListChecks, Mail, Plus, RefreshCw, Send, Trash2, UserRound, Users, Webhook, WifiOff, type LucideIcon } from "lucide-react";
 import { getPlan, listOpenReleases } from "@/lib/contract";
 import { watched } from "@/lib/demo";
 import {
@@ -20,6 +20,7 @@ import {
   removeContact,
   resendConfirmation,
   saveWatches,
+  setCouncil,
   savePreferences,
   testContact,
   type Contact,
@@ -66,7 +67,10 @@ function NotifySkeleton() {
 }
 
 export function Notifications() {
-  const { session, ready } = useSession();
+  const { session: acting, ready } = useSession();
+  // D26: a DAO can't sign in to the notifier; its council member does, for themselves and for the DAO.
+  const session = acting?.dao?.member ?? acting;
+  const dao = acting?.dao?.id ?? null;
   const toast = useToast();
   const confirm = useConfirm();
   const [info, setInfo] = useState<NotifierInfo | null>(null);
@@ -239,6 +243,20 @@ export function Notifications() {
           })
         }
       />
+
+      {dao && (
+        <CouncilCard
+          dao={dao}
+          on={(settings.councils ?? []).includes(dao)}
+          busy={busy}
+          onSave={(enabled) =>
+            act("council", async () => {
+              const r = await setCouncil(session, dao, enabled);
+              return enabled ? `Every ${dao} council member (${r.members.length}) now gets the DAO's notices on their own contacts.` : `${dao}'s notices no longer go to its council.`;
+            })
+          }
+        />
+      )}
 
       <PrefsCard info={info} prefs={settings.preferences} busy={busy} onSave={(p) => act("prefs", async () => (await savePreferences(session, p), "Saved."))} />
 
@@ -455,6 +473,19 @@ function WebhookCard({ info, contacts, busy, secret, onAdd, onRemove, onTest }: 
 }
 
 /** Plans that involve this account, so guardians and heirs hear about them before a release opens. */
+/** D26: send a DAO's plan notices to every council member's own contacts. */
+function CouncilCard({ dao, on, busy, onSave }: { dao: string; on: boolean; busy: string | null; onSave: (enabled: boolean) => void }) {
+  return (
+    <Card className="flex flex-col gap-4">
+      <SectionTitle icon={Users} title={`Notify all of ${dao}'s council`} sub="A DAO has no inbox. Switch this on and every notice for the DAO (reminders, releases, votes, payouts) also goes to each current council member, on the contacts they set up here. People who leave the council stop getting them." />
+      <Button variant={on ? "outline" : "primary"} className="self-start" disabled={!!busy && busy !== "council"} loading={busy === "council"} onClick={() => onSave(!on)}>
+        {busy === "council" ? "Waiting for signature…" : on ? "Stop notifying the council" : "Subscribe all council members"}
+      </Button>
+      <p className="text-xs text-muted">Any council member may switch this on or off. Members still choose their own channels and which kinds of notice they get.</p>
+    </Card>
+  );
+}
+
 function WatchCard({ account, watches, max, busy, onSave }: { account: string; watches: string[]; max: number; busy: string | null; onSave: (owners: string[]) => void }) {
   const [candidates, setCandidates] = useState<{ owner: string; roles: string[] }[] | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set(watches));
