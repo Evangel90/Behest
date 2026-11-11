@@ -45,6 +45,10 @@ export interface Deployment {
   heirs: string[];
   /** D25: the fee token tiers are paid in (the mock USDC on testnet). */
   usdc?: string;
+  /** D27: the NEAR Intents verifier (a mock on testnet). */
+  intents?: string;
+  /** D26: the guardian and heir DAOs e2e-dao reuses. */
+  daos?: { guardian: string; heir: string };
   wasmSha256: string;
   deployedAt: string;
 }

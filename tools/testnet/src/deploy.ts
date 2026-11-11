@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, actions, nearToYocto, teraToGas } from "near-api-js";
-import { ROOT, account, call, keyOf, log, provider, saveDeployment, setEnv, view, waitForKey } from "./near.js";
+import { DEPLOYMENT_FILE, ROOT, account, call, keyOf, log, provider, saveDeployment, setEnv, view, waitForKey } from "./near.js";
 import { WETH_TOKEN } from "./sepolia.js";
 
 const suffix = process.argv[2];
@@ -139,7 +139,40 @@ if (tierCfg.fee_token !== usdc) {
   log("plan tiers on", { fee_token: usdc });
 }
 
+// D27: NEAR Intents delivery. On testnet the verifier is a mock
+// (contracts/mock-intents, owner = admin, so scenarios can set its refunds),
+// deployed once as behest-<suffix>-intents.testnet. INTENTS_VERIFIER_ID points
+// at another verifier (intents.near on mainnet) and WNEAR_TOKEN_ID at wNEAR.
+const verifier = process.env.INTENTS_VERIFIER_ID?.trim() || id("intents");
+const wnear = process.env.WNEAR_TOKEN_ID?.trim() || "wrap.testnet";
+if (!process.env.INTENTS_VERIFIER_ID?.trim()) {
+  const exists = await provider.viewAccount({ accountId: verifier }).then(() => true, () => false);
+  const keyFile = join(homedir(), ".near-credentials/testnet", `${verifier}.json`);
+  if (!exists) {
+    const kp = KeyPair.fromRandom("ed25519");
+    await account(admin).createAccount({ newAccountId: verifier, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("2") });
+    writeFileSync(keyFile, JSON.stringify({ account_id: verifier, public_key: kp.getPublicKey().toString(), private_key: kp.toString() }), { mode: 0o600 });
+    await waitForKey(verifier, kp.getPublicKey().toString());
+    log("mock Intents verifier account created", { verifier });
+  }
+  if ((await account(verifier).getState()).codeHash === "11111111111111111111111111111111") {
+    if (!existsSync(keyFile)) throw new Error(`no key for ${verifier}`);
+    const vWasm = readFileSync(join(ROOT, "target/near-intents/mock_intents.wasm"));
+    await account(verifier).signAndSendTransaction({ receiverId: verifier, actions: [actions.deployContract(vWasm), actions.functionCall("new", { owner: admin }, teraToGas(30), 0n)] });
+    log("mock Intents verifier deployed", { verifier, bytes: vWasm.length });
+  }
+}
+const intentsCfg = await view<{ verifier: string; wnear: string } | null>(contract, "get_intents_config");
+if (intentsCfg?.verifier !== verifier || intentsCfg?.wnear !== wnear) {
+  // Registers Behest and the verifier with wNEAR (refunded if already registered).
+  await call(admin, contract, "set_intents_config", { config: { verifier, wnear } }, { deposit: nearToYocto("0.0025"), tgas: 100 });
+  log("NEAR Intents delivery on", { verifier, wnear });
+}
+
+const previous = existsSync(DEPLOYMENT_FILE) ? (JSON.parse(readFileSync(DEPLOYMENT_FILE, "utf8")) as Record<string, unknown>) : {};
 saveDeployment({
+  ...previous,
+  intents: verifier,
   contract,
   admin,
   executor,

@@ -1,0 +1,16 @@
+[package]
+name = "mock-intents"
+description = "Testnet-only stand-in for the NEAR Intents verifier (D27): ft_on_transfer deposits, mt_ balances, configurable refunds, ft_withdraw"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5.30.1"
+
+[dev-dependencies]
+near-sdk = { version = "5.30.1", features = ["unit-testing"] }

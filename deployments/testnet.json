@@ -13,10 +13,11 @@
     "behest-ekkr6-tobi.testnet"
   ],
   "usdc": "behest-ekkr6-usdc.testnet",
-  "wasmSha256": "1550b049f7be19061eee88b36707a368d167d109d863614da35a7b9dd9870af6",
-  "deployedAt": "2026-11-11T20:59:55.984Z",
+  "wasmSha256": "2e88fd813de165777ec4312c30a94f84c71b535d64755ea49973febc66f5cad6",
+  "deployedAt": "2026-11-11T21:22:05.360Z",
   "daos": {
     "guardian": "bg-ekkr6.sputnikv2.testnet",
     "heir": "bh-ekkr6.sputnikv2.testnet"
-  }
+  },
+  "intents": "behest-ekkr6-intents.testnet"
 }
