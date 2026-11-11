@@ -3072,3 +3072,228 @@ fn fund_sponsor_pool_needs_a_deposit() {
     assert_eq!(e.as_("anyone.testnet", 5).fund_sponsor_pool(), U128(5));
     assert_eq!(e.as_("anyone.testnet", 0).get_config().sponsor, evm::SponsorConfig::default());
 }
+
+// ------------------------------------------------------- plan tiers (D25)
+
+const USDC: &str = "usdc.testnet";
+const DOLLAR: u128 = 1_000_000;
+
+impl Env {
+    fn with_tiers(mut self) -> Self {
+        let cfg = tiers::TierConfig { fee_token: Some(acc(USDC)), ..Default::default() };
+        self.as_("admin.testnet", 0).set_tier_config(cfg);
+        self
+    }
+
+    fn pay(&mut self, payer: &str, owner: &str, amount: u128) -> u128 {
+        ft_deposit(self, USDC, payer, amount, &format!("{{\"pay_tier\":\"{owner}\"}}"))
+    }
+
+    fn tier(&mut self, owner: &str) -> tiers::TierView {
+        self.as_("x.testnet", 0).get_tier(acc(owner))
+    }
+}
+
+/// One heir, NEAR only, two guardians: fits the free tier.
+fn free_plan() -> PlanInput {
+    let mut p = plan_input();
+    p.heirs = vec![HeirInput { account_id: acc("amara.testnet"), share_bps: 10_000, near_destination: Some(acc("amara.testnet")), eth_destination: None }];
+    p
+}
+
+#[test]
+fn tiers_are_off_until_a_fee_token_is_set() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Automatic)));
+    let t = e.tier("owner.testnet");
+    assert!(!t.enabled);
+    assert_eq!(t.required, 2);
+}
+
+#[test]
+fn free_tier_takes_one_heir_with_near_only() {
+    let mut e = Env::new().with_tiers();
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    assert_eq!(e.tier("owner.testnet").required, 0);
+    // A second heir, or an Ethereum destination, needs Standard.
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_plan(plan_input())), "E_TIER_REQUIRED");
+    let mut eth = free_plan();
+    eth.heirs[0].eth_destination = Some("0x71C7656EC7ab88b098defB751B7401B5f6d8976F".into());
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_plan(eth.clone())), "E_TIER_REQUIRED");
+    // A new owner is checked too.
+    assert_eq!(panic_code(|| e.as_("new.testnet", NEAR).set_plan(plan_input())), "E_TIER_REQUIRED");
+    // Rules and Bitcoin destinations are refused; editing timers is not.
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { claim_window_ms: WINDOW, ..Default::default() }))), "E_TIER_REQUIRED");
+    assert_eq!(
+        panic_code(|| e.as_("owner.testnet", NEAR / 100).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx".into() }])),
+        "E_TIER_REQUIRED"
+    );
+    let mut longer = free_plan();
+    longer.check_in_interval_ms = 120 * DAY;
+    e.as_("owner.testnet", NEAR).set_plan(longer);
+}
+
+#[test]
+fn payments_add_up_and_upgrades_cost_the_difference() {
+    let mut e = Env::new().with_tiers();
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    let t = e.tier("owner.testnet");
+    assert_eq!((t.tier, t.due.clone()), (0, vec![U128(0), U128(49 * DOLLAR), U128(149 * DOLLAR)]));
+    // Anyone may pay, in parts; part payments are credit.
+    assert_eq!(e.pay("aunt.testnet", "owner.testnet", 20 * DOLLAR), 0);
+    assert_eq!(e.tier("owner.testnet").tier, 0);
+    assert_eq!(e.pay("owner.testnet", "owner.testnet", 30 * DOLLAR), 0);
+    let t = e.tier("owner.testnet");
+    assert_eq!((t.tier, t.tier_name.as_str(), t.paid.0), (1, "Standard", 50 * DOLLAR));
+    // Complete costs only what is still missing; the extra dollar counts.
+    assert_eq!(t.due, vec![U128(0), U128(0), U128(99 * DOLLAR)]);
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Automatic)))), "E_TIER_REQUIRED");
+    // Claim mode without delay signers or overrides is not "advanced".
+    let plain = ReleaseOptions { mode: ReleaseMode::Claim, delay_signers: vec![], delay_quorum: 0, max_extension_ms: 0, max_total_extension_ms: 0, ..opts(ReleaseMode::Claim) };
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(plain));
+    e.pay("owner.testnet", "owner.testnet", 99 * DOLLAR);
+    assert_eq!(e.tier("owner.testnet").tier, 2);
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Automatic)));
+    let tr = e.as_("x.testnet", 0).get_treasury();
+    assert_eq!((tr.collected.0, tr.balance.0, tr.payments), (149 * DOLLAR, 149 * DOLLAR, 3));
+}
+
+#[test]
+fn a_paid_tier_survives_simplifying_and_price_rises() {
+    let mut e = Env::new().with_tiers();
+    e.pay("owner.testnet", "owner.testnet", 49 * DOLLAR);
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    // Prices double: what was bought stays bought.
+    let mut cfg = e.as_("x.testnet", 0).get_tier_config();
+    cfg.tiers[1].price = U128(98 * DOLLAR);
+    cfg.tiers[2].price = U128(298 * DOLLAR);
+    e.as_("admin.testnet", 0).set_tier_config(cfg);
+    let t = e.tier("owner.testnet");
+    assert_eq!((t.tier, t.required, t.due[2].0), (1, 0, 249 * DOLLAR));
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+}
+
+#[test]
+fn plans_saved_before_tiers_stay_editable_at_their_level() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    let mut e = e.with_tiers();
+    assert_eq!(e.tier("owner.testnet").allowance, 1);
+    let mut p = plan_input();
+    p.waiting_period_ms = 20 * DAY;
+    e.as_("owner.testnet", NEAR).set_plan(p);
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(None);
+    // Still allowed: the plan uses Standard features (two heirs, an Ethereum destination).
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_release_options(Some(opts(ReleaseMode::Hybrid)))), "E_TIER_REQUIRED");
+    // Simplified to the free tier, the old level is gone.
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(None);
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_plan(plan_input())), "E_TIER_REQUIRED");
+}
+
+#[test]
+fn tiers_never_block_a_release() {
+    let mut e = Env::new().with_executor();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    let mut e = e.with_tiers();
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(31 * DAY);
+    e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    e.as_("tobi.testnet", 0).claim(acc("owner.testnet"));
+}
+
+#[test]
+fn token_escrow_needs_a_tier_with_external_assets() {
+    let mut e = Env::new().with_executor();
+    e.as_("admin.testnet", REG).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
+    let mut e = e.with_tiers();
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 1_000);
+    e.pay("owner.testnet", "owner.testnet", 49 * DOLLAR);
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 0);
+}
+
+#[test]
+fn malformed_or_dust_payments_are_refunded() {
+    let mut e = Env::new().with_tiers();
+    // Not a payment message, and USDC isn't an escrow token: refunded.
+    assert_eq!(ft_deposit(&mut e, USDC, "owner.testnet", 49 * DOLLAR, "owner.testnet"), 49 * DOLLAR);
+    assert_eq!(ft_deposit(&mut e, USDC, "owner.testnet", 49 * DOLLAR, r#"{"pay_tier":"owner.testnet","x":1}"#), 49 * DOLLAR);
+    // Another token with a payment message: refunded.
+    assert_eq!(ft_deposit(&mut e, "fake-usdc.testnet", "owner.testnet", 49 * DOLLAR, r#"{"pay_tier":"owner.testnet"}"#), 49 * DOLLAR);
+    // A first payment under one token is refused; later small ones are credit.
+    assert_eq!(e.pay("x.testnet", "owner.testnet", DOLLAR - 1), DOLLAR - 1);
+    assert_eq!(e.pay("x.testnet", "owner.testnet", DOLLAR), 0);
+    assert_eq!(e.pay("x.testnet", "owner.testnet", 1), 0);
+    assert_eq!(e.tier("owner.testnet").paid.0, DOLLAR + 1);
+    // An Ethereum-wallet owner can be paid for by anyone.
+    let evm_owner = format!("0x{}", "ab".repeat(20));
+    assert_eq!(e.pay("friend.testnet", &evm_owner, 49 * DOLLAR), 0);
+    assert_eq!(e.tier(&evm_owner).tier, 1);
+}
+
+#[test]
+fn treasury_withdrawals_are_admin_only_and_restored_on_failure() {
+    let mut e = Env::new().with_tiers();
+    e.pay("owner.testnet", "owner.testnet", 149 * DOLLAR);
+    assert_eq!(panic_code(|| e.as_("owner.testnet", 0).withdraw_treasury(U128(DOLLAR), acc("owner.testnet"))), "E_UNAUTHORIZED");
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).withdraw_treasury(U128(150 * DOLLAR), acc("ops.testnet"))), "E_INSUFFICIENT_TREASURY");
+    let _ = e.as_("admin.testnet", 0).withdraw_treasury(U128(100 * DOLLAR), acc("ops.testnet"));
+    assert_eq!(e.as_("x.testnet", 0).get_treasury().balance.0, 49 * DOLLAR);
+    e.callback(vec![PromiseResult::Failed]).on_treasury_withdraw(U128(100 * DOLLAR));
+    let t = e.as_("x.testnet", 0).get_treasury();
+    assert_eq!((t.balance.0, t.withdrawn.0, t.pending.0), (149 * DOLLAR, 0, 0));
+    let _ = e.as_("admin.testnet", 0).withdraw_treasury(U128(100 * DOLLAR), acc("ops.testnet"));
+    e.callback(vec![PromiseResult::Successful(vec![])]).on_treasury_withdraw(U128(100 * DOLLAR));
+    let t = e.as_("x.testnet", 0).get_treasury();
+    assert_eq!((t.balance.0, t.withdrawn.0, t.collected.0), (49 * DOLLAR, 100 * DOLLAR, 149 * DOLLAR));
+    // Paying a tier never touches plan escrow or the sponsor pool.
+    assert_eq!(e.sponsorship(&acc("owner.testnet")).pool.0, 0);
+}
+
+#[test]
+fn tier_schedules_are_checked() {
+    let mut e = Env::new().with_tiers();
+    let good = e.as_("x.testnet", 0).get_tier_config();
+    let mut bad = good.clone();
+    bad.tiers[0].price = U128(1);
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).set_tier_config(bad.clone())), "E_INVALID_TIERS");
+    let mut bad = good.clone();
+    bad.tiers[2].price = bad.tiers[1].price;
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).set_tier_config(bad.clone())), "E_INVALID_TIERS");
+    let mut bad = good.clone();
+    bad.tiers[2].advanced_release = false; // the last tier must allow everything
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).set_tier_config(bad.clone())), "E_INVALID_TIERS");
+    let mut bad = good.clone();
+    bad.tiers[1].max_heirs = 0;
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).set_tier_config(bad.clone())), "E_INVALID_TIERS");
+    assert_eq!(panic_code(|| e.as_("owner.testnet", 0).set_tier_config(good.clone())), "E_UNAUTHORIZED");
+    // The fee token is fixed once anything has been collected.
+    e.pay("owner.testnet", "owner.testnet", DOLLAR);
+    let moved = tiers::TierConfig { fee_token: Some(acc("other-usdc.testnet")), ..good };
+    assert_eq!(panic_code(|| e.as_("admin.testnet", 0).set_tier_config(moved)), "E_INVALID_TIERS");
+}
+
+#[test]
+fn required_tier_view_matches_the_checks() {
+    let mut e = Env::new().with_tiers();
+    let c = e.as_("x.testnet", 0);
+    assert_eq!(c.required_tier(free_plan(), None, None, None, None), 0);
+    assert_eq!(c.required_tier(free_plan(), None, None, Some(1), None), 1);
+    assert_eq!(c.required_tier(free_plan(), None, None, None, Some(true)), 1);
+    assert_eq!(c.required_tier(plan_input(), Some(rules()), None, None, None), 1);
+    assert_eq!(c.required_tier(free_plan(), None, Some(opts(ReleaseMode::Claim)), None, None), 2);
+    let mut big = plan_input();
+    for i in 0..4 {
+        big.guardians.push(acc(&format!("g{}.testnet", i + 4)));
+    }
+    assert_eq!(c.required_tier(big, None, None, None, None), 2);
+}

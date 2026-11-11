@@ -62,6 +62,8 @@ pub enum Error {
     EvmMethod,
     EvmArgs,
     SponsorExhausted,
+    InvalidTiers,
+    InsufficientTreasury,
 }
 
 impl Error {
@@ -126,6 +128,8 @@ impl Error {
             Error::EvmMethod => "E_EVM_METHOD",
             Error::EvmArgs => "E_EVM_ARGS",
             Error::SponsorExhausted => "E_SPONSOR_EXHAUSTED",
+            Error::InvalidTiers => "E_INVALID_TIERS",
+            Error::InsufficientTreasury => "E_INSUFFICIENT_TREASURY",
         }
     }
 }

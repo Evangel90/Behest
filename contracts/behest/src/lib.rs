@@ -10,6 +10,7 @@ pub mod ethproof;
 pub mod evm;
 mod legacy;
 mod policy;
+pub mod tiers;
 mod types;
 
 #[cfg(test)]
@@ -257,6 +258,8 @@ impl Contract {
     pub fn set_plan(&mut self, plan: PlanInput) {
         let owner = caller();
         let policy = policy::validate(&owner, plan);
+        let before = self.read_plan(&owner).map(|p| tier_features(&owner, &p.policy));
+        tiers::check(&owner, before.as_ref(), &tier_features(&owner, &policy));
         // Existing release rules and options must still fit the new heirs and guardians.
         if let Some(r) = read_rules(&owner) {
             policy::validate_rules(&owner, &policy, r, |a| btc_dest(&owner, a).is_some());
@@ -365,6 +368,8 @@ impl Contract {
         if release_open(&plan) {
             fail(Error::ProposalOpen);
         }
+        let after = tiers::features(&plan.policy, rules.as_ref(), read_options(&owner).as_ref(), btc_dests(&owner).len(), token_escrow_any(&owner));
+        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
         let storage_before = env::storage_usage();
         env::storage_remove(&fixed_paid_key(&owner));
         match rules {
@@ -389,6 +394,8 @@ impl Contract {
         if release_open(&plan) {
             fail(Error::ProposalOpen);
         }
+        let after = tiers::features(&plan.policy, read_rules(&owner).as_ref(), options.as_ref(), btc_dests(&owner).len(), token_escrow_any(&owner));
+        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
         let storage_before = env::storage_usage();
         match options {
             Some(o) => {
@@ -462,6 +469,17 @@ impl Contract {
     /// `deposit`, later deposits are not distributed).
     pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> PromiseOrValue<U128> {
         let token = caller();
+        // D25. A tier payment in the fee token, for any owner (a plan need not exist yet).
+        if tiers::fee_token().as_ref() == Some(&token) {
+            if let Some(owner) = tiers::payment_owner(&msg) {
+                if !tiers::acceptable(&owner, amount.0) {
+                    return PromiseOrValue::Value(amount);
+                }
+                let a = tiers::credit(&owner, amount.0);
+                emit("tier_paid", near_sdk::serde_json::json!({"owner": owner, "payer": sender_id, "amount": amount, "paid": U128(a.paid), "tier": a.tier}));
+                return PromiseOrValue::Value(U128(0));
+            }
+        }
         if !nep141_tokens().iter().any(|t| t.account_id == token) {
             return PromiseOrValue::Value(amount);
         }
@@ -478,6 +496,11 @@ impl Contract {
         }
         self.archive_settled(&owner);
         if self.read_plan(&owner).is_some_and(|p| p.proposal.is_some()) {
+            return PromiseOrValue::Value(amount);
+        }
+        // D25. Token escrow is an external asset: refunded below a tier that allows it.
+        let current = self.read_plan(&owner).map(|p| tier_features(&owner, &p.policy));
+        if !tiers::allows_external(&owner, current.as_ref()) {
             return PromiseOrValue::Value(amount);
         }
         set_ft_escrow(&token, &owner, ft_escrow(&token, &owner) + amount.0);
@@ -654,6 +677,8 @@ impl Contract {
                 fail(Error::InvalidHeirs);
             }
         }
+        let after = tiers::features(&plan.policy, read_rules(&owner).as_ref(), read_options(&owner).as_ref(), destinations.len(), token_escrow_any(&owner));
+        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
         let before = env::storage_usage();
         env::storage_write(&btc_dests_key(&owner), &near_sdk::borsh::to_vec(&destinations).expect("borsh"));
         emit("btc_destinations_set", near_sdk::serde_json::json!({"owner": owner, "destinations": destinations}));
@@ -1700,6 +1725,58 @@ impl Contract {
         evm::set_config(&config);
         emit("sponsor_config_set", near_sdk::serde_json::json!({"config": config}));
     }
+
+    // ------------------------------------------------------ Plan tiers (D25)
+
+    /// D25. Admin: the fee token and the tier schedule. The fee token can only
+    /// change while the treasury has never collected anything.
+    pub fn set_tier_config(&mut self, config: tiers::TierConfig) {
+        self.assert_admin();
+        if !tiers::token_change_allowed(&config) {
+            fail(Error::InvalidTiers);
+        }
+        tiers::set_config(&config);
+        emit("tier_config_set", near_sdk::serde_json::json!({"config": config}));
+    }
+
+    pub fn get_tier_config(&self) -> tiers::TierConfig {
+        tiers::config()
+    }
+
+    /// The owner's paid tier, what the saved plan needs and what each tier still costs.
+    pub fn get_tier(&self, owner: AccountId) -> tiers::TierView {
+        let current = self.read_plan(&owner).map(|p| tier_features(&owner, &p.policy));
+        tiers::view(&owner, current.as_ref())
+    }
+
+    /// The cheapest tier a draft configuration fits (nothing is validated).
+    pub fn required_tier(&self, plan: PlanInput, rules: Option<ReleaseRules>, options: Option<ReleaseOptions>, btc_destinations: Option<u32>, token_escrow: Option<bool>) -> u8 {
+        let f = tiers::features(&plan, rules.as_ref(), options.as_ref(), btc_destinations.unwrap_or(0) as usize, token_escrow.unwrap_or(false));
+        tiers::required(&tiers::config(), &f)
+    }
+
+    /// Fee revenue, kept apart from escrow, chain-fee reserves and the sponsor pool.
+    pub fn get_treasury(&self) -> tiers::TreasuryView {
+        tiers::treasury_view()
+    }
+
+    /// D25. Admin: pays fee revenue out of the treasury (never escrow or reserves).
+    pub fn withdraw_treasury(&mut self, amount: U128, to: AccountId) -> Promise {
+        self.assert_admin();
+        let Some(token) = tiers::fee_token() else { fail(Error::InsufficientTreasury) };
+        tiers::begin_withdrawal(amount.0);
+        emit("treasury_withdraw", near_sdk::serde_json::json!({"to": to, "amount": amount}));
+        ft_transfer(&token, &to, amount.0, "Behest treasury").then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_treasury_withdraw(amount))
+    }
+
+    #[private]
+    pub fn on_treasury_withdraw(&mut self, amount: U128) {
+        let ok = env::promise_results_count() == 1 && env::promise_result_checked(0, 0).is_ok();
+        tiers::end_withdrawal(amount.0, ok);
+        if !ok {
+            emit("treasury_withdraw_failed", near_sdk::serde_json::json!({"amount": amount}));
+        }
+    }
 }
 
 /// D23. What an EVM signature may do: the calls the relayer already sponsors
@@ -2104,6 +2181,16 @@ fn dest_for(owner: &AccountId, r: &Recipient, asset: &Asset) -> Option<String> {
     } else {
         r.near_destination.as_ref().map(|a| a.to_string())
     }
+}
+
+/// True if the owner holds any allowlisted NEP-141 token in escrow.
+fn token_escrow_any(owner: &AccountId) -> bool {
+    nep141_tokens().iter().any(|t| ft_escrow(&t.account_id, owner) > 0)
+}
+
+/// D25. What the owner's saved configuration uses, with `policy` as the plan.
+fn tier_features(owner: &AccountId, policy: &PlanInput) -> tiers::Features {
+    tiers::features(policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), btc_dests(owner).len(), token_escrow_any(owner))
 }
 
 fn nep141_tokens() -> Vec<Nep141Token> {
