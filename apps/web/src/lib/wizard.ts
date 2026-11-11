@@ -18,6 +18,10 @@ export interface HeirDraft {
   pct: string;
   near: string;
   eth: string;
+  /** D27: paid into their NEAR Intents account instead of their wallet. */
+  intents?: boolean;
+  /** D27: that Intents account, when not their NEAR destination (e.g. a 0x address). */
+  intentsAccount?: string;
 }
 /** Field key → message. Keys: checkIn, grace, waiting, guardian.<i>, guardians, quorum, heir.<i>.<field>, shares, deposit. */
 export type FieldErrors = Record<string, string>;
@@ -95,6 +99,7 @@ export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[
     else if (Math.abs(pct * 100 - Math.round(pct * 100)) > 1e-6) e[`heir.${i}.pct`] = "At most two decimals.";
     if (h.near.trim() && !looksLikeNearAccount(h.near)) e[`heir.${i}.near`] = "That doesn't look like a NEAR account.";
     if (h.eth.trim() && !looksLikeEthAddress(h.eth)) e[`heir.${i}.eth`] = "An Ethereum address is 0x followed by 40 characters.";
+    if (h.intents && h.intentsAccount?.trim() && !looksLikeNearAccount(h.intentsAccount)) e[`heir.${i}.intents`] = "A NEAR account or a 0x address.";
   });
   if (heirs.length === 0) e.shares = "Add at least one heir.";
   else {
@@ -119,4 +124,11 @@ export function stepOf(key: string): WizardStep {
   if (key.startsWith("heir") || key === "shares") return "heirs";
   if (key === "deposit") return "funding";
   return "review";
+}
+
+/** D27: the set_intents_delivery list for a draft (opted-in heirs only). */
+export function intentsDeliveries(heirs: HeirDraft[]) {
+  return heirs
+    .filter((h) => h.intents && h.account.trim())
+    .map((h) => ({ account_id: h.account.trim().toLowerCase(), enabled: true, intents_account: h.intentsAccount?.trim() ? h.intentsAccount.trim().toLowerCase() : null }));
 }

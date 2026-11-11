@@ -11,6 +11,7 @@ import { assetLabel, failureText, formatAmount, formatBtc, formatEth, isBtc, isE
 import type { Transfer } from "@/lib/types";
 import { useVault } from "@/lib/vault";
 import { useConfirm } from "../feedback";
+import { HeirIntentsCard, useIntentsHolding } from "../Intents";
 import { GetNotified } from "../Notifications";
 import { Countdown, Dialog, Disclosure, Term } from "../interactive";
 import { Row, Timeline, receiptUrl } from "../PlanParts";
@@ -36,6 +37,9 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
   const started = mine.some(({ t }) => t.state !== "Pending");
   const pendingMine = mine.filter(({ t }) => t.state === "Pending");
   const cfg = useConfig();
+  // D27: NEAR and NEP-141 shares may be paid into the heir's NEAR Intents account instead.
+  const intents = useIntentsHolding(view.plan.owner, me ?? null, heir?.near_destination);
+  const viaIntents = (t: Transfer) => !!intents.target && !isEvm(t.asset) && !isBtc(t.asset);
   const heirVault = useVault(view.plan.owner);
   const evmTxs = pendingMine.filter(({ t }) => isEvm(t.asset)).map(({ t }) => ({ to: t.destination as `0x${string}`, token: typeof t.asset === "object" && "Erc20" in t.asset ? (t.asset.Erc20 as `0x${string}`) : undefined }));
   const btcPending = pendingMine.filter(({ t }) => t.asset === "Btc").length;
@@ -49,16 +53,19 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
   const claim = async () => {
     const ok = await confirm({
       title: `Receive ${pendingMine.map(({ t }) => formatAmount(t)).join(" and ")}?`,
-      body: `It goes to the addresses ${owner} chose. Once sent, transfers can't be reversed.`,
+      body: `It goes where ${owner} chose${pendingMine.some(({ t }) => viaIntents(t)) ? ", including your NEAR Intents account" : ""}. Once sent, transfers can't be reversed.`,
       rows: [
-        ...pendingMine.map(({ t }): [string, React.ReactNode] => [`${assetLabel(t.asset)} to`, <span key={t.destination} className="font-mono text-xs">{t.destination.length > 20 ? `${t.destination.slice(0, 8)}…${t.destination.slice(-6)}` : t.destination}</span>]),
+        ...pendingMine.map(({ t }): [string, React.ReactNode] => {
+          const to = viaIntents(t) ? intents.target! : t.destination;
+          return [viaIntents(t) ? `${assetLabel(t.asset)} into NEAR Intents` : `${assetLabel(t.asset)} to`, <span key={t.destination} className="font-mono text-xs">{to.length > 20 ? `${to.slice(0, 8)}…${to.slice(-6)}` : to}</span>];
+        }),
         ["Network fee", fees ? `${fees}, prepaid by the plan` : "Prepaid by the plan"],
       ],
       confirmLabel: "Receive my share",
     });
     if (ok) await act("Receive", "claim", { owner: view.plan.owner }, { tgas: 300, done: "On its way. This page updates as each transfer lands." });
   };
-  const retry = (index: number) => act("Retry", "retry_transfer", { owner: view.plan.owner, index }, { tgas: 300, done: "Retrying. This page updates as it lands." });
+  const retry = (index: number) => act("Retry", "retry_transfer", { owner: view.plan.owner, index }, { tgas: 300, done: "Retrying. This page updates as it lands." }).then((ok) => (ok && intents.reload(), ok));
 
   return (
     <>
@@ -158,6 +165,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
         </section>
       )}
 
+      <HeirIntentsCard owner={view.plan.owner} holding={intents} />
       <GetNotified role="heir" />
       {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
       <HistoryCard view={view} history={history} />

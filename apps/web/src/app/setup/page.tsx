@@ -11,9 +11,11 @@ import { Swap } from "@/components/motion";
 import { SignInDialog } from "@/components/SignIn";
 import { TierNeeded } from "@/components/Tiers";
 import { DaoBanner, DaoSetupNotes } from "@/components/Dao";
+import { IntentsBridgeAddress } from "@/components/Intents";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
 import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
 import type { DaoCall } from "@/lib/dao";
+import { getIntentsConfig, getIntentsDelivery, type IntentsConfig, type IntentsDelivery } from "@/lib/intents";
 import { humanError } from "@/lib/hooks";
 import { describePlan, duration, parseNear, percent, shortName, validateDraft } from "@/lib/plan";
 import { SponsorRefused, useSession } from "@/lib/session";
@@ -24,6 +26,7 @@ import {
   fromMs,
   guardianErrors,
   heirErrors,
+  intentsDeliveries,
   sharesTotal,
   splitEvenly,
   timingErrors,
@@ -34,6 +37,9 @@ import {
   type Unit,
   type WizardStep,
 } from "@/lib/wizard";
+
+/** Storage for set_intents_delivery; the contract refunds what it doesn't use. */
+const INTENTS_DEPOSIT = 10_000_000_000_000_000_000_000n;
 
 const STEP_META: Record<WizardStep, { label: string; icon: LucideIcon; title: string; lede: string }> = {
   timing: { label: "Timing", icon: Timer, title: "How often will you check in?", lede: "Miss a check-in and the grace period, and your guardians may start a release. You can cancel until the waiting period ends." },
@@ -92,6 +98,10 @@ function Setup() {
   // D25: what the saved plan already has beside the policy (rules, options,
   // Bitcoin destinations, token escrow) counts toward the tier it needs.
   const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean; delegates: number }>({ rules: null, options: null, btc: 0, tokens: false, delegates: 0 });
+  // D27: NEAR Intents delivery, when this deployment has a verifier; how many recipients the saved plan opted in.
+  const [intentsCfg, setIntentsCfg] = useState<IntentsConfig | null>(null);
+  const [savedIntents, setSavedIntents] = useState<IntentsDelivery[]>([]);
+  useEffect(() => void getIntentsConfig().then(setIntentsCfg).catch(() => {}), []);
   const tierCfg = useTierConfig();
   const { tier, reload: reloadTier } = useTier(session?.accountId);
   const top = useRef<HTMLDivElement>(null);
@@ -146,6 +156,15 @@ function Setup() {
       getBtcDestinations(owner).catch(() => []),
       viewCall<string[]>("get_checkin_delegates", { owner }).catch(() => []),
     ]).then(([rules, options, btc, delegates]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n), delegates: delegates.length }));
+    getIntentsDelivery(owner)
+      .then((ds) => {
+        setSavedIntents(ds);
+        setD((x) => ({ ...x, heirs: x.heirs.map((h) => {
+          const dl = ds.find((y) => y.account_id === h.account.trim().toLowerCase() && y.enabled);
+          return dl ? { ...h, intents: true, intentsAccount: dl.intents_account ?? "" } : h;
+        }) }));
+      })
+      .catch(() => {});
   }, [existing]);
   // D24: can Behest's sponsor pool cover this owner's storage?
   useEffect(() => {
@@ -201,7 +220,8 @@ function Setup() {
   const finalErrors = session ? validateDraft(plan, session.accountId) : [];
   // D25: the tier this draft needs, and whether the owner has it (or already uses it).
   const tiersOn = !!tierCfg?.fee_token;
-  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates);
+  const deliveries = intentsDeliveries(d.heirs);
+  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates, deliveries.length > 0);
   const needTier = tierCfg && tiersOn ? requiredTier(tierCfg, draftFeatures) : 0;
   const allowance = tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0;
   const tierBlocked = tiersOn && (!tier || needTier > allowance);
@@ -232,6 +252,7 @@ function Setup() {
       // D26: a DAO saves the plan and its first deposit in one proposal (one vote), paying its own storage.
       if (session.propose) {
         const calls: DaoCall[] = [{ method: "set_plan", args: { plan }, deposit: 100_000_000_000_000_000_000_000n }];
+        if (deliveries.length || savedIntents.length) calls.push({ method: "set_intents_delivery", args: { deliveries }, deposit: INTENTS_DEPOSIT });
         if (!editing && depositYocto && depositYocto > 0n) calls.push({ method: "deposit", args: { owner: session.accountId }, deposit: depositYocto });
         const r = await session.propose(calls);
         setProposed(r.proposalId ?? null);
@@ -257,6 +278,20 @@ function Setup() {
       if (!saved) {
         await session.call("set_plan", { plan }, { deposit: 100_000_000_000_000_000_000_000n });
         setPaidBy("you");
+      }
+      // D27: who receives through NEAR Intents (after set_plan: only the plan's recipients may opt in).
+      if (deliveries.length || savedIntents.length) {
+        const summary = deliveries.length ? "Choose who receives through NEAR Intents" : "Stop paying heirs through NEAR Intents";
+        let done = false;
+        if (sponsored || evm) {
+          try {
+            await session.call("set_intents_delivery", { deliveries }, { sponsor: true, summary });
+            done = true;
+          } catch (e) {
+            if (evm || !(e instanceof SponsorRefused)) throw e;
+          }
+        }
+        if (!done) await session.call("set_intents_delivery", { deliveries }, { deposit: INTENTS_DEPOSIT, summary });
       }
       if (!editing && depositYocto && depositYocto > 0n) {
         setPhase("deposit");
@@ -359,7 +394,7 @@ function Setup() {
           <Swap id={step} dir={dir} className="flex flex-col gap-4">
             {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} />}
             {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} />}
-            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} />}
+            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg} />}
             {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
               <ReviewStep plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
@@ -582,7 +617,7 @@ function GuardianStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldE
   );
 }
 
-function HeirStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldErrors }) {
+function HeirStep({ d, set, errors, intents }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean }) {
   const total = sharesTotal(d.heirs);
   const upd = (i: number, x: Partial<HeirDraft>) => set("heirs", d.heirs.map((h, j) => (j === i ? { ...h, ...x } : h)));
   return (
@@ -626,10 +661,29 @@ function HeirStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldError
                 <Field label="NEAR goes to" optional error={errors[`heir.${i}.near`]} hint={h.account.trim() ? `Defaults to ${h.account.trim()}.` : "Defaults to the heir account."}>
                   {(p) => <input {...p} className={inputClass} placeholder={h.account || "amara.testnet"} value={h.near} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { near: e.target.value })} />}
                 </Field>
-                <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint="For Sepolia ETH and tokens. Leave empty for none.">
-                  {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="0x…" value={h.eth} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { eth: e.target.value })} />}
-                </Field>
+                <div className="flex flex-col gap-1.5">
+                  <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint="For Sepolia ETH and tokens. Leave empty for none.">
+                    {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="0x…" value={h.eth} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { eth: e.target.value })} />}
+                  </Field>
+                  <IntentsBridgeAddress account={(h.intentsAccount || h.near || h.account).trim().toLowerCase()} chain="eth:1" onUse={(eth) => upd(i, { eth })} />
+                </div>
               </div>
+              {intents && (
+                <div className="flex flex-col gap-3 rounded-row border border-line p-4">
+                  <label className="flex cursor-pointer items-start gap-3 text-[15px]">
+                    <input type="checkbox" checked={!!h.intents} onChange={(e) => upd(i, { intents: e.target.checked })} className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]" />
+                    <span>
+                      <strong>Receive through NEAR Intents</strong>
+                      <span className="block text-sm text-muted">Their NEAR and NEAR tokens are paid into their NEAR Intents account instead of their wallet. From there they can keep them, withdraw them or swap them to almost any asset on almost any chain. Standard plan or above.</span>
+                    </span>
+                  </label>
+                  {h.intents && (
+                    <Field label="Intents account" optional error={errors[`heir.${i}.intents`]} hint={`Defaults to ${(h.near || h.account).trim() || "their NEAR account"}. An Ethereum wallet's Intents account is its 0x address.`}>
+                      {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder={(h.near || h.account).trim() || "amara.testnet"} value={h.intentsAccount ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { intentsAccount: e.target.value })} />}
+                    </Field>
+                  )}
+                </div>
+              )}
             </Card>
           </li>
         ))}
@@ -771,6 +825,11 @@ function ReviewStep({
           <span className="text-sm font-semibold text-muted">Heirs</span>
           {edit("heirs")}
         </div>
+        {intentsDeliveries(d.heirs).length > 0 && (
+          <p className="px-1 text-sm text-muted">
+            Through NEAR Intents: {intentsDeliveries(d.heirs).map((x) => shortName(x.account_id)).join(", ")}.
+          </p>
+        )}
         <HeirList view={{ status: "Active", overdue_at_ms: 0, now_ms: 0, plan: { owner, version: 0, policy: plan, last_check_in_ms: 0, escrow: "0", eth_next_nonce: 0, proposal: null, proposals_opened: 0 } }} />
       </div>
       {!editing && depositYocto != null && depositYocto > 0n && (

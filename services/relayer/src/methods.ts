@@ -23,6 +23,8 @@ export const SPONSORED_METHODS = {
   set_release_options: "owner",
   set_btc_destinations: "owner",
   set_checkin_delegates: "owner",
+  // D27
+  set_intents_delivery: "owner",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 

@@ -36,6 +36,8 @@ export interface Features {
   advanced_release: boolean;
   /** D26 */
   checkin_delegates?: boolean;
+  /** D27: gated with the other cross-chain delivery features (external_assets). */
+  intents_delivery?: boolean;
 }
 
 export interface TierView {
@@ -61,7 +63,7 @@ export interface TreasuryView {
 /** What each tier unlocks, in the words the app uses everywhere. */
 export function tierPerks(s: TierSpec): string[] {
   const out = [`${s.max_heirs === 1 ? "1 heir" : `Up to ${s.max_heirs} heirs`}`, `Up to ${s.max_guardians} guardians`];
-  out.push(s.external_assets ? "NEAR, tokens, ETH and Bitcoin" : "NEAR only");
+  out.push(s.external_assets ? "NEAR, tokens, ETH and Bitcoin; heirs can receive through NEAR Intents" : "NEAR only");
   if (s.release_rules) out.push("Fixed amounts, alternates and a fallback");
   if (delegatesAllowed(s)) out.push("Check-in delegates (for DAOs and busy owners)");
   if (s.advanced_release) out.push("Automatic or hybrid release, per-heir modes, delay signers");
@@ -69,7 +71,7 @@ export function tierPerks(s: TierSpec): string[] {
   return out;
 }
 
-export function features(plan: Pick<PlanInput, "heirs" | "guardians">, rules: ReleaseRules | null, options: ReleaseOptions | null, btcDestinations: number, tokenEscrow: boolean, delegates = 0): Features {
+export function features(plan: Pick<PlanInput, "heirs" | "guardians">, rules: ReleaseRules | null, options: ReleaseOptions | null, btcDestinations: number, tokenEscrow: boolean, delegates = 0, intents = false): Features {
   return {
     heirs: plan.heirs.length,
     guardians: plan.guardians.length,
@@ -77,6 +79,7 @@ export function features(plan: Pick<PlanInput, "heirs" | "guardians">, rules: Re
     release_rules: !!rules,
     advanced_release: !!options && (options.mode !== "Claim" || options.delay_signers.length > 0 || (options.overrides ?? []).length > 0),
     checkin_delegates: delegates > 0,
+    intents_delivery: intents,
   };
 }
 
@@ -87,7 +90,8 @@ export function allows(s: TierSpec, f: Features): boolean {
     (s.external_assets || !f.external_assets) &&
     (s.release_rules || !f.release_rules) &&
     (s.advanced_release || !f.advanced_release) &&
-    (delegatesAllowed(s) || !f.checkin_delegates)
+    (delegatesAllowed(s) || !f.checkin_delegates) &&
+    (s.external_assets || !f.intents_delivery)
   );
 }
 
@@ -107,6 +111,7 @@ export function reasonFor(cfg: TierConfig, t: number, f: Features): string | nul
   if (f.release_rules && !s.release_rules) return "release rules";
   if (f.advanced_release && !s.advanced_release) return "automatic or hybrid release, per-heir modes or delay signers";
   if (f.checkin_delegates && !delegatesAllowed(s)) return "check-in delegates";
+  if (f.intents_delivery && !s.external_assets) return "delivery through NEAR Intents";
   return null;
 }
 

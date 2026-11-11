@@ -5,6 +5,10 @@
 // Mainnet only: 1Click has no testnet. Deposits that can't be filled are
 // refunded by 1Click to `refundTo` on the origin chain.
 import { CONTRACT_ID } from "./config";
+import { base64Encode, baseEncode } from "near-api-js";
+import { view } from "./contract";
+import { signNep413 } from "./notify";
+import type { Session } from "./session";
 import { paymentMsg } from "./tiers";
 
 const API = "https://1click.chaindefuser.com/v0";
@@ -105,3 +109,137 @@ export const STATUS_WORDS: Record<IntentStatus, string> = {
   REFUNDED: "Refunded to your address. Nothing was paid.",
   FAILED: "The swap failed. Funds are refunded to your address.",
 };
+
+// ---------------------------------------------------------------- D27
+// Heirs can receive through NEAR Intents: the contract pays their share into
+// their account inside the Intents verifier (intents.near on mainnet, a mock
+// on testnet). From there they can hold it, swap it to almost any asset on
+// almost any chain, or withdraw it. Heirs' swaps carry no Behest fee: no
+// appFees are ever set here (D25 promises fees never touch releases).
+
+export interface IntentsConfig {
+  verifier: string;
+  wnear: string;
+}
+export interface IntentsDelivery {
+  account_id: string;
+  enabled: boolean;
+  intents_account: string | null;
+}
+export interface IntentsProgress {
+  paid: string;
+  wrapped: string;
+}
+
+export const getIntentsConfig = () => view<IntentsConfig | null>("get_intents_config");
+export const getIntentsDelivery = (owner: string) => view<IntentsDelivery[]>("get_intents_delivery", { owner });
+export const getIntentsProgress = (owner: string, index: number) => view<IntentsProgress>("get_intents_progress", { owner, index });
+
+/** The Intents account a recipient is paid into, or null when they're paid to their wallet. */
+export function intentsTarget(deliveries: IntentsDelivery[], recipient: string, nearDestination?: string | null): string | null {
+  const d = deliveries.find((x) => x.account_id === recipient && x.enabled);
+  return d ? (d.intents_account ?? nearDestination ?? d.account_id) : null;
+}
+
+/** Balances inside Intents for the given NEP-141 tokens (`nep141:<token>` ids), via mt_batch_balance_of. */
+export async function intentsBalances(verifier: string, account: string, tokens: string[]): Promise<Record<string, bigint>> {
+  if (!tokens.length) return {};
+  const ids = tokens.map((t) => `nep141:${t}`);
+  const out = await view<string[]>("mt_batch_balance_of", { account_id: account, token_ids: ids }, verifier);
+  return Object.fromEntries(tokens.map((t, i) => [t, BigInt(out[i] ?? "0")]));
+}
+
+/**
+ * A quote that spends from the heir's Intents balance (depositType INTENTS):
+ * the heir moves `amount` of `origin` inside Intents to the returned deposit
+ * address with a signed transfer intent, and 1Click delivers `dest` to
+ * `recipient` on its chain. Refunds go back to the Intents account. No appFees.
+ */
+export async function intentsQuote(opts: { origin: string; dest: IntentToken; amount: bigint; intentsAccount: string; recipient: string; dry?: boolean }): Promise<IntentQuote> {
+  const deadline = new Date(Date.now() + 30 * 60_000).toISOString();
+  const res = await fetch(`${API}/quote`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      dry: !!opts.dry,
+      swapType: "EXACT_INPUT",
+      slippageTolerance: 100,
+      originAsset: opts.origin,
+      depositType: "INTENTS",
+      destinationAsset: opts.dest.assetId,
+      amount: opts.amount.toString(),
+      refundTo: opts.intentsAccount,
+      refundType: "INTENTS",
+      recipient: opts.recipient.trim(),
+      recipientType: "DESTINATION_CHAIN",
+      deadline,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { quote?: Partial<IntentQuote> & { amountOutFormatted?: string }; message?: string };
+  if (!res.ok || !body.quote) throw new Error(body.message ? `NEAR Intents: ${body.message}` : "NEAR Intents couldn't quote this.");
+  return { depositAddress: "", amountIn: "0", amountInFormatted: "0", amountInUsd: "0", timeEstimate: 0, ...body.quote, deadline } as IntentQuote;
+}
+
+/** The intents a heir signs: move tokens to a 1Click deposit address, or withdraw to a NEAR account. */
+export type HeirIntent =
+  | { intent: "transfer"; receiver_id: string; tokens: Record<string, string> }
+  | { intent: "ft_withdraw"; token: string; receiver_id: string; amount: string };
+
+export type SignedIntent =
+  | { standard: "nep413"; payload: { message: string; nonce: string; recipient: string }; public_key: string; signature: string }
+  | { standard: "erc191"; payload: string; signature: string };
+
+/**
+ * Signs intents as the heir's Intents account. NEAR wallets and test personas
+ * sign NEP-413 (recipient: the verifier); Ethereum wallets sign ERC-191
+ * (personal_sign) over the same JSON with the verifier and nonce inside.
+ */
+export async function signIntents(session: Session, verifier: string, intents: HeirIntent[], deadlineMs = Date.now() + 10 * 60_000): Promise<SignedIntent> {
+  const deadline = new Date(deadlineMs).toISOString();
+  const nonce = crypto.getRandomValues(new Uint8Array(32));
+  if (session.kind === "evm") {
+    if (!session.personalSign) throw new Error("Reconnect your wallet, then try again.");
+    const payload = JSON.stringify({ signer_id: session.accountId, verifying_contract: verifier, deadline, nonce: base64Encode(nonce), intents });
+    const hex = (await session.personalSign(payload)).replace(/^0x/, "");
+    const sig = Uint8Array.from(hex.match(/../g)!.map((h) => parseInt(h, 16)));
+    // The verifier wants the recovery id as 0 or 1.
+    if (sig[64]! >= 27) sig[64] = sig[64]! - 27;
+    return { standard: "erc191", payload, signature: `secp256k1:${baseEncode(sig)}` };
+  }
+  const message = JSON.stringify({ signer_id: session.accountId, deadline, intents });
+  const s = await signNep413(session, message, verifier, nonce);
+  const sig = Uint8Array.from(atob(s.signature), (c) => c.charCodeAt(0));
+  return { standard: "nep413", payload: { message, nonce: s.nonce, recipient: verifier }, public_key: s.publicKey, signature: `ed25519:${baseEncode(sig)}` };
+}
+
+const SOLVER_RELAY = "https://solver-relay-v2.chaindefuser.com/rpc";
+
+/** Publishes a signed intent to the solver relay (mainnet). */
+export async function publishIntent(signed: SignedIntent): Promise<string> {
+  const res = await fetch(SOLVER_RELAY, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "publish_intent", params: [{ quote_hashes: [], signed_data: signed }] }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { result?: { status?: string; intent_hash?: string; reason?: string }; error?: { message?: string } };
+  if (!res.ok || body.error || body.result?.status !== "OK") throw new Error(`NEAR Intents refused it: ${body.error?.message ?? body.result?.reason ?? res.status}`);
+  return body.result.intent_hash ?? "";
+}
+
+/**
+ * Mainnet: an Intents deposit address on another chain that credits
+ * `account` inside Intents (the PoA bridge). Saved as a heir's normal
+ * Ethereum or Bitcoin destination, the vault's payout lands in Intents.
+ * Testnet has no bridge.
+ */
+export async function bridgeDepositAddress(account: string, chain: "eth:1" | "btc:mainnet"): Promise<string> {
+  if (!intentsAvailable) throw new Error("NEAR Intents' bridge is mainnet-only.");
+  const res = await fetch("https://bridge.chaindefuser.com/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "deposit_address", params: [{ account_id: account, chain }] }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { result?: { address?: string }; error?: { message?: string } };
+  if (!res.ok || !body.result?.address) throw new Error(body.error?.message ?? "The Intents bridge didn't give an address.");
+  return body.result.address;
+}

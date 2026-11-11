@@ -155,6 +155,10 @@ export const TRANSFER_STYLE: Record<TransferState, ChipStyle> = {
 /** Why a transfer failed, in words an heir can act on. Funds never leave the vault on failure. */
 export function failureText(t: Transfer): string {
   switch (t.failure) {
+    case "IntentsRefunded":
+      return "NEAR Intents handed the payment back, so nothing counts as paid. It's back in the plan; retry to send it again.";
+    case "IntentsPartlyRefunded":
+      return "NEAR Intents kept part of the payment and handed the rest back. What arrived counts; a retry sends only the rest.";
     case "Underpriced":
     case "FeeAboveCap":
       return "Network fees were too high. It will be retried automatically; your share is safe.";

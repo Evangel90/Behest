@@ -114,6 +114,12 @@ export function describeAction(method: string, args: Record<string, unknown>, ac
       return "Withdraw from your Bitcoin vault";
     case "cancel_vault_withdrawal":
       return "Cancel your vault withdrawal";
+    case "set_checkin_delegates":
+      return Array.isArray(args.delegates) && args.delegates.length ? `Let ${(args.delegates as string[]).join(", ")} check in for you` : "Remove your check-in delegates";
+    case "set_intents_delivery": {
+      const ds = Array.isArray(args.deliveries) ? (args.deliveries as { account_id: string; enabled: boolean }[]).filter((x) => x.enabled) : [];
+      return ds.length ? `Pay ${ds.map((x) => x.account_id).join(", ")} through NEAR Intents` : "Stop paying heirs through NEAR Intents";
+    }
     default:
       return `Call ${method} on Behest`;
   }

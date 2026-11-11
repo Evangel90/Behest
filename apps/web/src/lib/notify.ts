@@ -7,6 +7,7 @@
 //  - Ethereum-wallet sessions sign the same text with personal_sign (EIP-191).
 // Reading your settings uses a short session token from one signature.
 import { KeyPairSigner, type KeyPairString } from "near-api-js";
+import { CONTRACT_ID } from "./config";
 import { NOTIFIER_URL, NOTIFY_RECIPIENT } from "./config";
 import { sharedConnector } from "./connector";
 import { loadSandbox } from "./demo";
@@ -115,6 +116,25 @@ export interface Eip191Envelope {
 
 const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
 
+/** A NEP-413 signature by the session's NEAR account (test persona key or connected wallet). Signature and nonce are base64. */
+export async function signNep413(session: Session, message: string, recipient: string, nonce: Uint8Array = crypto.getRandomValues(new Uint8Array(32))): Promise<{ publicKey: string; signature: string; nonce: string }> {
+  if (session.kind === "persona") {
+    const persona = Object.values(loadSandbox()?.personas ?? {}).find((p) => p.accountId === session.accountId);
+    if (!persona) throw new NotifierError("NO_KEY", "This test persona's key isn't in this browser any more.");
+    const signer = KeyPairSigner.fromSecretKey(persona.secretKey as KeyPairString);
+    const s = await signer.signNep413Message(session.accountId, { message, recipient, nonce });
+    return { publicKey: s.publicKey.toString(), signature: b64(s.signature), nonce: b64(nonce) };
+  }
+  // Wallet: the connector keeps the connected wallet in browser storage, so a second instance finds it.
+  const connector = await sharedConnector();
+  const { wallet } = await connector.getConnectedWallet();
+  if (!wallet) throw new NotifierError("NO_WALLET", "Reconnect your wallet, then try again.");
+  if (wallet.manifest.features?.signMessage === false) throw new NotifierError("NO_SIGN_MESSAGE", `${wallet.manifest.name} can't sign messages. Try another wallet.`);
+  const s = await wallet.signMessage({ message, recipient, nonce, network: CONTRACT_ID.endsWith(".near") ? "mainnet" : "testnet", signerId: session.accountId });
+  if (s.accountId && s.accountId !== session.accountId) throw new NotifierError("WRONG_ACCOUNT", `The wallet signed as ${s.accountId}.`);
+  return { publicKey: s.publicKey, signature: s.signature, nonce: b64(nonce) };
+}
+
 /** Signs a notifier action as the session's account. */
 export async function signAction(session: Session, summary: string, action: string, args: Record<string, unknown> = {}): Promise<Envelope | Eip191Envelope> {
   const message = actionMessage(summary, action, session.accountId, args);
@@ -122,23 +142,9 @@ export async function signAction(session: Session, summary: string, action: stri
     if (!session.personalSign) throw new NotifierError("NO_WALLET", "Reconnect your wallet, then try again.");
     return { scheme: "eip191", accountId: session.accountId, message, signature: await session.personalSign(message) };
   }
-  const nonce = crypto.getRandomValues(new Uint8Array(32));
   const recipient = NOTIFY_RECIPIENT;
-  if (session.kind === "persona") {
-    const persona = Object.values(loadSandbox()?.personas ?? {}).find((p) => p.accountId === session.accountId);
-    if (!persona) throw new NotifierError("NO_KEY", "This test persona's key isn't in this browser any more.");
-    const signer = KeyPairSigner.fromSecretKey(persona.secretKey as KeyPairString);
-    const s = await signer.signNep413Message(session.accountId, { message, recipient, nonce });
-    return { accountId: session.accountId, publicKey: s.publicKey.toString(), signature: b64(s.signature), nonce: b64(nonce), message, recipient };
-  }
-  // Wallet: the connector keeps the connected wallet in browser storage, so a second instance finds it.
-  const connector = await sharedConnector();
-  const { wallet } = await connector.getConnectedWallet();
-  if (!wallet) throw new NotifierError("NO_WALLET", "Reconnect your wallet, then try again.");
-  if (wallet.manifest.features?.signMessage === false) throw new NotifierError("NO_SIGN_MESSAGE", `${wallet.manifest.name} can't sign messages. Try another wallet.`);
-  const s = await wallet.signMessage({ message, recipient, nonce, network: "testnet", signerId: session.accountId });
-  if (s.accountId && s.accountId !== session.accountId) throw new NotifierError("WRONG_ACCOUNT", `The wallet signed as ${s.accountId}.`);
-  return { accountId: session.accountId, publicKey: s.publicKey, signature: s.signature, nonce: b64(nonce), message, recipient };
+  const s = await signNep413(session, message, recipient);
+  return { accountId: session.accountId, publicKey: s.publicKey, signature: s.signature, nonce: s.nonce, message, recipient };
 }
 
 // ---- session token, kept per tab
