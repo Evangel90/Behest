@@ -23,7 +23,8 @@
     "gen-evm-vectors": "tsx src/gen-evm-vectors.ts",
     "recover-vaults": "tsx --env-file=../../.env src/recover-vaults.ts",
     "topup": "tsx --env-file=../../.env src/topup.ts",
-    "e2e-tiers": "tsx --env-file=../../.env src/tiers-scenario.ts"
+    "e2e-tiers": "tsx --env-file=../../.env src/tiers-scenario.ts",
+    "e2e-dao": "tsx --env-file=../../.env src/dao-scenario.ts"
   },
   "dependencies": {
     "@behest/executor": "workspace:*",
