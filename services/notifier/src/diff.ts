@@ -250,6 +250,8 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
   const who = name(o);
   const p = v.plan.proposal;
   const planLink: Link[] = ctx.appUrl ? [{ label: "Open the plan in Behest", url: `${ctx.appUrl.replace(/\/$/, "")}/plan/${o}` }] : [];
+  // The heir recovery packet: claim steps with and without Behest's website.
+  const packetLink: Link[] = ctx.appUrl ? [{ label: "How to claim (recovery packet)", url: `${ctx.appUrl.replace(/\/$/, "")}/plan/${o}/packet` }] : [];
   const add = (n: Omit<Notice, "owner" | "links"> & { links?: Link[] }) => out.push({ ...n, owner: o, links: [...(n.links ?? []), ...planLink] });
   const window = v.plan.policy.check_in_interval_ms + v.plan.policy.grace_ms;
   const checkIn = v.plan.last_check_in_ms; // each check-in gets its own keys
@@ -364,7 +366,7 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
           : mode === "Hybrid"
             ? `Open Behest to receive it, or it will be sent to you automatically${cur.options?.hybrid_grace_ms ? ` after ${duration(cur.options.hybrid_grace_ms)}` : ""}.`
             : "Open Behest to receive it.";
-      add({ key: `${o}:eligible:${p.id}`, kind: "eligible", to: ["heirs"], proposalId: p.id, subject: `${who}'s plan is ready for you`, text: `What ${who} set aside for you is ready. ${how} Network fees are covered.` });
+      add({ key: `${o}:eligible:${p.id}`, kind: "eligible", to: ["heirs"], proposalId: p.id, subject: `${who}'s plan is ready for you`, text: `What ${who} set aside for you is ready. ${how} Network fees are covered.`, links: packetLink });
     }
     p.transfers.forEach((t, i) => {
       const asset = assetLabel(t.asset, ctx);
