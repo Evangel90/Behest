@@ -11,6 +11,7 @@ import { useSession } from "@/lib/session";
 import type { BtcDestination, BtcRelease, BtcUtxo, BtcVault, PlanView, ReleaseRules } from "@/lib/types";
 import { useConfirm } from "./feedback";
 import { Address, Dialog, Field, Term } from "./interactive";
+import { IntentsBridgeAddress } from "./Intents";
 import { useTx } from "./tx";
 import { AssetHead, Button, Card, Notice, SectionTitle, Skeleton, TestnetTag, inputClass } from "./ui";
 
@@ -166,9 +167,13 @@ function BtcDestinations({ view, btc, busy, onSave }: { view: PlanView; btc: Btc
   return (
     <>
       {people.map((a) => (
-        <Field key={a} label={shortName(a)} hint={a} error={(tried || value(a).length > 8) && bad(a) ? "That isn't a testnet SegWit address (tb1q… or tb1p…)." : null}>
-          {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" spellCheck={false} value={draft[a] ?? current(a)} onChange={(e) => setDraft({ ...draft, [a]: e.target.value })} />}
-        </Field>
+        <div key={a} className="flex flex-col gap-1.5">
+          <Field label={shortName(a)} hint={a} error={(tried || value(a).length > 8) && bad(a) ? "That isn't a testnet SegWit address (tb1q… or tb1p…)." : null}>
+            {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" spellCheck={false} value={draft[a] ?? current(a)} onChange={(e) => setDraft({ ...draft, [a]: e.target.value })} />}
+          </Field>
+          {/* D27: a Bitcoin payout can land in the person's NEAR Intents account through the Intents bridge (mainnet). */}
+          <IntentsBridgeAddress account={view.plan.policy.heirs.find((h) => h.account_id === a)?.near_destination ?? a} chain="btc:mainnet" onUse={(address) => setDraft((x) => ({ ...x, [a]: address }))} />
+        </div>
       ))}
       <div className="flex flex-wrap gap-2">
         <Button
