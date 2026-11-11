@@ -176,7 +176,10 @@ function useDaoProposals(dao: string | null, owner: string) {
   useEffect(() => {
     setList(null);
     void reload();
-    const t = setInterval(() => void reload(), 8000);
+    // Votes come from other members too; poll gently, and not while the tab is hidden.
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void reload();
+    }, 20_000);
     return () => clearInterval(t);
   }, [reload]);
   return { list, feeToken, error, reload };

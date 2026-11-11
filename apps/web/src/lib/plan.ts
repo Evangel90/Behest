@@ -41,6 +41,8 @@ export function shortName(account: string): string {
   // Ethereum-wallet accounts (0x…): the short address, as wallets show it.
   if (/^0x[0-9a-fA-F]{40}$/.test(account)) return shortAddr(account.toLowerCase());
   const first = account.split(".")[0] ?? account;
+  // D26: a SputnikDAO keeps its whole name ("bh-ekkr6" and "bg-ekkr6" are different DAOs).
+  if (/\.(sputnikv2\.testnet|sputnik-dao\.near)$/.test(account)) return `${first} DAO`;
   // persona accounts look like "x7f2-amara.demo…": show "Amara"
   const role = first.includes("-") ? first.slice(first.lastIndexOf("-") + 1) : first;
   // "Try as…" personas are named by role in the account id; show their names.

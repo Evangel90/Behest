@@ -3,7 +3,7 @@
 // funding, then a plain-language review before anything is signed.
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Divide, Gift, LoaderCircle, Pencil, Plus, ScrollText, ShieldCheck, Timer, Trash2, UserRound, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Divide, Gift, LoaderCircle, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
@@ -101,10 +101,18 @@ function Setup() {
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
 
   useEffect(() => void getConfig().then((c) => setDemo(c.demo_timers)).catch(() => {}), []);
+  // A failed read is not "no plan": saving a new plan would replace the real one.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadTry, setLoadTry] = useState(0);
   useEffect(() => {
     if (!session) return;
+    setLoadFailed(false);
+    setExisting(undefined);
+    // The session can change while this read is out (e.g. re-entering a DAO after a reload): only the latest counts.
+    let live = true;
     getPlan(session.accountId)
       .then((v) => {
+        if (!live) return;
         setExisting(v);
         if (v) {
           const p = v.plan.policy;
@@ -124,8 +132,11 @@ function Setup() {
           } catch {}
         }
       })
-      .catch(() => setExisting(null));
-  }, [session]);
+      .catch(() => live && setLoadFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [session, loadTry]);
   useEffect(() => {
     if (!existing) return;
     const owner = existing.plan.owner;
@@ -274,6 +285,17 @@ function Setup() {
           </ButtonLink>
         </EmptyState>
         <SignInDialog open={signIn} onClose={() => setSignIn(false)} />
+      </AppShell>
+    );
+  }
+  if (loadFailed) {
+    return (
+      <AppShell>
+        <EmptyState icon={WifiOff} tone="error" title="Couldn't read your current plan" body="The NEAR network didn't answer. Behest needs to know whether you already have a plan before you edit or create one.">
+          <Button variant="ink" icon={RotateCcw} onClick={() => setLoadTry((n) => n + 1)}>
+            Try again
+          </Button>
+        </EmptyState>
       </AppShell>
     );
   }
