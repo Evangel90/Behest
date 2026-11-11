@@ -78,6 +78,7 @@ CREATE INDEX IF NOT EXISTS contacts_verify ON contacts (verify_hash);
 CREATE INDEX IF NOT EXISTS contacts_unsub ON contacts (unsub_token);
 CREATE TABLE IF NOT EXISTS prefs (account TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL, PRIMARY KEY (account, kind));
 CREATE TABLE IF NOT EXISTS watches (account TEXT NOT NULL, owner TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY (account, owner));
+CREATE TABLE IF NOT EXISTS councils (dao TEXT PRIMARY KEY, enabled_by TEXT NOT NULL, created_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS deliveries (
   notice_key TEXT NOT NULL,
   account TEXT NOT NULL,
@@ -292,6 +293,18 @@ export class Store {
       for (const o of owners) this.run("INSERT OR IGNORE INTO watches (account, owner, created_ms) VALUES (?, ?, ?)", account, o, now);
     });
   }
+  // ---- D26: DAOs whose whole council gets the DAO's notices
+  setCouncil(dao: string, by: string, on: boolean, now = Date.now()) {
+    if (on) this.run("INSERT INTO councils (dao, enabled_by, created_ms) VALUES (?, ?, ?) ON CONFLICT (dao) DO UPDATE SET enabled_by = excluded.enabled_by", dao, by, now);
+    else this.run("DELETE FROM councils WHERE dao = ?", dao);
+  }
+  council(dao: string): { dao: string; enabled_by: string; created_ms: number } | undefined {
+    return this.get("SELECT dao, enabled_by, created_ms FROM councils WHERE dao = ?", dao);
+  }
+  councils(): string[] {
+    return this.all<{ dao: string }>("SELECT dao FROM councils ORDER BY dao").map((r) => r.dao);
+  }
+
   /** Owners some subscribed account asked to watch. */
   watchedOwners(): { account: string; owner: string }[] {
     return this.all("SELECT w.account, w.owner FROM watches w WHERE EXISTS (SELECT 1 FROM contacts c WHERE c.account = w.account AND c.status = 'active')");

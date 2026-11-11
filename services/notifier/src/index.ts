@@ -5,6 +5,7 @@
 // private in a local SQLite database and managed through a signed HTTP API.
 import { JsonRpcProvider } from "near-api-js";
 import { createApi } from "./api.js";
+import { councilReader } from "./council.js";
 import { EmailSender } from "./channels/email.js";
 import { TelegramBot } from "./channels/telegram.js";
 import { WebhookSender } from "./channels/webhook.js";
@@ -23,15 +24,16 @@ if (imported) log("imported legacy state file", { sent: imported, from: cfg.lega
 
 const provider = new JsonRpcProvider({ url: cfg.nearRpcUrl });
 const view = <T>(method: string, args: Record<string, unknown>) => provider.callFunction({ contractId: cfg.contractId, method, args }) as Promise<T>;
+const councilOf = councilReader(<T>(contractId: string, method: string, args: Record<string, unknown>) => provider.callFunction({ contractId, method, args }) as Promise<T>);
 
 const email = cfg.smtp ? new EmailSender(cfg.smtp) : undefined;
 const telegram = cfg.telegram ? new TelegramBot(cfg.telegram, store, log) : undefined;
 const webhook = new WebhookSender(cfg.contractId, cfg.webhookAllowInsecure);
 const engine = new Engine(store, cfg, { email, telegram, webhook }, log);
-const watcher = new Watcher(store, engine, view, { owners: cfg.owners, appUrl: cfg.appUrl, contractId: cfg.contractId }, log);
+const watcher = new Watcher(store, engine, view, { owners: cfg.owners, appUrl: cfg.appUrl, contractId: cfg.contractId, councilOf }, log);
 if (telegram) telegram.onLinked = (account, id, who) => engine.security(account, "Telegram linked", `Telegram ${who} now receives the notifications for ${account}. If you didn't do this, remove it in Behest.`, id);
 
-const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrl), email, telegram, isMember: (o, a) => watcher.isMember(o, a), log });
+const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrl), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log });
 api.listen(cfg.port, cfg.host, () => log("notifier api listening", { port: cfg.port, publicUrl: cfg.publicUrl }));
 
 log("notifier started", {

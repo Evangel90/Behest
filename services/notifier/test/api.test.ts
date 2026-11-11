@@ -37,6 +37,7 @@ beforeAll(async () => {
     email,
     telegram,
     isMember: async (owner, account) => owner === "kemi.testnet" && account === "amara.testnet",
+    councilOf: async (dao) => (dao === "family.sputnikv2.testnet" ? ["kemi.testnet", "dayo.testnet"] : dao === "rpc.sputnikv2.testnet" ? Promise.reject(new Error("down")) : null),
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -166,6 +167,20 @@ describe("notifier API", () => {
     const list = await call("GET", "/v1/contacts", undefined, await session("amara"));
     expect(list.json.watches).toEqual(["kemi.testnet"]);
     expect(list.json.preferences.reminder).toBe(false);
+  });
+
+  it("lets a council member send a DAO's notices to the whole council (D26)", async () => {
+    const dao = "family.sputnikv2.testnet";
+    expect((await call("PUT", "/v1/council", await sign("amara", "council.set", { dao, enabled: true }))).json.code).toBe("NOT_COUNCIL");
+    expect((await call("PUT", "/v1/council", await sign("kemi", "council.set", { dao: "amara.testnet", enabled: true }))).json.code).toBe("NOT_A_DAO");
+    expect((await call("PUT", "/v1/council", await sign("kemi", "council.set", { dao: "rpc.sputnikv2.testnet", enabled: true }))).json.code).toBe("RPC");
+    expect((await call("PUT", "/v1/council", await sign("kemi", "council.set", { dao, enabled: "yes" }))).json.code).toBe("BAD_REQUEST");
+    const r = await call("PUT", "/v1/council", await sign("kemi", "council.set", { dao, enabled: true }));
+    expect(r.json).toEqual({ dao, enabled: true, members: ["kemi.testnet", "dayo.testnet"] });
+    expect(store.council(dao)?.enabled_by).toBe("kemi.testnet");
+    expect((await call("GET", "/v1/contacts", undefined, await session("kemi"))).json.councils).toEqual([dao]);
+    await call("PUT", "/v1/council", await sign("kemi", "council.set", { dao, enabled: false }));
+    expect(store.council(dao)).toBeUndefined();
   });
 
   it("validates input", async () => {

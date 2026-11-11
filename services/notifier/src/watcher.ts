@@ -5,6 +5,7 @@
 // release is resolved.
 import type { Store } from "./db.js";
 import { members, notices, recipients, type Ctx, type ExtensionState, type Options, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
+import { withCouncils, type CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 
 export type View = <T>(method: string, args: Record<string, unknown>) => Promise<T>;
@@ -23,7 +24,7 @@ export class Watcher {
     private store: Store,
     private engine: Engine,
     private view: View,
-    private opts: { owners: string[]; appUrl?: string; contractId: string },
+    private opts: { owners: string[]; appUrl?: string; contractId: string; councilOf?: CouncilOf },
     private log: Log = () => {},
   ) {
     this.ctx = { appUrl: opts.appUrl, contractId: opts.contractId, tokens: {} };
@@ -52,7 +53,8 @@ export class Watcher {
   /** Owners to read this round, and the ones worth keeping a snapshot of. */
   async owners(): Promise<{ all: string[]; keep: Set<string> }> {
     const open = await this.openReleases();
-    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner)]);
+    // A DAO with council notices on has no contacts of its own; its plan is watched for the council.
+    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner), ...this.store.councils()]);
     return { all: [...new Set([...keep, ...this.store.knownOwners()])], keep };
   }
 
@@ -87,7 +89,8 @@ export class Watcher {
     let fanned = 0;
     for (const n of notices(prev, cur, this.ctx)) {
       if (this.store.hasNotice(n.key)) continue;
-      if (this.engine.fanOut(n, recipients(cur, n))) fanned++;
+      const to = this.opts.councilOf ? await withCouncils(recipients(cur, n), (a) => !!this.store.council(a), this.opts.councilOf) : recipients(cur, n);
+      if (this.engine.fanOut(n, to)) fanned++;
     }
     const open = !!cur.view.plan.proposal || (cur.withdrawal && !["Confirmed", "Failed"].includes(cur.withdrawal.state));
     if (keep || open) this.store.putSnapshot(owner, cur);

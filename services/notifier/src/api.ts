@@ -15,6 +15,7 @@
 //   POST   /v1/telegram/link              signed "telegram.link" → t.me deep link
 //   PUT    /v1/preferences                signed "preferences.set"
 //   PUT    /v1/watches                    signed "watches.set"
+//   PUT    /v1/council                    signed "council.set" by a council member: the DAO's notices go to its whole council (D26)
 //   GET    /v1/verify?token=…             page with a confirm button (mail scanners don't confirm by fetching)
 //   POST   /v1/verify                     confirm an email
 //   GET    /v1/unsubscribe?token=…        page with an unsubscribe button
@@ -29,6 +30,7 @@ import { checkWebhookUrl, UrlError } from "./channels/webhook.js";
 import type { Config } from "./config.js";
 import { sha256, token, type Channel, type Contact, type Store } from "./db.js";
 import { ALWAYS_ON, KIND_INFO, KINDS, type Kind } from "./diff.js";
+import type { CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 import type { KeyLookup } from "./nep413.js";
 
@@ -56,6 +58,8 @@ export interface ApiDeps {
   email?: EmailSender;
   telegram?: TelegramBot;
   isMember?: (owner: string, account: string) => Promise<boolean>;
+  /** D26: a DAO's council members (get_policy), or null when the account isn't a DAO. */
+  councilOf?: CouncilOf;
   log?: (msg: string, data?: Record<string, unknown>) => void;
   now?: () => number;
 }
@@ -255,6 +259,7 @@ export function createApi(d: ApiDeps): Server {
         contacts: store.contacts(account).map((c) => publicContact(c, store)),
         preferences: store.prefs(account),
         watches: store.watches(account),
+        councils: store.councils().filter((dao) => store.council(dao)?.enabled_by === account),
         recent: store.recentNotices([account], 20).map((n) => ({ key: n.key, kind: n.kind, owner: n.owner, subject: n.subject, text: n.text, links: n.links, created_ms: n.created_ms })),
       });
     }
@@ -368,6 +373,21 @@ export function createApi(d: ApiDeps): Server {
       }
       store.setWatches(a.account, kept);
       return json(req, res, 200, { watches: kept, refused });
+    }
+
+    if (m === "PUT" && path === "/v1/council") {
+      const a = await signed(req, "council.set");
+      const dao = typeof a.dao === "string" ? a.dao : "";
+      if (!ACCOUNT.test(dao)) throw new HttpError(400, "BAD_REQUEST", "dao must be an account id");
+      if (typeof a.enabled !== "boolean") throw new HttpError(400, "BAD_REQUEST", "enabled must be true or false");
+      if (!d.councilOf) throw new HttpError(503, "COUNCIL_UNAVAILABLE", "this notifier can't read DAO councils");
+      const members = await d.councilOf(dao).catch(() => {
+        throw new HttpError(502, "RPC", "couldn't read the DAO's policy; try again");
+      });
+      if (!members) throw new HttpError(400, "NOT_A_DAO", `${dao} isn't a DAO (it has no get_policy)`);
+      if (!members.includes(a.account)) throw new HttpError(403, "NOT_COUNCIL", `${a.account} isn't on ${dao}'s council`);
+      store.setCouncil(dao, a.account, a.enabled, now());
+      return json(req, res, 200, { dao, enabled: a.enabled, members });
     }
 
     // ---- email confirmation and unsubscribe (opened from emails)
