@@ -109,6 +109,8 @@ const ERRORS: Record<string, string> = {
   E_BTC_NOT_HEAD: "Only the latest Bitcoin payout can be re-sent with a higher fee; this one confirms once the network catches up.",
   E_FEE_AT_CAP: "The network fee is already at the cap.",
   // D23/D24: Ethereum-wallet signed actions and sponsored storage
+  E_INVALID_TIERS: "That tier schedule isn't valid (the first tier must be free, prices must rise, and the last tier must allow everything).",
+  E_INSUFFICIENT_TREASURY: "The treasury doesn't hold that much.",
   E_SPONSOR_EXHAUSTED: "Behest can't cover storage for this right now (its sponsor pool or your allowance is used up). Nothing changed.",
   E_EVM_METHOD: "An Ethereum wallet can't do this through Behest. Nothing changed.",
   E_EVM_NONCE: "Another signed action went through first. Try again: you'll be asked to sign once more.",
@@ -122,6 +124,10 @@ const ERRORS: Record<string, string> = {
 export function humanError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   const code = msg.match(/E_[A-Z_]+/)?.[0];
+  if (code === "E_TIER_REQUIRED") {
+    const tier = msg.match(/needs the ([A-Za-z0-9 ]+?) tier/)?.[1];
+    return `This change needs the ${tier ?? "next"} tier. Upgrade from the plan screen (paid once, in USDC), then save again. Nothing changed.`;
+  }
   if (code && ERRORS[code]) return ERRORS[code];
   if (code?.startsWith("E_EVM_")) return `Behest couldn't accept that signature (${code}). Nothing changed.`;
   if (/rejected|cancel|denied/i.test(msg)) return "You cancelled in your wallet. Nothing was sent.";

@@ -9,12 +9,14 @@ import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
 import { Swap } from "@/components/motion";
 import { SignInDialog } from "@/components/SignIn";
+import { TierNeeded } from "@/components/Tiers";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
-import { getConfig, getPlan, getSponsorship, sponsorshipAvailable, type Sponsorship } from "@/lib/contract";
+import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
 import { humanError } from "@/lib/hooks";
 import { describePlan, duration, parseNear, percent, shortName, validateDraft } from "@/lib/plan";
 import { SponsorRefused, useSession } from "@/lib/session";
-import type { PlanInput, PlanView } from "@/lib/types";
+import { features, formatUsd, reasonFor, requiredTier, useTier, useTierConfig } from "@/lib/tiers";
+import type { PlanInput, PlanView, ReleaseOptions, ReleaseRules } from "@/lib/types";
 import {
   WIZARD_STEPS,
   fromMs,
@@ -83,6 +85,11 @@ function Setup() {
   const [ack, setAck] = useState(false);
   const [spons, setSpons] = useState<Sponsorship | null | undefined>(undefined);
   const [paidBy, setPaidBy] = useState<"behest" | "you">("you");
+  // D25: what the saved plan already has beside the policy (rules, options,
+  // Bitcoin destinations, token escrow) counts toward the tier it needs.
+  const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean }>({ rules: null, options: null, btc: 0, tokens: false });
+  const tierCfg = useTierConfig();
+  const { tier, reload: reloadTier } = useTier(session?.accountId);
   const top = useRef<HTMLDivElement>(null);
   // An owner who already has a plan always edits it (the contract keeps one plan per account).
   const editing = asked || !!existing;
@@ -115,6 +122,15 @@ function Setup() {
       })
       .catch(() => setExisting(null));
   }, [session]);
+  useEffect(() => {
+    if (!existing) return;
+    const owner = existing.plan.owner;
+    Promise.all([
+      viewCall<ReleaseRules | null>("get_release_rules", { owner }).catch(() => null),
+      viewCall<ReleaseOptions | null>("get_release_options", { owner }).catch(() => null),
+      getBtcDestinations(owner).catch(() => []),
+    ]).then(([rules, options, btc]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n) }));
+  }, [existing]);
   // D24: can Behest's sponsor pool cover this owner's storage?
   useEffect(() => {
     if (!session) return;
@@ -167,6 +183,12 @@ function Setup() {
   const show = (s: WizardStep) => (tried[s] ? errs[s] : {});
   const stepOk = (s: WizardStep) => Object.keys(errs[s]).length === 0;
   const finalErrors = session ? validateDraft(plan, session.accountId) : [];
+  // D25: the tier this draft needs, and whether the owner has it (or already uses it).
+  const tiersOn = !!tierCfg?.fee_token;
+  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens);
+  const needTier = tierCfg && tiersOn ? requiredTier(tierCfg, draftFeatures) : 0;
+  const allowance = tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0;
+  const tierBlocked = tiersOn && (!tier || needTier > allowance);
   const idx = steps.indexOf(step);
 
   const go = (to: WizardStep) => {
@@ -296,6 +318,9 @@ function Setup() {
             )}
           </Swap>
 
+          {step === "review" && tiersOn && tierCfg && tier && needTier > allowance && (
+            <TierNeeded cfg={tierCfg} owner={owner} need={needTier} tier={tier} onPaid={reloadTier} reason={reasonFor(tierCfg, allowance, draftFeatures)} />
+          )}
           {error && (
             <Notice tone="error" title="Nothing was saved">
               {error}
@@ -315,7 +340,7 @@ function Setup() {
                 Continue
               </Button>
             ) : (
-              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || !ack || (!editing && depositYocto === null) || evmBlocked || (evm && spons === undefined)} onClick={submit}>
+              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || !ack || tierBlocked || (!editing && depositYocto === null) || evmBlocked || (evm && spons === undefined)} onClick={submit}>
                 {editing ? "Sign and update" : "Sign and create"}
               </Button>
             )}
@@ -327,6 +352,14 @@ function Setup() {
             <span className="text-sm font-semibold text-muted">Your plan so far</span>
             <p className="text-[15px] leading-relaxed">{session ? describePlan(plan) : ""}</p>
             <Consequences plan={plan} />
+            {tiersOn && tierCfg && (
+              <span className="flex items-center justify-between gap-2 rounded-row bg-subtle px-3 py-2 text-sm">
+                <span>
+                  <span className="font-semibold">{tierCfg.tiers[needTier]!.name}</span> tier
+                </span>
+                <span className="text-muted">{needTier <= allowance ? (tier && tier.tier > 0 ? "paid" : "free") : `${formatUsd(tierCfg.tiers[needTier]!.price, tierCfg.fee_decimals)} once`}</span>
+              </span>
+            )}
             {plan.heirs.length > 0 && <ShareBar heirs={plan.heirs} />}
           </Card>
           <p className="px-2 text-xs leading-relaxed text-muted">Your draft stays in this tab until you sign. Nothing is sent before the review step.</p>

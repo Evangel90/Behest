@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, Eye, Inbox, RotateCcw, WifiOff } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
+import { TreasuryCard } from "@/components/Tiers";
 import { Stagger, StaggerItem } from "@/components/motion";
 import { Avatar } from "@/components/PlanParts";
 import { Button, EmptyState, Skeleton, StatusPill } from "@/components/ui";
@@ -80,6 +81,7 @@ export default function Inspect() {
           </Stagger>
         )}
       </section>
+      <TreasuryCard />
     </AppShell>
   );
 }

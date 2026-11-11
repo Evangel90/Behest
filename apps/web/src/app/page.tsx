@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
+import { Pricing } from "@/components/Tiers";
 import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
 import { ArrowRight, Eye, FileText, FlaskConical, Lock, Plus, RotateCcw } from "lucide-react";
 import { Reveal } from "@/components/motion";
@@ -58,7 +59,10 @@ const FAQ = [
   { q: "Could guardians team up and take the funds?", a: "No. They can only approve releasing the plan exactly as written, to your heirs' fixed addresses." },
   { q: "Do heirs need crypto experience?", a: "They need the wallet address you recorded. Heir pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas. In automatic mode they don't even need to claim." },
   { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it." },
-  { q: "What does it cost?", a: "On testnet nothing real. Network fees come out of the plan's own balance and are shown before anything is signed." },
+  {
+    q: "What does it cost?",
+    a: "A plan with one heir and NEAR is free. More heirs, Ethereum and Bitcoin, and release rules are Standard; automatic release and delay signers are Complete. Each is a one-time USDC fee that anyone can pay for you, and upgrading costs only the difference. Behest pays plan storage and NEAR gas. Ethereum and Bitcoin network fees come out of the plan's own vault and are shown before anything is signed. On testnet, payments use free test USDC.",
+  },
 ];
 
 export default function Landing() {
@@ -250,6 +254,18 @@ export default function Landing() {
                   <p className="text-sm leading-5 text-muted">{l.b}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section id="pricing" className="border-t border-hairline">
+          <div className={`${frame} ${air}`}>
+            <Reveal className="flex flex-col gap-4 px-4 pb-10 sm:px-8">
+              <h2 className={`${h2} max-w-[820px]`}>Pay once, for what your plan needs.</h2>
+              <p className={`max-w-[760px] text-muted ${lede}`}>One heir and NEAR cost nothing. Add more when you need it.</p>
+            </Reveal>
+            <div className="px-4 sm:px-8">
+              <Pricing />
             </div>
           </div>
         </section>

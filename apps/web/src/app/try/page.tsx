@@ -15,6 +15,7 @@ import { vaultAddress } from "@/lib/contract";
 import { PERSONA_INFO, PERSONA_ROLES, clearSandbox, heirWallet, loadSandbox, saveSandbox, type Persona, type PersonaRole, type Sandbox } from "@/lib/demo";
 import { humanError, usePlan } from "@/lib/hooks";
 import { newKeyPair, personaSession, useSession } from "@/lib/session";
+import { getTier, getTierConfig, mintTest, payFromWallet, payable } from "@/lib/tiers";
 
 const MIN = 60_000;
 const ROLE_ICON: Record<PersonaRole, typeof KeyRound> = { owner: KeyRound, g1: ShieldCheck, g2: ShieldCheck, g3: ShieldCheck, amara: Gift, tobi: Gift };
@@ -44,7 +45,7 @@ export default function TryPage() {
   );
 }
 
-const STEPS = ["Creating six testnet accounts", "Kemi is writing the plan", "Kemi is putting 0.2 NEAR into the plan"];
+const STEPS = ["Creating six testnet accounts", "Kemi is paying for the Standard tier in test USDC", "Kemi is writing the plan", "Kemi is putting 0.2 NEAR into the plan"];
 
 function CreateSandbox({ onCreated }: { onCreated: (s: Sandbox) => void }) {
   const [step, setStep] = useState<number | null>(null);
@@ -70,6 +71,18 @@ function CreateSandbox({ onCreated }: { onCreated: (s: Sandbox) => void }) {
 
       setStep(1);
       const kemi = personaSession(personas.owner);
+      // D25: two heirs with Ethereum destinations need Standard. Kemi takes
+      // test USDC from the faucet and pays it, as any owner (or relative) would.
+      const cfg = await getTierConfig();
+      if (cfg.fee_token) {
+        const t = await getTier(personas.owner.accountId);
+        const due = payable(cfg, BigInt(t.due[1] ?? "0"), BigInt(t.paid));
+        if (due > 0n) {
+          await mintTest(kemi, cfg, personas.owner.accountId, due);
+          await payFromWallet(kemi, cfg, personas.owner.accountId, due);
+        }
+      }
+      setStep(2);
       await kemi.call(
         "set_plan",
         {
@@ -87,7 +100,7 @@ function CreateSandbox({ onCreated }: { onCreated: (s: Sandbox) => void }) {
         },
         { deposit: 50_000_000_000_000_000_000_000n },
       );
-      setStep(2);
+      setStep(3);
       await kemi.call("deposit", { owner: personas.owner.accountId }, { deposit: 200_000_000_000_000_000_000_000n });
       onCreated(sandbox);
     } catch (e) {

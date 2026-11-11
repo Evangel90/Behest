@@ -20,6 +20,7 @@ import { Pulse } from "../Pulse";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
+import { TierCard } from "../Tiers";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -116,6 +117,10 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
           <HeirList view={view} />
           <GuardianList view={view} />
         </div>
+      </Group>
+
+      <Group title="Plan and fees">
+        <TierCard view={view} editable={!view.plan.proposal || s === "Settled"} />
       </Group>
 
       <Group title="Advanced">
