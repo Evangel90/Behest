@@ -77,7 +77,7 @@ describe("checkEvm", () => {
   it("accepts a signed check-in and makes the actor the sender and owner", async () => {
     const { message, signature } = await signed();
     const intent = await checkEvm(message, signature, C, NOW);
-    expect(intent).toMatchObject({ sender: owner.address.toLowerCase(), owner: owner.address.toLowerCase(), method: "check_in", role: "owner", nonce: 0n });
+    expect(intent).toMatchObject({ sender: owner.address.toLowerCase(), owner: owner.address.toLowerCase(), method: "check_in", role: "owner_or_delegate", nonce: 0n });
   });
 
   it("takes the owner from args for guardian methods", async () => {

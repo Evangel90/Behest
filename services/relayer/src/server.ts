@@ -67,6 +67,9 @@ async function authorize(intent: CallIntent) {
     const o = await view<{ delay_signers?: string[] } | null>("get_release_options", { owner: intent.owner }).catch(() => null);
     plan.delay_signers = o?.delay_signers ?? [];
   }
+  if (plan && intent.role === "owner_or_delegate" && intent.owner !== intent.sender) {
+    plan.checkin_delegates = await view<string[]>("get_checkin_delegates", { owner: intent.owner }).catch(() => []);
+  }
   if (!holdsRole(plan as never, intent)) throw new PolicyError("NO_ROLE", `${intent.sender} is not the ${intent.role} of ${intent.owner}`);
 }
 

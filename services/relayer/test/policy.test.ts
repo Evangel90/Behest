@@ -52,7 +52,18 @@ describe("check", () => {
 
   it("uses the sender as the owner for owner methods", async () => {
     const intent = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("check_in", {}, teraToGas(30), 0n)] })), C);
-    expect(intent).toMatchObject({ owner: "kemi.testnet", role: "owner" });
+    expect(intent).toMatchObject({ owner: "kemi.testnet", role: "owner_or_delegate" });
+  });
+
+  it("sponsors a check-in delegate's check-in for the plan it names (D26)", async () => {
+    const intent = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("check_in", { owner: "family.sputnikv2.testnet" }, teraToGas(30), 0n)] })), C);
+    expect(intent).toMatchObject({ owner: "family.sputnikv2.testnet", role: "owner_or_delegate" });
+    const dao = { plan: { owner: "family.sputnikv2.testnet", policy: { guardians: [], heirs: [] } }, checkin_delegates: ["kemi.testnet"] };
+    expect(holdsRole(dao, intent)).toBe(true);
+    expect(holdsRole({ ...dao, checkin_delegates: [] }, intent)).toBe(false);
+    expect(holdsRole(dao, { ...intent, sender: "stranger.testnet" })).toBe(false);
+    const own = check(decode(await delegate({ sender: "kemi.testnet", acts: [actions.functionCall("set_checkin_delegates", { delegates: ["a.testnet"] }, teraToGas(30), 0n)] })), C);
+    expect(own).toMatchObject({ owner: "kemi.testnet", role: "owner" });
   });
 
   it.each([

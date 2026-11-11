@@ -6,7 +6,8 @@ export const SPONSORED_METHODS = {
   propose_release: "guardian_or_heir",
   approve_release: "guardian",
   reject_release: "guardian",
-  check_in: "owner",
+  // The owner, or (D26) one of its check-in delegates naming it in args.owner.
+  check_in: "owner_or_delegate",
   cancel_release: "owner",
   reassign_unclaimed: "participant",
   request_extension: "delay_signer",
@@ -21,6 +22,7 @@ export const SPONSORED_METHODS = {
   set_release_rules: "owner",
   set_release_options: "owner",
   set_btc_destinations: "owner",
+  set_checkin_delegates: "owner",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 

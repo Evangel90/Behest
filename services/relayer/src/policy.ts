@@ -84,7 +84,8 @@ function intentOf(sender: string, method: EvmMethod, role: Role, args: Record<st
   // Owner methods act on the sender's own plan; one naming an owner must name the sender.
   const own = role === "owner" || role === "self";
   if (own && args.owner !== undefined && args.owner !== sender) throw new PolicyError("BAD_ARGS", "owner methods act on the sender's own plan");
-  const owner = own ? sender : String(args.owner ?? "");
+  // D26: a check-in names the plan it is for; without a name it is the sender's own.
+  const owner = own ? sender : role === "owner_or_delegate" ? String(args.owner ?? sender) : String(args.owner ?? "");
   if (!owner) throw new PolicyError("BAD_ARGS", "missing owner");
   return { sender, method, args, owner, role };
 }
@@ -129,6 +130,8 @@ interface PlanRoles {
   plan: { owner: string; policy: { guardians: string[]; heirs: { account_id: string }[] }; proposal?: { transfers: { heir: string }[] } | null };
   /** From `get_release_options`, fetched only for delay-signer methods. */
   delay_signers?: string[];
+  /** D26: from `get_checkin_delegates`, fetched only for check-ins naming another owner. */
+  checkin_delegates?: string[];
 }
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
@@ -140,6 +143,8 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
   switch (intent.role) {
     case "owner":
       return plan.plan.owner === intent.sender;
+    case "owner_or_delegate":
+      return plan.plan.owner === intent.sender || (plan.checkin_delegates ?? []).includes(intent.sender);
     case "guardian":
       return plan.plan.policy.guardians.includes(intent.sender);
     case "heir":
