@@ -169,6 +169,8 @@ pub const EXTENSION: (u64, u64) = (MINUTE, 90 * DAY);
 pub const EXTENSION: (u64, u64) = (DAY, 90 * DAY);
 pub const MAX_TOTAL_EXTENSION: u64 = 365 * DAY;
 pub const MAX_DELAY_SIGNERS: usize = 10;
+/// D26. Accounts that may check in for an owner.
+pub const MAX_DELEGATES: usize = 10;
 
 /// Validates release options against the plan. Delay signers may overlap with
 /// guardians (disclosed in the UI) but are never the owner or a heir, who have

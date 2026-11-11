@@ -69,7 +69,7 @@ const specs: Spec[] = [
   { name: "method_set_paused", key: "d", action: { method: "set_paused", args: { paused: true }, deadline_ms: LATER } },
   { name: "method_add_executor", key: "d", action: { method: "add_executor", args: { account_id: addr("d") } } },
   { name: "method_evm_call", key: "a", action: { method: "evm_call", args: { message: "x", signature: "0x" } } },
-  { name: "unknown_arg", key: "a", action: { method: "check_in", args: { owner: "owner.testnet" }, nonce: "1" } },
+  { name: "unknown_arg", key: "a", action: { method: "check_in", args: { when: "now" }, nonce: "1" } },
   { name: "extra_field", key: "a", action: { method: "check_in", args: {} }, tamper: (m) => m.replace(/}$/, ',"extra":"1"}') },
   { name: "no_blank_line", key: "a", action: { method: "check_in", args: {} }, tamper: (m) => m.replace("\n\n", "\n") },
   { name: "guardian_propose", key: "b", summary: "Propose releasing owner.testnet's plan", action: { method: "propose_release", args: { owner: "owner.testnet" }, deadline_ms: LATER } },

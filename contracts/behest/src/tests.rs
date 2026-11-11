@@ -153,7 +153,7 @@ fn share_rounding_never_exceeds_total() {
 fn owner_check_in_cancels_waiting_proposal_and_restores_escrow() {
     let mut e = approved();
     e.advance(30 * DAY - 1);
-    e.as_("owner.testnet", 0).check_in();
+    e.as_("owner.testnet", 0).check_in(None);
     assert_eq!(e.status(), PlanStatus::Active);
     assert_eq!(e.plan().escrow.0, 10 * NEAR);
 }
@@ -2142,7 +2142,7 @@ mod btc_flow {
     #[should_panic(expected = "E_INVALID_HEIRS")]
     fn destination_for_stranger_refused() {
         let mut e = with_vault();
-        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("mallory.testnet"), address: AMARA_BTC.into() }]);
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("mallory.testnet"), address: "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw".into() }]);
     }
 
     #[test]
@@ -2150,7 +2150,7 @@ mod btc_flow {
     fn proposal_with_coins_needs_registered_vault() {
         let mut e = Env::new();
         e.as_("owner.testnet", NEAR).set_plan(plan_input());
-        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: AMARA_BTC.into() }]);
+        e.as_("owner.testnet", NEAR / 10).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw".into() }]);
         e.advance(97 * DAY);
         e.as_("g1.testnet", 0).propose_release(o(), None, None, Some(vec![utxo(COIN, 0, 100_000)]));
     }
@@ -2455,7 +2455,7 @@ mod follow_up {
     #[test]
     fn owner_can_check_in_and_deposit_after_a_settled_release() {
         let mut e = settle(funded_overdue());
-        e.as_("owner.testnet", 0).check_in();
+        e.as_("owner.testnet", 0).check_in(None);
         assert_eq!(e.status(), PlanStatus::Active);
         assert!(e.plan().proposal.is_none());
         e.as_("owner.testnet", NEAR).deposit(o());
@@ -2510,7 +2510,7 @@ mod follow_up {
     #[should_panic(expected = "E_NOT_GUARDIAN")]
     fn heir_cannot_start_a_round_once_the_owner_is_back() {
         let mut e = settle(funded_overdue());
-        e.as_("owner.testnet", 0).check_in();
+        e.as_("owner.testnet", 0).check_in(None);
         e.advance(97 * DAY);
         e.as_("amara.testnet", 0).propose_release(o(), None, None, None);
     }
@@ -3296,4 +3296,228 @@ fn required_tier_view_matches_the_checks() {
         big.guardians.push(acc(&format!("g{}.testnet", i + 4)));
     }
     assert_eq!(c.required_tier(big, None, None, None, None), 2);
+}
+
+// ------------------------------------------- DAOs and check-in delegates (D26)
+
+const DAO: &str = "family.sputnikv2.testnet";
+const COUNCIL: &str = "kemi.testnet";
+const GUARD_DAO: &str = "guards.sputnikv2.testnet";
+const HEIR_DAO: &str = "trust.sputnikv2.testnet";
+
+/// A plan whose owner names two check-in delegates (tiers off).
+fn delegated() -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d1.testnet"), acc("d2.testnet")]);
+    e
+}
+
+#[test]
+fn a_delegate_checks_in_for_the_owner() {
+    let mut e = delegated();
+    assert_eq!(e.as_("x.testnet", 0).get_checkin_delegates(acc("owner.testnet")), vec![acc("d1.testnet"), acc("d2.testnet")]);
+    e.advance(96 * DAY);
+    assert_eq!(e.status(), PlanStatus::Active);
+    e.as_("d1.testnet", 0).check_in(Some(acc("owner.testnet")));
+    assert_eq!(e.plan().last_check_in_ms, e.t);
+    e.advance(96 * DAY);
+    assert_eq!(e.status(), PlanStatus::Active, "the delegate's check-in restarted the clock");
+    // Overdue with nothing proposed yet: a delegate may still check in.
+    e.advance(2 * DAY);
+    assert_eq!(e.status(), PlanStatus::Overdue);
+    e.as_("d2.testnet", 0).check_in(Some(acc("owner.testnet")));
+    assert_eq!(e.status(), PlanStatus::Active);
+    // Naming yourself is an ordinary check-in.
+    e.as_("owner.testnet", 0).check_in(Some(acc("owner.testnet")));
+}
+
+#[test]
+fn a_delegate_can_do_nothing_else() {
+    let mut e = delegated();
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).check_in(Some(acc("owner.testnet")))), "E_NOT_DELEGATE");
+    // Every other owner method acts on the caller's own plan, which a delegate doesn't have.
+    assert_eq!(panic_code(|| e.as_("d1.testnet", 0).withdraw(U128(1))), "E_NO_PLAN");
+    assert_eq!(panic_code(|| e.as_("d1.testnet", 0).cancel_release()), "E_NO_PLAN");
+    assert_eq!(panic_code(|| e.as_("d1.testnet", NEAR / 100).set_release_rules(None)), "E_NO_PLAN");
+    assert_eq!(panic_code(|| e.as_("d1.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d3.testnet")])), "E_NO_PLAN");
+    // A delegate's set_plan writes a plan of its own, never the owner's.
+    e.as_("d1.testnet", NEAR).set_plan(plan_input());
+    assert_eq!(e.plan().version, 1);
+    // While a release is open a delegate can't check in, so it can't cancel it.
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    assert_eq!(panic_code(|| e.as_("d1.testnet", 0).check_in(Some(acc("owner.testnet")))), "E_PROPOSAL_OPEN");
+    assert_eq!(e.status(), PlanStatus::Waiting);
+    // Delegates are frozen with the rest of the plan.
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![])), "E_PROPOSAL_OPEN");
+    // The owner still can.
+    e.as_("owner.testnet", 0).check_in(None);
+    assert_eq!(e.status(), PlanStatus::Active);
+}
+
+#[test]
+fn removed_delegates_lose_the_right() {
+    let mut e = delegated();
+    e.as_("owner.testnet", 0).set_checkin_delegates(vec![acc("d2.testnet")]);
+    assert_eq!(panic_code(|| e.as_("d1.testnet", 0).check_in(Some(acc("owner.testnet")))), "E_NOT_DELEGATE");
+    e.as_("d2.testnet", 0).check_in(Some(acc("owner.testnet")));
+    e.as_("owner.testnet", 0).set_checkin_delegates(vec![]);
+    assert!(e.as_("x.testnet", 0).get_checkin_delegates(acc("owner.testnet")).is_empty());
+    assert_eq!(panic_code(|| e.as_("d2.testnet", 0).check_in(Some(acc("owner.testnet")))), "E_NOT_DELEGATE");
+}
+
+#[test]
+fn delegate_lists_are_checked() {
+    let mut e = delegated();
+    let eleven: Vec<AccountId> = (0..11).map(|i| acc(&format!("d{i}.testnet"))).collect();
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(eleven)), "E_INVALID_DELEGATES");
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d1.testnet"), acc("d1.testnet")])), "E_INVALID_DELEGATES");
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("owner.testnet")])), "E_INVALID_DELEGATES");
+    assert_eq!(panic_code(|| e.as_("nobody.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d1.testnet")])), "E_NO_PLAN");
+}
+
+#[test]
+fn delegates_are_a_standard_feature() {
+    let mut e = Env::new().with_tiers();
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d1.testnet")])), "E_TIER_REQUIRED");
+    e.pay("owner.testnet", "owner.testnet", 49 * DOLLAR);
+    e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d1.testnet")]);
+    let t = e.tier("owner.testnet");
+    assert_eq!(t.required, 1);
+    assert!(t.features.unwrap().checkin_delegates);
+    assert_eq!(e.as_("x.testnet", 0).required_tier(free_plan(), None, None, None, None), 0);
+}
+
+#[test]
+fn a_schedule_stored_before_delegates_still_reads() {
+    let mut e = Env::new();
+    e.as_("anyone.testnet", 0);
+    // The D25 layout, as the deployed contract wrote it.
+    #[near(serializers = [borsh])]
+    struct SpecV1 {
+        name: String,
+        price: U128,
+        max_heirs: u8,
+        max_guardians: u8,
+        external_assets: bool,
+        release_rules: bool,
+        advanced_release: bool,
+    }
+    #[near(serializers = [borsh])]
+    struct CfgV1 {
+        fee_token: Option<AccountId>,
+        fee_symbol: String,
+        fee_decimals: u8,
+        tiers: Vec<SpecV1>,
+    }
+    let old = CfgV1 {
+        fee_token: Some(acc(USDC)),
+        fee_symbol: "USDC".into(),
+        fee_decimals: 6,
+        tiers: tiers::default_tiers(6)
+            .into_iter()
+            .map(|t| SpecV1 { name: t.name, price: t.price, max_heirs: t.max_heirs, max_guardians: t.max_guardians, external_assets: t.external_assets, release_rules: t.release_rules, advanced_release: t.advanced_release })
+            .collect(),
+    };
+    env::storage_write(b"tier_cfg", &near_sdk::borsh::to_vec(&old).unwrap());
+    let cfg = e.as_("x.testnet", 0).get_tier_config();
+    assert_eq!(cfg.fee_token, Some(acc(USDC)), "tiers stay on after the upgrade");
+    assert_eq!(cfg.tiers.iter().map(|t| t.delegates_allowed()).collect::<Vec<_>>(), vec![false, true, true]);
+    // The next admin write moves it to the new key.
+    e.as_("admin.testnet", 0).set_tier_config(cfg.clone());
+    assert!(!env::storage_has_key(b"tier_cfg"));
+    assert_eq!(e.as_("x.testnet", 0).get_tier_config(), cfg);
+}
+
+#[test]
+fn every_payable_call_works_from_a_dao_proposal() {
+    // A DAO proposal runs as the DAO (predecessor) in a transaction a council
+    // member signed, with the deposit taken from the DAO's balance.
+    let mut e = Env::new().with_executor().with_tiers();
+    e.as_("admin.testnet", REG).set_nep141_tokens(vec![Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) }]);
+    // Its tier, paid by the DAO itself with ft_transfer_call.
+    e.pay(DAO, DAO, 149 * DOLLAR);
+    assert_eq!(e.tier(DAO).tier, 2);
+    e.via(DAO, COUNCIL, NEAR).set_plan(plan_input());
+    e.via(DAO, COUNCIL, 2 * NEAR).deposit(acc(DAO));
+    e.via(DAO, COUNCIL, NEAR / 100).set_release_rules(Some(rules()));
+    e.via(DAO, COUNCIL, NEAR / 100).set_release_options(Some(opts(ReleaseMode::Hybrid)));
+    e.via(DAO, COUNCIL, NEAR / 100).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw".into() }]);
+    e.via(DAO, COUNCIL, NEAR / 100).set_checkin_delegates(vec![acc(COUNCIL)]);
+    e.via(DAO, COUNCIL, NEAR).fund_sponsor_pool();
+    assert_eq!(ft_deposit(&mut e, WNEAR, DAO, 1_000, ""), 0, "token escrow by the DAO");
+    let v = e.as_("x.testnet", 0).get_plan(acc(DAO)).unwrap();
+    assert_eq!(v.plan.escrow.0, 2 * NEAR);
+    // Without a deposit, a council member's transaction isn't sponsored storage.
+    e.sponsor(NEAR);
+    let c = e.via("other.sputnikv2.testnet", COUNCIL, 0);
+    assert_eq!(panic_code(move || c.set_plan(free_plan())), "E_INSUFFICIENT_DEPOSIT");
+    // The council member who signed is never the owner.
+    let c = e.via(COUNCIL, COUNCIL, 0);
+    assert_eq!(panic_code(move || c.withdraw(U128(1))), "E_NO_PLAN");
+    // A council member as delegate keeps the DAO's plan alive between votes.
+    e.advance(96 * DAY);
+    e.via(COUNCIL, COUNCIL, 0).check_in(Some(acc(DAO)));
+    assert_eq!(e.as_("x.testnet", 0).get_plan(acc(DAO)).unwrap().status, PlanStatus::Active);
+}
+
+/// Owner plan with a DAO guardian (quorum 2 with g1) and a DAO heir in Automatic mode.
+fn dao_roles() -> Env {
+    let mut e = Env::new().with_executor();
+    let mut p = plan_input();
+    p.guardians = vec![acc(GUARD_DAO), acc("g1.testnet"), acc("g2.testnet")];
+    p.heirs[1] = HeirInput { account_id: acc(HEIR_DAO), share_bps: 4000, near_destination: Some(acc(HEIR_DAO)), eth_destination: None };
+    e.as_("owner.testnet", NEAR).set_plan(p);
+    let mut o = opts(ReleaseMode::Automatic);
+    o.delay_signers = vec![acc(GUARD_DAO), acc("d1.testnet")];
+    o.delay_quorum = 1;
+    e.as_("owner.testnet", NEAR / 100).set_release_options(Some(o));
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    e
+}
+
+#[test]
+fn a_dao_guardian_proposes_and_approves() {
+    let mut e = dao_roles();
+    let id = e.via(GUARD_DAO, COUNCIL, 0).propose_release(acc("owner.testnet"), None, None, None);
+    assert_eq!(e.plan().proposal.unwrap().proposer, acc(GUARD_DAO));
+    // The council member who signed has no role of their own.
+    let c = e.via(COUNCIL, COUNCIL, 0);
+    assert_eq!(panic_code(move || c.approve_release(acc("owner.testnet"), id)), "E_NOT_GUARDIAN");
+    e.via("g1.testnet", "g1.testnet", 0).approve_release(acc("owner.testnet"), id);
+    assert_eq!(e.status(), PlanStatus::Waiting);
+}
+
+#[test]
+fn a_dao_delay_signer_extends() {
+    let mut e = dao_roles();
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    e.via(GUARD_DAO, COUNCIL, 0).approve_release(acc("owner.testnet"), id);
+    let before = ends(&mut e);
+    e.via(GUARD_DAO, COUNCIL, 0).request_extension(acc("owner.testnet"), id, 10 * DAY, Some("dao-vote-pending".into()));
+    assert_eq!(ends(&mut e), before + 10 * DAY);
+}
+
+#[test]
+fn a_dao_heir_is_paid_automatically_and_can_claim() {
+    let mut e = dao_roles();
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    // Automatic: nobody at the DAO signs anything; the executor starts it.
+    assert_eq!(e.as_("exec.testnet", 0).release(acc("owner.testnet"), acc(HEIR_DAO)), 1);
+    let t = e.plan().proposal.unwrap().transfers.into_iter().find(|t| t.heir == acc(HEIR_DAO)).unwrap();
+    assert_eq!((t.destination.as_str(), t.amount.0, t.state), (HEIR_DAO, 4 * NEAR, TransferState::Sending));
+    // In Claim mode the DAO claims through a proposal like any other call.
+    let mut e = dao_roles();
+    e.as_("owner.testnet", 0).set_release_options(None);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    assert_eq!(e.via(HEIR_DAO, COUNCIL, 0).claim(acc("owner.testnet")), 1);
 }

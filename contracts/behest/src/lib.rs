@@ -312,8 +312,25 @@ impl Contract {
     }
 
     /// P3. During `Proposed`/`Waiting` this also cancels the proposal (P7).
-    pub fn check_in(&mut self) {
-        let owner = caller();
+    /// D26: with `owner` set to another account, one of that owner's check-in
+    /// delegates restarts its clock. A delegate can do nothing else, so it can't
+    /// cancel a release: while one is open its check-in is refused.
+    pub fn check_in(&mut self, owner: Option<AccountId>) {
+        let me = caller();
+        if let Some(owner) = owner.filter(|o| *o != me) {
+            if !read_delegates(&owner).contains(&me) {
+                fail(Error::NotDelegate);
+            }
+            self.archive_settled(&owner);
+            let plan = self.plan_mut(&owner);
+            if plan.proposal.is_some() {
+                fail(Error::ProposalOpen);
+            }
+            plan.last_check_in_ms = now();
+            emit("check_in", near_sdk::serde_json::json!({"owner": owner, "at_ms": now(), "by": me}));
+            return;
+        }
+        let owner = me;
         self.archive_settled(&owner);
         let had_proposal = self.plan_ref(&owner).proposal.is_some();
         if had_proposal {
@@ -409,6 +426,37 @@ impl Contract {
             }
         }
         self.charge_storage(storage_before, &owner, false);
+    }
+
+    /// D26. The owner names up to 10 accounts that may call `check_in` for
+    /// this plan and nothing else (e.g. council members of a DAO owner, whose
+    /// own votes take days). Empty clears them. Frozen while a release is open.
+    #[payable]
+    pub fn set_checkin_delegates(&mut self, delegates: Vec<AccountId>) {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let unique: std::collections::HashSet<&AccountId> = delegates.iter().collect();
+        if delegates.len() > policy::MAX_DELEGATES || unique.len() != delegates.len() || delegates.contains(&owner) {
+            fail(Error::InvalidDelegates);
+        }
+        let mut after = tier_features(&owner, &plan.policy);
+        after.checkin_delegates = !delegates.is_empty();
+        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
+        let storage_before = env::storage_usage();
+        if delegates.is_empty() {
+            env::storage_remove(&delegates_key(&owner));
+        } else {
+            env::storage_write(&delegates_key(&owner), &near_sdk::borsh::to_vec(&delegates).expect("borsh"));
+        }
+        emit("checkin_delegates_set", near_sdk::serde_json::json!({"owner": owner, "delegates": delegates}));
+        self.charge_storage(storage_before, &owner, false);
+    }
+
+    pub fn get_checkin_delegates(&self, owner: AccountId) -> Vec<AccountId> {
+        read_delegates(&owner)
     }
 
     pub fn get_release_options(&self, owner: AccountId) -> Option<ReleaseOptions> {
@@ -1802,6 +1850,7 @@ pub const EVM_METHODS: &[&str] = &[
     "set_release_rules",
     "set_release_options",
     "set_btc_destinations",
+    "set_checkin_delegates",
     "withdraw",
     "withdraw_ft",
     "withdraw_vault",
@@ -1837,8 +1886,12 @@ impl Contract {
                 unit(self.reject_release(owner, proposal_id))
             }
             "check_in" => {
-                evm_args!(args, {});
-                unit(self.check_in())
+                let owner = evm_args!(args, { owner: Option<AccountId> });
+                unit(self.check_in(owner))
+            }
+            "set_checkin_delegates" => {
+                let delegates = evm_args!(args, { delegates: Vec<AccountId> });
+                unit(self.set_checkin_delegates(delegates))
             }
             "cancel_release" => {
                 evm_args!(args, {});
@@ -2190,7 +2243,18 @@ fn token_escrow_any(owner: &AccountId) -> bool {
 
 /// D25. What the owner's saved configuration uses, with `policy` as the plan.
 fn tier_features(owner: &AccountId, policy: &PlanInput) -> tiers::Features {
-    tiers::features(policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), btc_dests(owner).len(), token_escrow_any(owner))
+    let mut f = tiers::features(policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), btc_dests(owner).len(), token_escrow_any(owner));
+    f.checkin_delegates = env::storage_has_key(&delegates_key(owner));
+    f
+}
+
+/// D26. Check-in delegates live beside the plan, like the release rules.
+fn delegates_key(owner: &AccountId) -> Vec<u8> {
+    [b"cid:".as_slice(), owner.as_bytes()].concat()
+}
+
+fn read_delegates(owner: &AccountId) -> Vec<AccountId> {
+    env::storage_read(&delegates_key(owner)).and_then(|b| near_sdk::borsh::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn nep141_tokens() -> Vec<Nep141Token> {

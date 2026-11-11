@@ -68,8 +68,8 @@
       "signature": "0x041fb2a49dce9c3bd091b1f2c98d1a90be6060dc12e1a216b1ccb791e8b137f57091df44601cb0ea14c07d321f25559d47c521cc6b3b9303b7f6ababa2a7a5ae1c"
     },
     "unknown_arg": {
-      "message": "Behest signed action\nBehest: check_in\n\n{\"contract\":\"behest.testnet\",\"network\":\"testnet\",\"actor\":\"0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a\",\"method\":\"check_in\",\"args\":{\"owner\":\"owner.testnet\"},\"nonce\":\"1\",\"deadline_ms\":\"86400600000\"}",
-      "signature": "0x1178da3a21069820d446d86966b0e4c5a7b11108ac1e166e6024b95343e32b0a42ccd7205c8e2913630e223363acf7ba2217bd375da95df098de868b56ca7fba1c"
+      "message": "Behest signed action\nBehest: check_in\n\n{\"contract\":\"behest.testnet\",\"network\":\"testnet\",\"actor\":\"0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a\",\"method\":\"check_in\",\"args\":{\"when\":\"now\"},\"nonce\":\"1\",\"deadline_ms\":\"86400600000\"}",
+      "signature": "0xb0e8e6fd91ac921cf2d7b104e95e563b64a08d910610af9828f6c7b3a0b01d0c759ea88f86bdd739c939f41841555e1856961076f4189383d6696ce05e2da12c1c"
     },
     "extra_field": {
       "message": "Behest signed action\nBehest: check_in\n\n{\"contract\":\"behest.testnet\",\"network\":\"testnet\",\"actor\":\"0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a\",\"method\":\"check_in\",\"args\":{},\"nonce\":\"0\",\"deadline_ms\":\"86400600000\",\"extra\":\"1\"}",

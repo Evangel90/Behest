@@ -30,7 +30,10 @@ use crate::errors::{fail, Error};
 use crate::policy::{MAX_GUARDIANS, MAX_HEIRS};
 use crate::types::{PlanInput, ReleaseMode, ReleaseOptions, ReleaseRules};
 
-const TIER_CFG_KEY: &[u8] = b"tier_cfg";
+/// D25 schedule before check-in delegates existed (read once, then rewritten).
+const TIER_CFG_V1_KEY: &[u8] = b"tier_cfg";
+/// D26: the schedule with `checkin_delegates` per tier.
+const TIER_CFG_KEY: &[u8] = b"tier_cfg2";
 const TIER_PREFIX: &[u8] = b"tier:";
 const TREASURY_KEY: &[u8] = b"treasury";
 pub const MAX_TIERS: usize = 8;
@@ -51,6 +54,61 @@ pub struct TierSpec {
     pub release_rules: bool,
     /// Automatic or hybrid release, per-heir/asset overrides, delay signers (D18/D19).
     pub advanced_release: bool,
+    /// D26: accounts that may check in for the owner. Defaults to the
+    /// `release_rules` flag when a schedule written without it is read.
+    #[serde(default)]
+    pub checkin_delegates: Option<bool>,
+}
+
+impl TierSpec {
+    pub fn delegates_allowed(&self) -> bool {
+        self.checkin_delegates.unwrap_or(self.release_rules)
+    }
+}
+
+/// D25 layout of a tier, as first stored.
+#[near(serializers = [borsh])]
+#[derive(Clone)]
+struct TierSpecV1 {
+    name: String,
+    price: U128,
+    max_heirs: u8,
+    max_guardians: u8,
+    external_assets: bool,
+    release_rules: bool,
+    advanced_release: bool,
+}
+
+#[near(serializers = [borsh])]
+struct TierConfigV1 {
+    fee_token: Option<AccountId>,
+    fee_symbol: String,
+    fee_decimals: u8,
+    tiers: Vec<TierSpecV1>,
+}
+
+impl From<TierConfigV1> for TierConfig {
+    fn from(v: TierConfigV1) -> Self {
+        TierConfig {
+            fee_token: v.fee_token,
+            fee_symbol: v.fee_symbol,
+            fee_decimals: v.fee_decimals,
+            tiers: v
+                .tiers
+                .into_iter()
+                .map(|t| TierSpec {
+                    checkin_delegates: Some(t.release_rules),
+                    name: t.name,
+                    price: t.price,
+                    max_heirs: t.max_heirs,
+                    max_guardians: t.max_guardians,
+                    external_assets: t.external_assets,
+                    release_rules: t.release_rules,
+                    advanced_release: t.advanced_release,
+                })
+                .collect(),
+        }
+    }
 }
 
 #[near(serializers = [borsh, json])]
@@ -74,8 +132,17 @@ impl Default for TierConfig {
 pub fn default_tiers(decimals: u8) -> Vec<TierSpec> {
     let unit = 10u128.pow(decimals as u32);
     vec![
-        TierSpec { name: "Free".into(), price: U128(0), max_heirs: 1, max_guardians: 3, external_assets: false, release_rules: false, advanced_release: false },
-        TierSpec { name: "Standard".into(), price: U128(49 * unit), max_heirs: 5, max_guardians: 5, external_assets: true, release_rules: true, advanced_release: false },
+        TierSpec { name: "Free".into(), price: U128(0), max_heirs: 1, max_guardians: 3, external_assets: false, release_rules: false, advanced_release: false, checkin_delegates: Some(false) },
+        TierSpec {
+            name: "Standard".into(),
+            price: U128(49 * unit),
+            max_heirs: 5,
+            max_guardians: 5,
+            external_assets: true,
+            release_rules: true,
+            advanced_release: false,
+            checkin_delegates: Some(true),
+        },
         TierSpec {
             name: "Complete".into(),
             price: U128(149 * unit),
@@ -84,6 +151,7 @@ pub fn default_tiers(decimals: u8) -> Vec<TierSpec> {
             external_assets: true,
             release_rules: true,
             advanced_release: true,
+            checkin_delegates: Some(true),
         },
     ]
 }
@@ -97,6 +165,9 @@ pub struct Features {
     pub external_assets: bool,
     pub release_rules: bool,
     pub advanced_release: bool,
+    /// D26: the owner named check-in delegates.
+    #[serde(default)]
+    pub checkin_delegates: bool,
 }
 
 pub fn features(policy: &PlanInput, rules: Option<&ReleaseRules>, options: Option<&ReleaseOptions>, btc_destinations: usize, token_escrow: bool) -> Features {
@@ -106,6 +177,7 @@ pub fn features(policy: &PlanInput, rules: Option<&ReleaseRules>, options: Optio
         external_assets: token_escrow || btc_destinations > 0 || policy.heirs.iter().any(|h| h.eth_destination.is_some()),
         release_rules: rules.is_some(),
         advanced_release: options.is_some_and(|o| o.mode != ReleaseMode::Claim || !o.delay_signers.is_empty() || !o.overrides.is_empty()),
+        checkin_delegates: false,
     }
 }
 
@@ -116,6 +188,7 @@ impl TierSpec {
             && (self.external_assets || !f.external_assets)
             && (self.release_rules || !f.release_rules)
             && (self.advanced_release || !f.advanced_release)
+            && (self.delegates_allowed() || !f.checkin_delegates)
     }
 }
 
@@ -167,7 +240,7 @@ fn write<T: near_sdk::borsh::BorshSerialize>(key: &[u8], v: &T) {
 }
 
 pub fn config() -> TierConfig {
-    read(TIER_CFG_KEY).unwrap_or_default()
+    read(TIER_CFG_KEY).or_else(|| read::<TierConfigV1>(TIER_CFG_V1_KEY).map(Into::into)).unwrap_or_default()
 }
 
 pub fn enabled() -> bool {
@@ -196,9 +269,10 @@ pub fn validate_config(c: &TierConfig) {
                 && (w[1].external_assets || !w[0].external_assets)
                 && (w[1].release_rules || !w[0].release_rules)
                 && (w[1].advanced_release || !w[0].advanced_release)
+                && (w[1].delegates_allowed() || !w[0].delegates_allowed())
         })
         && t.last().is_some_and(|s| {
-            s.max_heirs as usize >= MAX_HEIRS && s.max_guardians as usize >= MAX_GUARDIANS && s.external_assets && s.release_rules && s.advanced_release
+            s.max_heirs as usize >= MAX_HEIRS && s.max_guardians as usize >= MAX_GUARDIANS && s.external_assets && s.release_rules && s.advanced_release && s.delegates_allowed()
         });
     if !ok {
         fail(Error::InvalidTiers);
@@ -208,6 +282,7 @@ pub fn validate_config(c: &TierConfig) {
 pub fn set_config(c: &TierConfig) {
     validate_config(c);
     write(TIER_CFG_KEY, c);
+    env::storage_remove(TIER_CFG_V1_KEY);
 }
 
 /// Cheapest tier allowing `f` (the last tier allows every valid plan).

@@ -64,6 +64,8 @@ pub enum Error {
     SponsorExhausted,
     InvalidTiers,
     InsufficientTreasury,
+    NotDelegate,
+    InvalidDelegates,
 }
 
 impl Error {
@@ -130,6 +132,8 @@ impl Error {
             Error::SponsorExhausted => "E_SPONSOR_EXHAUSTED",
             Error::InvalidTiers => "E_INVALID_TIERS",
             Error::InsufficientTreasury => "E_INSUFFICIENT_TREASURY",
+            Error::NotDelegate => "E_NOT_DELEGATE",
+            Error::InvalidDelegates => "E_INVALID_DELEGATES",
         }
     }
 }
