@@ -52,8 +52,8 @@ export function TierLadder({ cfg, current, need, onPick, compact }: { cfg: TierC
               {needed && <span className="rounded-tag bg-warn-bg px-2 py-0.5 text-xs font-semibold text-warn">Needed</span>}
             </div>
             <span className="text-3xl font-semibold tracking-[-0.02em]">
-              {formatUsd(s.price, cfg.fee_decimals)}
-              {BigInt(s.price) > 0n && <span className="ml-1.5 text-sm font-normal text-muted">once</span>}
+              {BigInt(s.price) > 0n ? formatUsd(s.price, cfg.fee_decimals) : "$0"}
+              <span className="ml-1.5 text-sm font-normal text-muted">{BigInt(s.price) > 0n ? "once" : "forever"}</span>
             </span>
             {!compact && (
               <ul className="flex flex-col gap-1.5 text-sm">
