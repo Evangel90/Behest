@@ -3521,3 +3521,242 @@ fn a_dao_heir_is_paid_automatically_and_can_claim() {
     e.advance(30 * DAY);
     assert_eq!(e.via(HEIR_DAO, COUNCIL, 0).claim(acc("owner.testnet")), 1);
 }
+
+// ------------------------------------------------ NEAR Intents delivery (D27)
+
+const VERIFIER: &str = "intents.testnet";
+const TOKEN2: &str = "usdt.testnet";
+
+fn intents_cfg() -> intents::IntentsConfig {
+    intents::IntentsConfig { verifier: acc(VERIFIER), wnear: acc(WNEAR) }
+}
+
+fn ireq(account: &str, intents_account: Option<&str>) -> intents::IntentsDelivery {
+    intents::IntentsDelivery { account_id: acc(account), enabled: true, intents_account: intents_account.map(acc) }
+}
+
+/// Approved release, Amara paid through Intents, wNEAR and a second token in escrow.
+fn intents_approved() -> Env {
+    let mut e = Env::new().with_executor();
+    e.as_("admin.testnet", 2 * REG).set_nep141_tokens(vec![
+        Nep141Token { account_id: acc(WNEAR), symbol: "wNEAR".into(), decimals: 24, storage_deposit: U128(REG) },
+        Nep141Token { account_id: acc(TOKEN2), symbol: "USDT".into(), decimals: 6, storage_deposit: U128(REG) },
+    ]);
+    e.as_("admin.testnet", 2 * REG).set_intents_config(Some(intents_cfg()));
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None)]);
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    assert_eq!(ft_deposit(&mut e, WNEAR, "owner.testnet", 1_000, ""), 0);
+    assert_eq!(ft_deposit(&mut e, TOKEN2, "owner.testnet", 500, ""), 0);
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    e.advance(30 * DAY);
+    e
+}
+
+
+/// (method, args, deposit) of every function call created towards `receiver`.
+fn calls_to(receiver: &str) -> Vec<(String, String, u128)> {
+    near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .filter(|r| r.receiver_id.as_str() == receiver)
+        .flat_map(|r| r.actions)
+        .filter_map(|a| match a {
+            near_sdk::mock::MockAction::FunctionCallWeight { method_name, args, attached_deposit, .. } => Some((String::from_utf8(method_name).unwrap(), String::from_utf8(args).unwrap(), attached_deposit.as_yoctonear())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn sent(e: &mut Env, index: u32, amount: u128, wrapped: u128, token: &str, near: bool, result: PromiseResult) {
+    let pid = e.plan().proposal.unwrap().id;
+    e.callback(vec![result]).on_intents_sent(acc("owner.testnet"), index, pid, U128(amount), U128(wrapped), acc(token), near);
+}
+
+fn kept(n: u128) -> PromiseResult {
+    PromiseResult::Successful(format!("\"{n}\"").into_bytes())
+}
+
+fn tr_at(e: &mut Env, i: u32) -> Transfer {
+    e.plan().proposal.unwrap().transfers[i as usize].clone()
+}
+
+#[test]
+fn near_is_wrapped_and_sent_to_the_verifier_in_one_receipt() {
+    let mut e = intents_approved();
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let wrap = calls_to(WNEAR);
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    let amount = tr_at(&mut e, i).amount.0;
+    // NEAR: near_deposit + ft_transfer_call batched on wrap.testnet; the wNEAR share goes straight to the verifier too.
+    assert_eq!(wrap[0].0, "near_deposit");
+    assert_eq!(wrap[0].2, amount);
+    assert_eq!(wrap[1].0, "ft_transfer_call");
+    let args: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(&wrap[1].1).unwrap();
+    assert_eq!(args["receiver_id"], VERIFIER);
+    assert_eq!(args["amount"], amount.to_string());
+    assert_eq!(args["msg"], r#"{"receiver_id":"amara.testnet"}"#);
+    assert_eq!(wrap[1].2, 1);
+    assert!(wrap.iter().filter(|c| c.0 == "ft_transfer_call").count() == 2, "the wNEAR share too");
+    assert!(calls_to("amara.testnet").is_empty() && near_sdk::test_utils::get_created_receipts().iter().all(|r| r.receiver_id.as_str() != "amara.testnet"), "nothing to the wallet");
+    // Tobi didn't opt in: his share goes to his wallet as before.
+    let _ = e.as_("tobi.testnet", 0).claim(acc("owner.testnet"));
+    assert!(near_sdk::test_utils::get_created_receipts().iter().any(|r| r.receiver_id.as_str() == "tobi-wallet.testnet"));
+    // The verifier kept everything: paid.
+    sent(&mut e, i, amount, amount, WNEAR, true, kept(amount));
+    assert_eq!(tr_at(&mut e, i).state, TransferState::Confirmed);
+    assert!(calls_to(WNEAR).is_empty(), "nothing to unwrap");
+}
+
+#[test]
+fn a_partial_refund_is_never_paid_and_the_retry_sends_only_the_rest() {
+    let mut e = intents_approved();
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    let amount = tr_at(&mut e, i).amount.0;
+    let part = amount / 3;
+    sent(&mut e, i, amount, amount, WNEAR, true, kept(part));
+    let unwrap = calls_to(WNEAR);
+    let t = tr_at(&mut e, i);
+    assert_eq!((t.state, t.failure.as_deref()), (TransferState::Failed, Some("IntentsPartlyRefunded")));
+    assert_eq!(unwrap[0].0, "near_withdraw", "the refund is unwrapped back into escrow");
+    assert!(unwrap[0].1.contains(&(amount - part).to_string()));
+    let p = e.as_("x.testnet", 0).get_intents_progress(acc("owner.testnet"), i);
+    assert_eq!((p.paid.0, p.wrapped.0), (part, amount - part));
+    let pid = e.plan().proposal.unwrap().id;
+    e.callback(vec![PromiseResult::Successful(vec![])]).on_intents_unwrapped(acc("owner.testnet"), i, pid, U128(amount - part));
+    assert_eq!(e.as_("x.testnet", 0).get_intents_progress(acc("owner.testnet"), i).wrapped.0, 0);
+    // Retry: wraps and sends exactly what is still unpaid.
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    let again = calls_to(WNEAR);
+    assert_eq!((again[0].0.as_str(), again[0].2), ("near_deposit", amount - part));
+    assert!(again[1].1.contains(&format!("\"amount\":\"{}\"", amount - part)));
+    sent(&mut e, i, amount - part, amount - part, WNEAR, true, kept(amount - part));
+    assert_eq!(tr_at(&mut e, i).state, TransferState::Confirmed);
+}
+
+#[test]
+fn a_full_refund_or_a_failed_call_is_never_paid() {
+    let mut e = intents_approved();
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    let amount = tr_at(&mut e, i).amount.0;
+    sent(&mut e, i, amount, amount, WNEAR, true, kept(0));
+    let t = tr_at(&mut e, i);
+    assert_eq!((t.state, t.failure.as_deref()), (TransferState::Failed, Some("IntentsRefunded")));
+    assert_eq!(e.as_("x.testnet", 0).get_intents_progress(acc("owner.testnet"), i).paid.0, 0);
+    // Unwrapping fails: the wNEAR stays recorded, and the retry doesn't wrap again.
+    let pid = e.plan().proposal.unwrap().id;
+    e.callback(vec![PromiseResult::Failed]).on_intents_unwrapped(acc("owner.testnet"), i, pid, U128(amount));
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    let again = calls_to(WNEAR);
+    assert_eq!(again.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["ft_transfer_call"], "held wNEAR is sent as it is");
+    // The whole batch failed (rolled back): still not paid, nothing more held.
+    sent(&mut e, i, amount, 0, WNEAR, true, PromiseResult::Failed);
+    let t = tr_at(&mut e, i);
+    assert_eq!((t.state, t.failure.as_deref()), (TransferState::Failed, Some("PromiseFailed")));
+    let p = e.as_("x.testnet", 0).get_intents_progress(acc("owner.testnet"), i);
+    assert_eq!((p.paid.0, p.wrapped.0), (0, amount));
+    // A result claiming more than was sent counts only what was sent.
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    sent(&mut e, i, amount, 0, WNEAR, true, kept(amount * 2));
+    assert_eq!(tr_at(&mut e, i).state, TransferState::Confirmed);
+}
+
+#[test]
+fn tokens_go_straight_to_the_verifier_which_is_registered_once() {
+    let mut e = intents_approved();
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let usdt = calls_to(TOKEN2);
+    assert_eq!(usdt.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["storage_deposit", "ft_transfer_call"]);
+    assert!(usdt[0].1.contains(VERIFIER), "the verifier is registered, not the heir");
+    let i = idx(&mut e, "amara.testnet", Asset::Nep141(acc(TOKEN2)));
+    assert_eq!(tr_at(&mut e, i).amount.0, 300);
+    assert!(usdt[1].1.contains(r#""amount":"300""#) && usdt[1].1.contains(VERIFIER));
+    // wNEAR's verifier registration was done by set_intents_config: no storage_deposit there.
+    assert!(calls_to(WNEAR).iter().all(|c| c.0 != "storage_deposit"));
+    // Half handed back: Failed; the tokens are simply back in Behest's balance. Retry sends 150, without registering again.
+    sent(&mut e, i, 300, 0, TOKEN2, false, kept(150));
+    assert_eq!(tr_at(&mut e, i).state, TransferState::Failed);
+    assert!(calls_to(TOKEN2).is_empty(), "nothing to unwrap for tokens");
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    let again = calls_to(TOKEN2);
+    assert_eq!(again.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["ft_transfer_call"]);
+    assert!(again[0].1.contains(r#""amount":"150""#));
+    sent(&mut e, i, 150, 0, TOKEN2, false, kept(150));
+    assert_eq!(tr_at(&mut e, i).state, TransferState::Confirmed);
+}
+
+#[test]
+fn switching_intents_off_pays_wallets_only_what_is_still_unpaid() {
+    let mut e = intents_approved();
+    let _ = e.as_("amara.testnet", 0).claim(acc("owner.testnet"));
+    let i = idx(&mut e, "amara.testnet", Asset::Near);
+    let amount = tr_at(&mut e, i).amount.0;
+    sent(&mut e, i, amount, amount, WNEAR, true, kept(amount / 4));
+    // A misconfigured verifier: the admin switches Intents off and the retry pays the wallet.
+    e.as_("admin.testnet", 0).set_intents_config(None);
+    let _ = e.as_("amara.testnet", 0).retry_transfer(acc("owner.testnet"), i);
+    let direct: Vec<u128> = near_sdk::test_utils::get_created_receipts()
+        .into_iter()
+        .filter(|r| r.receiver_id.as_str() == "amara.testnet")
+        .flat_map(|r| r.actions)
+        .filter_map(|a| match a {
+            near_sdk::mock::MockAction::Transfer { deposit, .. } => Some(deposit.as_yoctonear()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(direct, vec![amount - amount / 4]);
+}
+
+#[test]
+fn intents_settings_are_checked_and_frozen() {
+    let mut e = Env::new().with_executor();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None)])), "E_INTENTS_OFF");
+    e.as_("admin.testnet", 2 * REG).set_intents_config(Some(intents_cfg()));
+    assert_eq!(e.as_("x.testnet", 0).get_intents_config(), Some(intents_cfg()));
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("stranger.testnet", None)])), "E_INVALID_INTENTS");
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None), ireq("amara.testnet", None)])), "E_INVALID_INTENTS");
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).set_intents_config(None)), "E_UNAUTHORIZED");
+    // Alternates and the fallback may opt in once release rules name them; an EVM heir names a 0x Intents account.
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(rules()));
+    e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("kemi.testnet", None), ireq("charity.testnet", None), ireq("amara.testnet", Some("0x71c7656ec7ab88b098defb751b7401b5f6d8976f"))]);
+    assert_eq!(e.as_("x.testnet", 0).get_intents_delivery(acc("owner.testnet")).len(), 3);
+    assert_eq!(intents::target(&acc("owner.testnet"), &acc("amara.testnet"), "amara.testnet"), Some(acc("0x71c7656ec7ab88b098defb751b7401b5f6d8976f")));
+    // Disabled entries aren't kept; an empty list clears.
+    e.as_("owner.testnet", 0).set_intents_delivery(vec![intents::IntentsDelivery { account_id: acc("amara.testnet"), enabled: false, intents_account: None }]);
+    assert!(e.as_("x.testnet", 0).get_intents_delivery(acc("owner.testnet")).is_empty());
+    // Frozen while a release is open.
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    e.advance(97 * DAY);
+    e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None);
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None)])), "E_PROPOSAL_OPEN");
+}
+
+#[test]
+fn intents_delivery_is_a_standard_feature() {
+    let mut e = Env::new().with_tiers();
+    e.as_("admin.testnet", 2 * REG).set_intents_config(Some(intents_cfg()));
+    e.as_("owner.testnet", NEAR).set_plan(free_plan());
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None)])), "E_TIER_REQUIRED");
+    e.pay("owner.testnet", "owner.testnet", 49 * DOLLAR);
+    e.as_("owner.testnet", NEAR / 100).set_intents_delivery(vec![ireq("amara.testnet", None)]);
+    assert!(e.tier("owner.testnet").features.unwrap().intents_delivery);
+}
+
+#[test]
+fn intents_config_registers_behest_and_the_verifier_with_wnear_once() {
+    let mut e = Env::new();
+    assert_eq!(panic_code(|| e.as_("admin.testnet", REG).set_intents_config(Some(intents_cfg()))), "E_INSUFFICIENT_DEPOSIT");
+    let mut e = Env::new();
+    e.as_("admin.testnet", 3 * REG).set_intents_config(Some(intents_cfg()));
+    let regs = calls_to(WNEAR);
+    assert_eq!(regs.len(), 2);
+    assert!(regs[0].1.contains("behest.testnet") && regs[1].1.contains(VERIFIER));
+    assert!(near_sdk::test_utils::get_created_receipts().iter().any(|r| r.receiver_id.as_str() == "admin.testnet"), "the extra REG is refunded");
+    // Again (e.g. after switching off and on): nothing to register, nothing needed.
+    e.as_("admin.testnet", 0).set_intents_config(Some(intents_cfg()));
+    assert!(calls_to(WNEAR).is_empty());
+}

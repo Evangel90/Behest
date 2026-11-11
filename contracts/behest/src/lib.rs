@@ -8,6 +8,7 @@ pub mod btc;
 pub mod eth;
 pub mod ethproof;
 pub mod evm;
+pub mod intents;
 mod legacy;
 mod policy;
 pub mod tiers;
@@ -56,6 +57,13 @@ const PENDING_WITHDRAWALS_KEY: &[u8] = b"vw_pending";
 const NEP141_TOKENS_KEY: &[u8] = b"nep141_tokens";
 const MAX_NEP141_TOKENS: usize = 4;
 const FT_GAS: Gas = Gas::from_tgas(15);
+/// D27: `ft_transfer_call` into the Intents verifier (its `ft_on_transfer` and the token's resolve).
+const INTENTS_TRANSFER_GAS: Gas = Gas::from_tgas(50);
+const WRAP_GAS: Gas = Gas::from_tgas(5);
+/// D27: the delivery callback may unwrap a refund and wait for that.
+const INTENTS_CALLBACK_GAS: Gas = Gas::from_tgas(30);
+/// wNEAR's storage deposit when it isn't an allowlisted token (wrap.near asks 0.00125 NEAR).
+const WNEAR_STORAGE: u128 = 1_250_000_000_000_000_000_000;
 /// Bitcoin (D20). Each input needs its own MPC signature, so a payout spends
 /// at most this many coins (gas). State lives under raw keys: `btc_config`,
 /// `btcd:` destinations, `btcpk:` vault key, `btcp:` release, `btx:` txs.
@@ -457,6 +465,93 @@ impl Contract {
 
     pub fn get_checkin_delegates(&self, owner: AccountId) -> Vec<AccountId> {
         read_delegates(&owner)
+    }
+
+    /// D27. Which recipients (heirs, named alternates, the fallback) are paid
+    /// into their NEAR Intents account instead of their wallet. A Standard
+    /// tier feature; frozen while a release is open; empty clears it.
+    #[payable]
+    pub fn set_intents_delivery(&mut self, deliveries: Vec<intents::IntentsDelivery>) {
+        let owner = caller();
+        let plan = self.plan_ref(&owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let rules = read_rules(&owner);
+        let mut recipients: Vec<AccountId> = plan.policy.heirs.iter().map(|h| h.account_id.clone()).collect();
+        if let Some(r) = &rules {
+            recipients.extend(r.alternates.iter().map(|a| a.recipient.account_id.clone()));
+            recipients.extend(r.fallback.iter().map(|f| f.account_id.clone()));
+        }
+        let unique: std::collections::HashSet<&AccountId> = deliveries.iter().map(|d| &d.account_id).collect();
+        if unique.len() != deliveries.len() || deliveries.iter().any(|d| !recipients.contains(&d.account_id)) {
+            fail(Error::InvalidIntents);
+        }
+        let on = deliveries.iter().any(|d| d.enabled);
+        if on && intents::config().is_none() {
+            fail(Error::IntentsOff);
+        }
+        let mut after = tier_features(&owner, &plan.policy);
+        after.intents_delivery = on;
+        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
+        let storage_before = env::storage_usage();
+        let kept: Vec<intents::IntentsDelivery> = deliveries.into_iter().filter(|d| d.enabled).collect();
+        if kept.is_empty() {
+            env::storage_remove(&intents::delivery_key(&owner));
+        } else {
+            env::storage_write(&intents::delivery_key(&owner), &near_sdk::borsh::to_vec(&kept).expect("borsh"));
+        }
+        emit("intents_delivery_set", near_sdk::serde_json::json!({"owner": owner, "deliveries": kept}));
+        self.charge_storage(storage_before, &owner, false);
+    }
+
+    pub fn get_intents_delivery(&self, owner: AccountId) -> Vec<intents::IntentsDelivery> {
+        intents::deliveries(&owner)
+    }
+
+    /// D27. What a transfer of the open release has delivered into Intents so far.
+    pub fn get_intents_progress(&self, owner: AccountId, index: u32) -> intents::IntentsProgress {
+        let pid = self.read_plan(&owner).and_then(|p| p.proposal).map(|p| p.id).unwrap_or_default();
+        intents::progress(&owner, pid, index)
+    }
+
+    /// D27 (admin). Where NEAR Intents lives: the verifier and the wNEAR
+    /// token NEAR is wrapped into. Registers Behest and the verifier with
+    /// wNEAR once each (attach the storage deposits; the rest is refunded).
+    /// `None` switches Intents delivery off: retries then pay wallets directly.
+    #[payable]
+    pub fn set_intents_config(&mut self, config: Option<intents::IntentsConfig>) {
+        self.assert_admin();
+        let mut spent = 0u128;
+        if let Some(c) = &config {
+            let fee = nep141_tokens().iter().find(|t| t.account_id == c.wnear).map(|t| t.storage_deposit.0).unwrap_or(WNEAR_STORAGE);
+            let missing: Vec<AccountId> = [env::current_account_id(), c.verifier.clone()].into_iter().filter(|who| !intents::is_registered(&c.wnear, who)).collect();
+            spent = fee * missing.len() as u128;
+            if env::attached_deposit().as_yoctonear() < spent {
+                fail(Error::InsufficientDeposit);
+            }
+            for who in missing {
+                Promise::new(c.wnear.clone())
+                    .function_call(
+                        "storage_deposit",
+                        near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"account_id": who, "registration_only": true})).expect("json"),
+                        NearToken::from_yoctonear(fee),
+                        FT_GAS,
+                    )
+                    .detach();
+                intents::mark_registered(&c.wnear, &who);
+            }
+        }
+        let refund = env::attached_deposit().as_yoctonear() - spent;
+        if refund > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(NearToken::from_yoctonear(refund)).detach();
+        }
+        intents::set_config(config.as_ref());
+        emit("intents_config_set", near_sdk::serde_json::json!({"config": config}));
+    }
+
+    pub fn get_intents_config(&self) -> Option<intents::IntentsConfig> {
+        intents::config()
     }
 
     pub fn get_release_options(&self, owner: AccountId) -> Option<ReleaseOptions> {
@@ -1346,6 +1441,72 @@ impl Contract {
         self.close_if_settled(&owner);
     }
 
+    /// D27 callback. `ft_transfer_call` reports what the verifier kept; any
+    /// amount handed back makes the transfer `Failed` (retried for what is
+    /// still unpaid). Refunded wNEAR is unwrapped back into escrow.
+    #[private]
+    #[allow(clippy::too_many_arguments)]
+    pub fn on_intents_sent(&mut self, owner: AccountId, index: u32, proposal_id: u64, sent: U128, wrapped: U128, token: AccountId, near: bool) {
+        let result = env::promise_result_checked(0, 64);
+        let landed = result.is_ok();
+        let used = result.ok().and_then(|b| intents::used_amount(&b)).unwrap_or(0).min(sent.0);
+        let cfg = intents::config();
+        let mut prog = intents::progress(&owner, proposal_id, index);
+        prog.paid = U128(prog.paid.0 + used);
+        if near && landed {
+            // Everything wrapped for this transfer that the verifier didn't keep is back with Behest as wNEAR.
+            prog.wrapped = U128(prog.wrapped.0 + wrapped.0 - used);
+        }
+        if used > 0 {
+            if let Some(c) = &cfg {
+                intents::mark_registered(&token, &c.verifier);
+            }
+        }
+        emit("intents_delivered", near_sdk::serde_json::json!({"owner": owner, "index": index, "sent": sent, "kept": U128(used), "refunded": U128(sent.0 - used)}));
+        let current = self.read_plan(&owner).and_then(|p| p.proposal).is_some_and(|p| p.id == proposal_id);
+        if current {
+            let tr = self.transfer_mut(&owner, index);
+            if prog.paid.0 >= tr.amount.0 {
+                tr.state = TransferState::Confirmed;
+                tr.failure = None;
+            } else {
+                tr.state = TransferState::Failed;
+                tr.failure = Some(if !landed { "PromiseFailed" } else if used == 0 { "IntentsRefunded" } else { "IntentsPartlyRefunded" }.into());
+            }
+            let state = tr.state;
+            emit_transfer(&owner, index, state);
+        }
+        let unwrap = prog.wrapped.0;
+        intents::set_progress(&owner, proposal_id, index, &prog);
+        if unwrap > 0 {
+            if let Some(c) = cfg {
+                Promise::new(c.wnear)
+                    .function_call(
+                        "near_withdraw",
+                        near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"amount": U128(unwrap)})).expect("json"),
+                        NearToken::from_yoctonear(1),
+                        FT_GAS,
+                    )
+                    .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_intents_unwrapped(owner.clone(), index, proposal_id, U128(unwrap)))
+                    .detach();
+            }
+        }
+        if current {
+            self.close_if_settled(&owner);
+        }
+    }
+
+    /// D27. A refund unwrapped back to NEAR is escrow again; if unwrapping
+    /// failed, the wNEAR stays recorded and the retry sends it as it is.
+    #[private]
+    pub fn on_intents_unwrapped(&mut self, owner: AccountId, index: u32, proposal_id: u64, amount: U128) {
+        if env::promise_result_checked(0, 64).is_ok() {
+            let mut prog = intents::progress(&owner, proposal_id, index);
+            prog.wrapped = U128(prog.wrapped.0.saturating_sub(amount.0));
+            intents::set_progress(&owner, proposal_id, index, &prog);
+        }
+    }
+
     /// T2. MPC signature callback. Callbacks from superseded attempts are ignored.
     #[private]
     pub fn on_eth_signed(&mut self, owner: AccountId, index: u32, attempt: u32) {
@@ -1851,6 +2012,7 @@ pub const EVM_METHODS: &[&str] = &[
     "set_release_options",
     "set_btc_destinations",
     "set_checkin_delegates",
+    "set_intents_delivery",
     "withdraw",
     "withdraw_ft",
     "withdraw_vault",
@@ -1892,6 +2054,10 @@ impl Contract {
             "set_checkin_delegates" => {
                 let delegates = evm_args!(args, { delegates: Vec<AccountId> });
                 unit(self.set_checkin_delegates(delegates))
+            }
+            "set_intents_delivery" => {
+                let deliveries = evm_args!(args, { deliveries: Vec<intents::IntentsDelivery> });
+                unit(self.set_intents_delivery(deliveries))
             }
             "cancel_release" => {
                 evm_args!(args, {});
@@ -2245,6 +2411,7 @@ fn token_escrow_any(owner: &AccountId) -> bool {
 fn tier_features(owner: &AccountId, policy: &PlanInput) -> tiers::Features {
     let mut f = tiers::features(policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), btc_dests(owner).len(), token_escrow_any(owner));
     f.checkin_delegates = env::storage_has_key(&delegates_key(owner));
+    f.intents_delivery = intents::deliveries(owner).iter().any(|d| d.enabled);
     f
 }
 
@@ -2474,6 +2641,7 @@ impl Contract {
     /// reserve; already-registered accounts get it refunded to this contract).
     fn send_near(&mut self, owner: &AccountId, index: usize) -> Promise {
         let deposits: Vec<Nep141Token> = nep141_tokens();
+        let pid = self.plan_ref(owner).proposal.as_ref().map(|p| p.id).unwrap_or_default();
         let tr = self.transfer_mut(owner, index as u32);
         tr.state = TransferState::Sending;
         tr.failure = None;
@@ -2482,8 +2650,14 @@ impl Contract {
         if matches!(asset, Asset::Nep141(_)) {
             tr.attempts += 1;
         }
-        let dest: AccountId = tr.destination.parse().unwrap_or_else(|_| fail(Error::BadDestination));
-        let amount = tr.amount.0;
+        let heir = tr.heir.clone();
+        let destination = tr.destination.clone();
+        // D27: what already reached Intents is never sent again, whichever way the rest goes.
+        let amount = tr.amount.0.saturating_sub(intents::progress(owner, pid, index as u32).paid.0);
+        if let (Some(cfg), Some(to)) = (intents::config(), intents::target(owner, &heir, &destination)) {
+            return self.send_intents(owner, index as u32, pid, &cfg, &to, asset, amount, &deposits);
+        }
+        let dest: AccountId = destination.parse().unwrap_or_else(|_| fail(Error::BadDestination));
         let send = match asset {
             Asset::Nep141(token) => {
                 let fee = deposits.iter().find(|t| t.account_id == token).map(|t| t.storage_deposit.0).unwrap_or(0);
@@ -2510,6 +2684,63 @@ impl Contract {
                 .with_static_gas(CALLBACK_GAS)
                 .on_near_transfer(owner.clone(), index as u32),
         )
+    }
+
+    /// D27. Pays `amount` (what is still unpaid) into `to`'s account inside
+    /// Intents. NEAR is wrapped and sent in one receipt (atomic); tokens go
+    /// straight from escrow. The verifier is registered with each token once,
+    /// from the proposal's registration reserve.
+    #[allow(clippy::too_many_arguments)]
+    fn send_intents(&mut self, owner: &AccountId, index: u32, pid: u64, cfg: &intents::IntentsConfig, to: &AccountId, asset: Asset, amount: u128, deposits: &[Nep141Token]) -> Promise {
+        let args = near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({
+            "receiver_id": cfg.verifier,
+            "amount": U128(amount),
+            "msg": intents::deposit_msg(to),
+            "memo": "Behest release",
+        }))
+        .expect("json");
+        emit("intents_send", near_sdk::serde_json::json!({"owner": owner, "index": index, "to": to, "amount": U128(amount)}));
+        let near = asset == Asset::Near;
+        let (send, wrapped, token) = match asset {
+            Asset::Nep141(token) => {
+                let transfer = Promise::new(token.clone()).function_call("ft_transfer_call", args, NearToken::from_yoctonear(1), INTENTS_TRANSFER_GAS);
+                let fee = deposits.iter().find(|t| t.account_id == token).map(|t| t.storage_deposit.0).unwrap_or(0);
+                let reserve = ft_reserve(owner);
+                let send = if !intents::is_registered(&token, &cfg.verifier) && fee > 0 && reserve >= fee {
+                    set_ft_reserve(owner, reserve - fee);
+                    Promise::new(token.clone())
+                        .function_call(
+                            "storage_deposit",
+                            near_sdk::serde_json::to_vec(&near_sdk::serde_json::json!({"account_id": cfg.verifier, "registration_only": true})).expect("json"),
+                            NearToken::from_yoctonear(fee),
+                            FT_GAS,
+                        )
+                        .then(transfer)
+                } else {
+                    transfer
+                };
+                (send, 0, token)
+            }
+            _ => {
+                // wNEAR already held for this transfer (handed back earlier, not yet unwrapped) isn't wrapped twice.
+                let held = intents::progress(owner, pid, index).wrapped.0;
+                let wrap = amount.saturating_sub(held);
+                let mut p = Promise::new(cfg.wnear.clone());
+                if wrap > 0 {
+                    p = p.function_call("near_deposit", b"{}".to_vec(), NearToken::from_yoctonear(wrap), WRAP_GAS);
+                }
+                (p.function_call("ft_transfer_call", args, NearToken::from_yoctonear(1), INTENTS_TRANSFER_GAS), wrap, cfg.wnear.clone())
+            }
+        };
+        send.then(Self::ext(env::current_account_id()).with_static_gas(INTENTS_CALLBACK_GAS).on_intents_sent(
+            owner.clone(),
+            index,
+            pid,
+            U128(amount),
+            U128(wrapped),
+            token,
+            near,
+        ))
     }
 
     /// T1b / T6: build the exact transaction from the snapshot and ask the MPC

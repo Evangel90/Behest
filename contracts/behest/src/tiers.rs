@@ -168,6 +168,10 @@ pub struct Features {
     /// D26: the owner named check-in delegates.
     #[serde(default)]
     pub checkin_delegates: bool,
+    /// D27: a recipient is paid through NEAR Intents. Gated with the other
+    /// cross-chain delivery features (`external_assets`, Standard).
+    #[serde(default)]
+    pub intents_delivery: bool,
 }
 
 pub fn features(policy: &PlanInput, rules: Option<&ReleaseRules>, options: Option<&ReleaseOptions>, btc_destinations: usize, token_escrow: bool) -> Features {
@@ -178,6 +182,7 @@ pub fn features(policy: &PlanInput, rules: Option<&ReleaseRules>, options: Optio
         release_rules: rules.is_some(),
         advanced_release: options.is_some_and(|o| o.mode != ReleaseMode::Claim || !o.delay_signers.is_empty() || !o.overrides.is_empty()),
         checkin_delegates: false,
+        intents_delivery: false,
     }
 }
 
@@ -189,6 +194,7 @@ impl TierSpec {
             && (self.release_rules || !f.release_rules)
             && (self.advanced_release || !f.advanced_release)
             && (self.delegates_allowed() || !f.checkin_delegates)
+            && (self.external_assets || !f.intents_delivery)
     }
 }
 

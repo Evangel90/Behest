@@ -66,6 +66,8 @@ pub enum Error {
     InsufficientTreasury,
     NotDelegate,
     InvalidDelegates,
+    IntentsOff,
+    InvalidIntents,
 }
 
 impl Error {
@@ -134,6 +136,8 @@ impl Error {
             Error::InsufficientTreasury => "E_INSUFFICIENT_TREASURY",
             Error::NotDelegate => "E_NOT_DELEGATE",
             Error::InvalidDelegates => "E_INVALID_DELEGATES",
+            Error::IntentsOff => "E_INTENTS_OFF",
+            Error::InvalidIntents => "E_INVALID_INTENTS",
         }
     }
 }
