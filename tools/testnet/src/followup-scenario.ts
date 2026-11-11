@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
-import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -74,6 +74,7 @@ async function runRound(owner: string, proposer: string): Promise<Transfer[]> {
 
 // ------------------------------------------------------------------ setup
 const owner = await makeAccount("fup", "0.3");
+await payTier(C, owner, 2, d.admin);
 await call(owner, C, "set_plan", {
   plan: {
     check_in_interval_ms: MINUTE,

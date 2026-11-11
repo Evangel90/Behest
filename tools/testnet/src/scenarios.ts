@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { sponsoredCall } from "@behest/relayer/client";
-import { account, call, loadDeployment, log, provider, retry429, view, reclaimScenarioOwners, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, provider, retry429, view, reclaimScenarioOwners, waitForKey, payTier } from "./near.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
@@ -97,6 +97,7 @@ function demoPlan(opts: { quorum?: number; amaraEth?: string } = {}) {
 /** Owner creates the plan, funds 0.3 NEAR of escrow, then goes silent until overdue. */
 async function overduePlan(prefix: string, opts?: Parameters<typeof demoPlan>[0]) {
   const owner = await freshOwner(prefix);
+  await payTier(C, owner, 2, d.admin);
   await call(owner, C, "set_plan", { plan: demoPlan(opts) }, { deposit: nearToYocto("0.05") });
   await call(owner, C, "deposit", { owner }, { deposit: ESCROW });
   const p = await plan(owner);

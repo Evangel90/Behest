@@ -26,7 +26,7 @@ import * as btc from "@scure/btc-signer";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { ESPLORA, NET, funderKey, newKey, p2wpkh, send } from "./btc.js";
-import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
 import { executor } from "./sepolia.js";
 
 const d = loadDeployment();
@@ -134,6 +134,7 @@ const owner = await makeAccount("btc", "0.3");
 // fresh heir wallets: Amara Taproot (bech32m), Tobi P2WPKH (bech32)
 const amaraBtc = btc.p2tr(secp256k1.getPublicKey(newKey(), true).slice(1), undefined, NET).address!;
 const tobiBtc = p2wpkh(newKey()).address!;
+await payTier(C, owner, 2, d.admin);
 await call(owner, C, "set_plan", {
   plan: {
     check_in_interval_ms: MINUTE,

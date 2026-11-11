@@ -25,7 +25,7 @@ import { KeyPair, nearToYocto } from "near-api-js";
 import { createWalletClient, formatEther, keccak256, parseEther, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
 import { createEthPort } from "@behest/executor/eth";
 import { executor, funderAccount, loadWallets, pub, reclaimVault, saveWallets, sweep, transport, vaultOf } from "./sepolia.js";
 
@@ -93,6 +93,7 @@ if (resumeOwner) {
   writeFileSync(join(dir, `${owner}.json`), JSON.stringify({ account_id: owner, public_key: kp.getPublicKey().toString(), private_key: kp.toString() }), { mode: 0o600 });
   saveWallets(owner, { amara: amaraKey, tobi: amaraKey });
 
+  await payTier(C, owner, 2, d.admin);
   await call(owner, C, "set_plan", {
     plan: {
       check_in_interval_ms: MINUTE,

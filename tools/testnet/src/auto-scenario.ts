@@ -14,7 +14,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, actions, nearToYocto } from "near-api-js";
-import { account, call, loadDeployment, log, provider, reclaimScenarioOwners, view, waitForKey } from "./near.js";
+import { account, call, loadDeployment, log, provider, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
 import { executor } from "./sepolia.js";
 
 const d = loadDeployment();
@@ -52,6 +52,7 @@ async function makeAccount(prefix: string, near: `${number}`) {
 const owner = await makeAccount("auto", "0.3");
 const ds1 = await makeAccount("dsa", "0.05");
 const ds2 = await makeAccount("dsb", "0.05");
+await payTier(C, owner, 2, d.admin);
 await call(owner, C, "set_plan", {
   plan: {
     check_in_interval_ms: MINUTE,

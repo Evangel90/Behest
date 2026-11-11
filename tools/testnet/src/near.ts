@@ -43,6 +43,8 @@ export interface Deployment {
   owner: string;
   guardians: string[];
   heirs: string[];
+  /** D25: the fee token tiers are paid in (the mock USDC on testnet). */
+  usdc?: string;
   wasmSha256: string;
   deployedAt: string;
 }
@@ -78,6 +80,29 @@ export async function call(
       deposit: opts.deposit ?? 0n,
     }),
   );
+}
+
+/**
+ * D25. Makes sure `owner` has paid for `tier` (0 Free, 1 Standard, 2 Complete):
+ * `payer` mints the missing test USDC from the mock token's faucet and pays it
+ * with `ft_transfer_call` naming the owner, exactly as anyone may on testnet.
+ * A no-op when tiers are off or the tier is already covered.
+ */
+export async function payTier(contract: string, owner: string, tier: number, payer: string) {
+  const cfg = await view<{ fee_token: string | null }>(contract, "get_tier_config");
+  if (!cfg.fee_token) return;
+  const t = await view<{ due: string[] }>(contract, "get_tier", { owner });
+  let due = BigInt(t.due[tier] ?? "0");
+  if (due === 0n) return;
+  // A first payment must be at least one whole token.
+  if (due < 1_000_000n) due = 1_000_000n;
+  for (let left = due; left > 0n; ) {
+    const n = left > 500_000_000n ? 500_000_000n : left;
+    await call(payer, cfg.fee_token, "mint", { account_id: payer, amount: n.toString() });
+    left -= n;
+  }
+  await call(payer, cfg.fee_token, "ft_transfer_call", { receiver_id: contract, amount: due.toString(), msg: JSON.stringify({ pay_tier: owner }) }, { tgas: 60, deposit: 1n });
+  log("tier paid", { owner, tier, usdc: (Number(due) / 1e6).toFixed(2) });
 }
 
 /** Rewrites KEY=value lines in the root .env, leaving every other line untouched. */

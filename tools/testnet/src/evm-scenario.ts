@@ -11,7 +11,7 @@ import { Account, nearToYocto } from "near-api-js";
 import { evmCall, type RelayResult } from "@behest/relayer/client";
 import { networkOf, signedActionMessage } from "@behest/relayer/evm";
 import { JsonRpcProvider } from "near-api-js";
-import { call, loadDeployment, log } from "./near.js";
+import { call, loadDeployment, log, payTier } from "./near.js";
 
 // Reads go to a separate RPC (fastnear rate-limits per IP and also carries the
 // transactions), with backoff on rate limits.
@@ -110,6 +110,9 @@ for (const h of [h1, h2]) assert((await nearBalance(idOf(h))) === null, "heir 0x
 // 1. The owner creates a plan with no deposit: storage comes from the sponsor pool (D24).
 const before = await view<{ pool: string; allowance_left: string; daily_left: number }>(C, "get_sponsorship", { owner: O });
 log("sponsorship before", before);
+// Two heirs need the Standard tier (D25). The owner holds no NEAR and no USDC:
+// someone else (here the admin, as a relative would) pays it for the 0x account.
+await payTier(C, O, 1, d.admin);
 await signed(owner, "Create your Behest plan", "set_plan", {
   plan: {
     check_in_interval_ms: MINUTE,

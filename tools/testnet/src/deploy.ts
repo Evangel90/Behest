@@ -8,10 +8,11 @@
 // must already exist in the legacy keychain (created via the faucet), or pass
 // --parent <account> after `bootstrap` created them as its sub-accounts.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { actions, nearToYocto, teraToGas } from "near-api-js";
-import { ROOT, account, call, keyOf, log, saveDeployment, setEnv, view } from "./near.js";
+import { KeyPair, actions, nearToYocto, teraToGas } from "near-api-js";
+import { ROOT, account, call, keyOf, log, provider, saveDeployment, setEnv, view, waitForKey } from "./near.js";
 import { WETH_TOKEN } from "./sepolia.js";
 
 const suffix = process.argv[2];
@@ -106,6 +107,38 @@ if (pool < poolTarget) {
   log("sponsor pool funded", { added: (poolTarget - pool).toString(), pool: poolTarget.toString() });
 }
 
+// D25: tiers are paid in USDC. On testnet that is a mock token with a public
+// faucet (contracts/mock-usdc), deployed once as behest-<suffix>-usdc.testnet
+// (the admin pays its storage). USDC_TOKEN_ID points at another token instead.
+const usdc = process.env.USDC_TOKEN_ID?.trim() || id("usdc");
+if (!process.env.USDC_TOKEN_ID?.trim()) {
+  const exists = await provider.viewAccount({ accountId: usdc }).then(() => true, () => false);
+  const keyFile = join(homedir(), ".near-credentials/testnet", `${usdc}.json`);
+  if (!exists) {
+    const kp = KeyPair.fromRandom("ed25519");
+    await account(admin).createAccount({ newAccountId: usdc, publicKey: kp.getPublicKey().toString(), nearToTransfer: nearToYocto("2.5") });
+    writeFileSync(keyFile, JSON.stringify({ account_id: usdc, public_key: kp.getPublicKey().toString(), private_key: kp.toString() }), { mode: 0o600 });
+    await waitForKey(usdc, kp.getPublicKey().toString());
+    log("mock USDC account created", { usdc });
+  }
+  const usdcState = await account(usdc).getState();
+  if (usdcState.codeHash === "11111111111111111111111111111111") {
+    if (!existsSync(keyFile)) throw new Error(`no key for ${usdc}`);
+    const usdcWasm = readFileSync(join(ROOT, "target/near-usdc/mock_usdc.wasm"));
+    await account(usdc).signAndSendTransaction({ receiverId: usdc, actions: [actions.deployContract(usdcWasm), actions.functionCall("new", {}, teraToGas(30), 0n)] });
+    log("mock USDC deployed", { usdc, bytes: usdcWasm.length });
+  }
+}
+if ((await view(usdc, "storage_balance_of", { account_id: contract })) === null) {
+  await call(admin, usdc, "storage_deposit", { account_id: contract, registration_only: true }, { deposit: nearToYocto("0.00125") });
+  log("contract registered with USDC", { usdc });
+}
+const tierCfg = await view<{ fee_token: string | null }>(contract, "get_tier_config");
+if (tierCfg.fee_token !== usdc) {
+  await call(admin, contract, "set_tier_config", { config: { ...tierCfg, fee_token: usdc } });
+  log("plan tiers on", { fee_token: usdc });
+}
+
 saveDeployment({
   contract,
   admin,
@@ -113,6 +146,7 @@ saveDeployment({
   owner: id("owner"),
   guardians: [id("g1"), id("g2"), id("g3")],
   heirs: [id("amara"), id("tobi")],
+  usdc,
   wasmSha256: sha,
   deployedAt: new Date().toISOString(),
 });
