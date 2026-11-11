@@ -17,9 +17,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.3);
 const C = d.contract;
 const USDC = d.usdc;
 if (!USDC) throw new Error("this deployment has no fee token; run deploy-contract first");

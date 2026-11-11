@@ -12,6 +12,7 @@ import { evmCall, type RelayResult } from "@behest/relayer/client";
 import { networkOf, signedActionMessage } from "@behest/relayer/evm";
 import { JsonRpcProvider } from "near-api-js";
 import { call, loadDeployment, log, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 
 // Reads go to a separate RPC (fastnear rate-limits per IP and also carries the
 // transactions), with backoff on rate limits.
@@ -29,6 +30,8 @@ async function view<T>(contractId: string, method: string, args: Record<string, 
 
 const d = loadDeployment();
 const C = d.contract;
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.2);
 const RELAYER = process.env.RELAYER_URL || "http://localhost:8787";
 const MINUTE = 60_000;
 const ESCROW = nearToYocto("0.2");

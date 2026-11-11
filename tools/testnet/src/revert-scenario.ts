@@ -26,11 +26,14 @@ import { createWalletClient, formatEther, keccak256, parseEther, type Hex } from
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 import { createEthPort } from "@behest/executor/eth";
 import { executor, funderAccount, loadWallets, pub, reclaimVault, saveWallets, sweep, transport, vaultOf } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.2);
 const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA] = d.heirs as [string];

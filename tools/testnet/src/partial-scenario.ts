@@ -19,10 +19,13 @@ import { createWalletClient, erc20Abi, formatEther, parseEther, type Hex } from 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 import { WETH, executor, funderAccount, pub, reclaimVault, saveWallets, tokenBalance, transport, vaultOf } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.45);
 const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];

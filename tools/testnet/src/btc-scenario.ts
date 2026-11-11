@@ -27,10 +27,13 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { ESPLORA, NET, funderKey, newKey, p2wpkh, send } from "./btc.js";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 import { executor } from "./sepolia.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.3);
 const C = d.contract;
 const [G1, G2] = d.guardians as [string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];

@@ -7,9 +7,12 @@ import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { sponsoredCall } from "@behest/relayer/client";
 import { account, call, loadDeployment, log, provider, retry429, view, reclaimScenarioOwners, waitForKey, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 2.7);
 const C = d.contract;
 const [G1, G2, G3] = d.guardians as [string, string, string];
 const [AMARA, TOBI] = d.heirs as [string, string];

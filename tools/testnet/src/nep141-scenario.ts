@@ -14,9 +14,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { KeyPair, nearToYocto } from "near-api-js";
 import { account, call, loadDeployment, log, reclaimScenarioOwners, view, waitForKey, payTier } from "./near.js";
+import { ensureScenarioFunds } from "./funding.js";
 
 const d = loadDeployment();
 await reclaimScenarioOwners(d.contract, d.owner);
+// Fresh scenario owners come out of the owner parent: top up first, never fail half way.
+await ensureScenarioFunds(d, 0.5);
 const C = d.contract;
 const WNEAR = "wrap.testnet";
 const [G1, G2] = d.guardians as [string, string];
