@@ -1,7 +1,7 @@
 "use client";
 // The owner's view: check in (or stop an open release), see the timeline,
 // manage what's in the plan, and tune rules and release options.
-import { ArrowDownToLine, ArrowUpFromLine, Ban, Coins, HeartPulse, Pencil, ScrollText } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Ban, Coins, FileText, HeartPulse, Pencil, ScrollText } from "lucide-react";
 import { useEffect, useState } from "react";
 import { parseUnits } from "viem";
 import { CONTRACT_ID, ETH_EXPLORER, NEAR_EXPLORER } from "@/lib/config";
@@ -87,7 +87,16 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
       </div>
 
       <Card className="flex flex-col gap-5">
-        <SectionTitle icon={ScrollText} title="How your plan works" sub="Read it the way your guardians and heirs will." />
+        <SectionTitle
+          icon={ScrollText}
+          title="How your plan works"
+          sub="Read it the way your guardians and heirs will."
+          aside={
+            <ButtonLink href={`/plan/${encodeURIComponent(view.plan.owner)}/packet`} variant="outline" size="sm" icon={FileText}>
+              Recovery packets for heirs
+            </ButtonLink>
+          }
+        />
         <p className="text-lg leading-snug tracking-[-0.01em]">{describePlan(p)}</p>
         <Timeline view={view} now={now} />
       </Card>

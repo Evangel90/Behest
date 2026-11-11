@@ -315,6 +315,19 @@ export function describeRules(rules: ReleaseRules | null): string[] {
   return out;
 }
 
+export type AssetGroup = "Near" | "Ethereum" | "Bitcoin";
+
+/**
+ * The release mode for one heir and asset group, as the contract decides it
+ * (`policy::mode_for`): the first override naming this heir (or every heir)
+ * and covering the group wins, otherwise the plan's mode. No options = Claim.
+ */
+export function modeFor(o: ReleaseOptions | null | undefined, heir: string, group: AssetGroup): { mode: ReleaseOptions["mode"]; grace_ms: number } {
+  if (!o) return { mode: "Claim", grace_ms: 0 };
+  const x = (o.overrides ?? []).find((v) => (v.heir === null || v.heir === heir) && (v.assets === "All" || v.assets === group));
+  return x ? { mode: x.mode, grace_ms: x.hybrid_grace_ms } : { mode: o.mode, grace_ms: o.hybrid_grace_ms };
+}
+
 /** Plain-language lines for release mode and delay signers. */
 export function describeOptions(o: ReleaseOptions | null): string[] {
   const out: string[] = [];

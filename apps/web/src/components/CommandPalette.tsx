@@ -3,7 +3,7 @@
 // change theme or sign out, all from the keyboard.
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CornerDownLeft, FileSearch, LogOut, Monitor, Moon, Search, Sun, UserRound, Users, type LucideIcon } from "lucide-react";
+import { CornerDownLeft, FileSearch, FileText, LogOut, Monitor, Moon, Search, Sun, UserRound, Users, type LucideIcon } from "lucide-react";
 import { loadSandbox, watched, PERSONA_ROLES } from "@/lib/demo";
 import { shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
@@ -69,6 +69,7 @@ export function CommandPalette({ isOpen, close }: { isOpen: boolean; close: () =
     if (!isOpen) return [];
     const out: Cmd[] = NAV.map((n) => ({ id: `nav:${n.href}`, label: n.label, group: "Go to", icon: n.icon, run: () => go(n.href) }));
     if (session) out.push({ id: "mine", label: "Your plan", group: "Go to", icon: UserRound, run: () => go(`/plan/${encodeURIComponent(session.accountId)}`) });
+    if (session) out.push({ id: "packet", label: "Recovery packets for heirs", hint: "print", group: "Go to", icon: FileText, run: () => go(`/plan/${encodeURIComponent(session.accountId)}/packet`) });
     for (const o of watched().slice(0, 6))
       out.push({ id: `w:${o}`, label: `${shortName(o)}'s plan`, hint: o, group: "Recent plans", icon: FileSearch, run: () => go(`/plan/${encodeURIComponent(o)}`) });
     const sb = loadSandbox();

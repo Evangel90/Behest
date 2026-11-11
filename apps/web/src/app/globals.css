@@ -311,3 +311,18 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
   *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
   .skeleton::after { display: none; }
 }
+
+/* Recovery packet (and any page) on paper: black on white, no app chrome,
+   each heir on its own page. Light tokens regardless of the screen theme. */
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    --paper: #FFFFFF; --card: #FFFFFF; --subtle: #FFFFFF; --ink: #000000; --muted: #333333;
+    --line: #CCCCCC; --line-strong: #999999; --signal-text: #000000;
+    color-scheme: light;
+  }
+  html, body { background: #FFFFFF !important; color: #000000 !important; }
+  [data-print-hide], [data-app-shell] aside, [data-toaster] { display: none !important; }
+  .packet-page { break-before: page; }
+  a { color: inherit; }
+  code { white-space: pre-wrap; }
+}

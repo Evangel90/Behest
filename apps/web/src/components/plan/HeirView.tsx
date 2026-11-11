@@ -2,7 +2,7 @@
 // The heir's journey (design "Waiting · heir · mobile"): plain words, one big
 // action when it's time, a tracker as each part lands. Hashes only under
 // "Technical details".
-import { ArrowRight, CircleHelp, Gift, RotateCcw, Wrench } from "lucide-react";
+import { ArrowRight, CircleHelp, FileText, Gift, RotateCcw, Wrench } from "lucide-react";
 import { useState } from "react";
 import { CONTRACT_ID } from "@/lib/config";
 import { useBtcQuote, useConfig, useEthQuote } from "@/lib/fees";
@@ -18,7 +18,7 @@ import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
 import { useTx } from "../tx";
-import { Button, ExtLink, Progress, TickerDisc, TransferPill, cx } from "../ui";
+import { Button, ButtonLink, ExtLink, Progress, TickerDisc, TransferPill, cx } from "../ui";
 import type { PlanCtx } from "./common";
 
 const tickerOf = (t: Transfer) => (isBtc(t.asset) ? "BTC" : isEvm(t.asset) ? "ETH" : "NEAR");
@@ -175,6 +175,11 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
       <Button variant="subtle" size="lg" icon={CircleHelp} className="w-full" onClick={() => setHelp(true)}>
         What happens next?
       </Button>
+      {heir && (
+        <ButtonLink href={`/plan/${encodeURIComponent(view.plan.owner)}/packet?heir=${encodeURIComponent(heir.account_id)}`} variant="outline" size="lg" icon={FileText} className="w-full">
+          Recovery packet to print and keep
+        </ButtonLink>
+      )}
       <Dialog open={help} onClose={() => setHelp(false)} title="What happens next" description={`How a release of ${owner}'s plan reaches you.`} sheet bottom>
         <Timeline view={view} now={now} />
         <ol className="flex flex-col gap-3 text-[15px] leading-relaxed">
