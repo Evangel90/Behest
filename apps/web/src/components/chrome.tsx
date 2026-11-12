@@ -3,10 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Repeat, Search, Sun, UserRound, Wallet, type LucideIcon } from "lucide-react";
-import { CONTRACT_ID } from "@/lib/config";
 import { loadSandbox, PERSONA_ROLES, type Sandbox } from "@/lib/demo";
-
-const TESTNET = CONTRACT_ID.endsWith(".testnet");
 import { humanError } from "@/lib/hooks";
 import { shortAddr, shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
@@ -58,12 +55,6 @@ export function Logo({ dark }: { dark?: boolean }) {
     <Link href="/" className={cx("flex min-h-11 items-center gap-2.5 rounded-tile no-underline", dark ? "text-white" : "text-ink")} aria-label="Behest home">
       <Mark light={dark} />
       <span className="text-[21px] font-semibold tracking-[-0.03em]">behest</span>
-      {/* A quiet hint, not a banner: hover or a screen reader gives the details. */}
-      {TESTNET && (
-        <span title="Testnet: demo timers run in minutes, and no real funds are used." className={cx("-ml-1 self-start pt-2 text-[10px] font-medium tracking-wide", dark ? "text-white/40" : "text-muted")}>
-          testnet<span className="sr-only">: demo timers run in minutes, and no real funds are used</span>
-        </span>
-      )}
     </Link>
   );
 }
