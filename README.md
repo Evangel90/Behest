@@ -83,6 +83,17 @@ An owner can choose, per heir (and for named alternates and the fallback), **Rec
 pnpm --filter @behest/testnet e2e-intents   # live: failing, half-refunding and keeping (mock) verifiers
 ```
 
+### Edit notice and guardian recovery (D28, D29)
+
+- **Edit notice (cooling-off).** An owner can set a notice of 1–90 days (minutes on demo builds). Changes to heirs, shares, destinations, guardians, quorum, release rules, release mode and standbys then wait out the notice before taking effect. Guardians and heirs are told (the notifier can't switch this notice off), and the owner can cancel until it ends. When the notice ends, anyone can apply the change. Timers, check-in delegates and withdrawals stay instant. Lowering or removing the notice also waits.
+- **Standby guardians.** Up to 5, in order, named by the owner. If a guardian resigns, the next standby takes the seat at once. With availability checks on, a guardian who hasn't confirmed (or voted) within the window can be replaced by anyone calling a standby. The swap lands after a notice, and the guardian stops it just by confirming.
+- **Rotation and resignation.** A guardian can move its seat to a new account after the swap notice; the owner can cancel. A guardian can step down; with no standby left, the seat stays empty.
+- **The quorum never drops.** When too few guardians are available, the plan says so on every screen and in notifications, and a release waits for a standby, a guardian or the owner.
+
+```sh
+pnpm --filter @behest/testnet e2e-recovery   # live: queued, cancelled and applied edits; standby swap, rotation, resignation
+```
+
 ## Notifications
 
 `services/notifier` watches plans with view calls only (it holds no NEAR keys, so nothing it does or fails to do can change a plan) and delivers notices to each person over email, Telegram and webhooks. People choose channels on the web app's **Notifications** screen; contacts stay in the notifier's own SQLite database, never on-chain, and every change is a NEP-413 message signed by the account (a signature, not a transaction).
@@ -231,6 +242,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 
 `e2e-intents`, 2026-11-11, after upgrading `behest-ekkr6.testnet` in place (wasm `2e88fd81…`) and deploying the mock verifier at `behest-ekkr6-intents.testnet` (`set_intents_config` registered Behest and the verifier with `wrap.testnet`). A fresh owner paid Standard, opted Amara in and escrowed 0.05 NEAR and 0.01 wNEAR; Amara's shares were 0.0285 NEAR and 0.00525 wNEAR. With the mock failing every deposit the token refunded both payments: both transfers `Failed` (`IntentsRefunded`), nothing credited, `paid` 0. With it handing back half: both `Failed` (`IntentsPartlyRefunded`), `paid` exactly half, the refunded wNEAR unwrapped (`wrapped` back to 0). With it keeping everything, the retries sent only the halves and confirmed; Amara's Intents balance grew by exactly 0.03375 and Behest's wNEAR fell by exactly 0.00525. Tobi was paid to his wallet, and Amara withdrew 0.00525 wNEAR from the mock to her wallet (after registering with the token: a withdrawal is a plain `ft_transfer`). In the app (headless Chrome, persona = Amara) the heir screen showed her Intents balance from `mt_batch_balance_of` and a 0.001 wNEAR withdrawal went through the dialog; the wizard showed the per-heir option and the testnet bridge note.
 
+### Edit notice and guardian recovery (D28, D29)
+
+`e2e-recovery`, 2026-11-12, after upgrading `behest-ekkr6.testnet` in place (wasm `9c77731b…`, demo timers). A fresh owner paid Standard and saved a plan with G1–G3 (quorum 2), Tobi as standby, a 1-minute availability window and swap notice, and a 1-minute edit notice. Changing Amara's destination was queued, not applied. Applying it early failed (`E_CHANGE_NOT_DUE`), and the owner cancelled it. Queued again together with turning the notice off, both waited out the notice and a guardian applied them. G3 went past the window; Amara called the standby; finishing early failed; G3 confirmed and the swap was called off. G3 went quiet again, and Tobi took the seat after the delay, with the quorum still 2. With G1 and G2 also quiet, the status reported 1 of 2 available until they confirmed. G1 moved its seat to a new account: the owner cancelled the first request, and the second landed after the delay; the old account was then refused (`E_NOT_GUARDIAN`). G2 resigned with no standby left: the seat stayed, marked resigned (`E_GUARDIAN_RESIGNED`), with the quorum unchanged. In the app (headless Chrome, personas) the owner set a 2-minute notice and saved standby settings, which showed as waiting with a countdown. Guardian G1 saw the warning banner and confirmed from "Your guardian seat", standby Tobi confirmed from the standby card, and the owner cancelled the queued change from the banner.
+
 ### Clean reproduction (Stage 1 exit gate)
 
 On 2026-11-08 a second deployment was built from scratch with no faucet: `bootstrap r1`, a source rebuild (same wasm sha256 `0e2c65ea…` as the main deployment), then `deploy-contract r1 --parent` (`deployments/r1.json`). Every NEAR scenario passed on it. So did `e2e-eth`: [Tobi, nonce 0](https://sepolia.etherscan.io/tx/0x5f1abb07f7b96c33cbc22676dc0b0cf959fba10519beff9d1875def09035de21) and [Amara, nonce 1](https://sepolia.etherscan.io/tx/0x020eccf530488d8991f0e8db5d91d23ba7176c1ae9230497fca055d46f743e85), each with its exact share. The run surfaced two tooling issues, both fixed: scenario owners were never reclaimed, and an error check crashed on BigInt fields.
@@ -273,3 +288,19 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] DAOs and multisigs in any role: "Act as a DAO" sessions turn every call into a SputnikDAO proposal with a plain-words description and vote buttons; check-in delegates (≤ 10, check in only, Standard tier); DAO plans pay their own storage; wizard warnings for voting windows and DAO heirs; council-wide notifications (D26, threats 47–49; live `e2e-dao`)
 - [x] Heirs receive through NEAR Intents: per-recipient opt-in (Standard), NEAR wrapped and sent atomically, tokens from escrow, any refund a failure retried for the rest; Intents balance, withdraw and (mainnet) 1Click swaps on the heir screen; bridge addresses for ETH/BTC on mainnet (D27, threats 50–51; live `e2e-intents` against a mock verifier)
 - [x] Testnet cost cut: fee cap 3 gwei, dust-sized test amounts, `recover-vaults` (recovered ≈0.021 ETH stranded by earlier runs)
+
+## Stage 3 progress (public testnet beta)
+
+- [x] Claim modes per heir and asset group (D19, shipped in Stage 2)
+- [x] Edit notice (cooling-off) for high-impact edits: validated and queued, re-validated and applied by anyone after the notice, cancellable by the owner, never during an open release; lowering it also waits; notices to guardians and heirs that can't be switched off (D28, threats 1, 54; live `e2e-recovery`)
+- [x] Guardian recovery without lowering the quorum: standby guardians, availability confirmations (votes count), standby swaps after a notice that the guardian cancels by confirming, key rotation, resignation, "quorum unreachable" status and alerts (D29, threats 3, 52–53, 55; live `e2e-recovery`)
+- [ ] Heir proof-of-control for registered destinations
+- [ ] Owner account-recovery guidance and destination updates while active
+- [ ] Guided presets with a plain-language consequence summary
+- [ ] Commitment-based private heir details (public mode stays)
+- [ ] Property/state-machine tests and fuzzing; upgrade and long-timer tests
+- [ ] A second independent executor
+- [ ] RPC failover, durable job queues, alerts, runbooks, status page
+- [ ] Signed, reproducible builds; secret rotation; dependency scanning
+- [ ] Treasury and fee-reserve dashboards
+- [ ] Recovery drills, testnet bug bounty, independent review
