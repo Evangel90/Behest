@@ -5,7 +5,14 @@
 | Action | Owner | Guardian | Heir | Executor | Admin | Anyone |
 |---|---|---|---|---|---|---|
 | Create / replace plan | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Change heirs, destinations, allocations, quorum | ✓ (only with no open proposal) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Change heirs, destinations, allocations, quorum | ✓ (only with no open proposal; queued for the edit notice if one is set, D28) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Set the edit notice; cancel a queued edit (D28) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Apply a queued edit once its notice has passed (D28) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Set standby guardians and availability (D29) | ✓ (an edit under D28) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Confirm availability (D29) | ✗ | ✓ (and standbys) | ✗ | ✗ | ✗ | ✗ |
+| Rotate own seat to a new account; resign (D29) | ✗ | ✓ (own seat) | ✗ | ✗ | ✗ | ✗ |
+| Ask a standby to fill a resigned or unresponsive seat; finalize a due seat change (D29) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cancel a pending seat change (D29) | ✓ (any) | ✓ (own) | ✗ | ✗ | ✗ | ✗ |
 | Check in | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Cancel proposal (before `waiting_ends_at`) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Deposit NEAR to plan escrow | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |

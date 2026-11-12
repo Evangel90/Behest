@@ -68,6 +68,14 @@ pub enum Error {
     InvalidDelegates,
     IntentsOff,
     InvalidIntents,
+    NoPendingChange,
+    ChangeNotDue,
+    InvalidGuardianSettings,
+    GuardianAvailable,
+    NoStandby,
+    GuardianResigned,
+    GuardianChangePending,
+    NoGuardianChange,
 }
 
 impl Error {
@@ -138,6 +146,14 @@ impl Error {
             Error::InvalidDelegates => "E_INVALID_DELEGATES",
             Error::IntentsOff => "E_INTENTS_OFF",
             Error::InvalidIntents => "E_INVALID_INTENTS",
+            Error::NoPendingChange => "E_NO_PENDING_CHANGE",
+            Error::ChangeNotDue => "E_CHANGE_NOT_DUE",
+            Error::InvalidGuardianSettings => "E_INVALID_GUARDIAN_SETTINGS",
+            Error::GuardianAvailable => "E_GUARDIAN_AVAILABLE",
+            Error::NoStandby => "E_NO_STANDBY",
+            Error::GuardianResigned => "E_GUARDIAN_RESIGNED",
+            Error::GuardianChangePending => "E_GUARDIAN_CHANGE_PENDING",
+            Error::NoGuardianChange => "E_NO_GUARDIAN_CHANGE",
         }
     }
 }

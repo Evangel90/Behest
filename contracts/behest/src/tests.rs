@@ -3760,3 +3760,251 @@ fn intents_config_registers_behest_and_the_verifier_with_wnear_once() {
     e.as_("admin.testnet", 0).set_intents_config(Some(intents_cfg()));
     assert!(calls_to(WNEAR).is_empty());
 }
+
+// ------------------------------------------------- D28 edit notice (cooling-off)
+
+fn noticed(notice: u64) -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_edit_notice(notice);
+    e
+}
+
+fn pending_kinds(e: &mut Env) -> Vec<changes::ChangeKind> {
+    e.as_("x.testnet", 0).get_pending_changes(acc("owner.testnet")).iter().map(|c| c.change.kind()).collect()
+}
+
+#[test]
+fn high_impact_plan_edit_waits_out_the_notice_but_timers_apply_now() {
+    let mut e = noticed(7 * DAY);
+    let mut p = plan_input();
+    p.heirs[0].near_destination = Some(acc("attacker.testnet"));
+    p.check_in_interval_ms = 60 * DAY;
+    e.as_("owner.testnet", NEAR / 100).set_plan(p.clone());
+    let plan = e.plan();
+    assert_eq!(plan.policy.heirs[0].near_destination, Some(acc("amara.testnet")), "destination unchanged during the notice");
+    assert_eq!(plan.policy.check_in_interval_ms, 60 * DAY, "timers apply at once");
+    assert_eq!(pending_kinds(&mut e), vec![changes::ChangeKind::Plan]);
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None)), "E_CHANGE_NOT_DUE");
+    e.advance(7 * DAY);
+    let checked_in = e.plan().last_check_in_ms;
+    assert_eq!(e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None), vec![changes::ChangeKind::Plan]);
+    let plan = e.plan();
+    assert_eq!(plan.policy.heirs[0].near_destination, Some(acc("attacker.testnet")));
+    assert_eq!(plan.last_check_in_ms, checked_in, "applying is not the owner checking in");
+    assert!(pending_kinds(&mut e).is_empty());
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None)), "E_NO_PENDING_CHANGE");
+}
+
+#[test]
+fn owner_cancels_a_pending_change_and_restating_the_current_value_drops_it() {
+    let mut e = noticed(7 * DAY);
+    let mut p = plan_input();
+    p.quorum = 3;
+    e.as_("owner.testnet", NEAR / 100).set_plan(p);
+    e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { remainder_to: Some(acc("amara.testnet")), ..Default::default() }));
+    assert_eq!(pending_kinds(&mut e), vec![changes::ChangeKind::Plan, changes::ChangeKind::Rules]);
+    assert_eq!(panic_code(|| e.as_("g1.testnet", 0).cancel_change(None)), "E_NO_PENDING_CHANGE");
+    e.as_("owner.testnet", 0).cancel_change(Some(changes::ChangeKind::Plan));
+    assert_eq!(pending_kinds(&mut e), vec![changes::ChangeKind::Rules]);
+    e.as_("owner.testnet", 0).set_release_rules(None);
+    assert!(pending_kinds(&mut e).is_empty());
+    e.advance(8 * DAY);
+    assert_eq!(e.plan().policy.quorum, 2);
+    assert!(e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).is_none());
+}
+
+#[test]
+fn lowering_the_notice_waits_raising_it_does_not() {
+    let mut e = noticed(7 * DAY);
+    e.as_("owner.testnet", NEAR / 100).set_edit_notice(14 * DAY);
+    assert_eq!(e.as_("x.testnet", 0).get_edit_notice(acc("owner.testnet")), 14 * DAY);
+    e.as_("owner.testnet", NEAR / 100).set_edit_notice(0);
+    assert_eq!(e.as_("x.testnet", 0).get_edit_notice(acc("owner.testnet")), 14 * DAY);
+    e.advance(14 * DAY);
+    e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), Some(changes::ChangeKind::Notice));
+    assert_eq!(e.as_("x.testnet", 0).get_edit_notice(acc("owner.testnet")), 0);
+    assert_eq!(panic_code(|| e.as_("owner.testnet", 0).set_edit_notice(60_000)), "E_DURATION_OUT_OF_BOUNDS");
+}
+
+#[test]
+fn a_due_change_waits_while_a_release_is_open() {
+    let mut e = noticed(7 * DAY);
+    e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+    let mut p = plan_input();
+    p.heirs[1].near_destination = Some(acc("other.testnet"));
+    e.as_("owner.testnet", NEAR / 100).set_plan(p);
+    e.advance(97 * DAY);
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None)), "E_PROPOSAL_OPEN");
+    // The release snapshot is the plan as it was: the pending destination doesn't sneak in.
+    assert!(e.plan().proposal.unwrap().transfers.iter().all(|t| t.destination != "other.testnet"));
+    let _ = id;
+    e.as_("owner.testnet", 0).cancel_release();
+    e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None);
+    assert_eq!(e.plan().policy.heirs[1].near_destination, Some(acc("other.testnet")));
+}
+
+#[test]
+fn delegates_and_withdrawals_stay_immediate_under_a_notice() {
+    let mut e = noticed(7 * DAY);
+    e.as_("owner.testnet", 5 * NEAR).deposit(acc("owner.testnet"));
+    e.as_("owner.testnet", NEAR / 100).set_checkin_delegates(vec![acc("d.testnet")]);
+    assert_eq!(e.as_("x.testnet", 0).get_checkin_delegates(acc("owner.testnet")), vec![acc("d.testnet")]);
+    e.as_("owner.testnet", 0).withdraw(U128(NEAR));
+    assert!(pending_kinds(&mut e).is_empty());
+}
+
+// ------------------------------------------------- D29 guardian recovery
+
+fn gsettings(standbys: &[&str], availability_ms: u64) -> guardians::GuardianSettings {
+    guardians::GuardianSettings { standbys: standbys.iter().map(|s| acc(s)).collect(), availability_ms, swap_delay_ms: 3 * DAY }
+}
+
+fn guarded(standbys: &[&str], availability_ms: u64) -> Env {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(standbys, availability_ms)));
+    e
+}
+
+fn gstatus(e: &mut Env) -> guardians::GuardianStatus {
+    e.as_("x.testnet", 0).get_guardian_status(acc("owner.testnet"))
+}
+
+#[test]
+fn standbys_must_be_outsiders() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    for bad in [&["g1.testnet"][..], &["amara.testnet"], &["owner.testnet"], &["s.testnet", "s.testnet"], &["a.testnet", "b.testnet", "c.testnet", "d.testnet", "e.testnet", "f.testnet"]] {
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(bad, 0)))), "E_INVALID_GUARDIAN_SETTINGS");
+    }
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s.testnet"], DAY)))), "E_DURATION_OUT_OF_BOUNDS");
+    e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s.testnet"], 60 * DAY)));
+    // A standby can't then be made a heir or an alternate.
+    let mut p = plan_input();
+    p.heirs[1].account_id = acc("s.testnet");
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_plan(p)), "E_INVALID_GUARDIAN_SETTINGS");
+    let r = ReleaseRules { fallback: Some(outsider("s.testnet", Some("s.testnet"), None)), claim_window_ms: WINDOW, ..Default::default() };
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(r))), "E_INVALID_GUARDIAN_SETTINGS");
+}
+
+#[test]
+fn resigning_brings_in_the_next_standby_at_once_and_quorum_is_unchanged() {
+    let mut e = guarded(&["s1.testnet", "s2.testnet"], 0);
+    e.as_("g2.testnet", 0).resign_guardian(acc("owner.testnet"));
+    let plan = e.plan();
+    assert_eq!(plan.policy.guardians, vec![acc("g1.testnet"), acc("s1.testnet"), acc("g3.testnet")]);
+    assert_eq!(plan.policy.quorum, 2);
+    assert_eq!(e.as_("x.testnet", 0).get_guardian_settings(acc("owner.testnet")).unwrap().standbys, vec![acc("s2.testnet")]);
+    assert_eq!(panic_code(|| e.as_("g2.testnet", 0).confirm_guardian(acc("owner.testnet"))), "E_NOT_GUARDIAN");
+}
+
+#[test]
+fn without_a_standby_a_resigned_seat_stays_and_the_plan_reports_quorum_lost() {
+    let mut e = funded_overdue();
+    e.as_("g2.testnet", 0).resign_guardian(acc("owner.testnet"));
+    e.as_("g3.testnet", 0).resign_guardian(acc("owner.testnet"));
+    let s = gstatus(&mut e);
+    assert_eq!((s.available, s.quorum, s.quorum_reachable), (1, 2, false));
+    assert_eq!(e.plan().policy.guardians.len(), 3, "never shrinks the set or the quorum");
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
+    assert_eq!(panic_code(|| e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id)), "E_GUARDIAN_RESIGNED");
+    assert_eq!(e.status(), PlanStatus::Proposed);
+    // The owner (still able to act) names a standby; the resigned seat is filled at once.
+    e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet"], 0)));
+    assert_eq!(e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g2.testnet")), acc("s1.testnet"));
+    e.as_("s1.testnet", 0).approve_release(acc("owner.testnet"), id);
+    assert_eq!(e.status(), PlanStatus::Waiting);
+}
+
+#[test]
+fn an_unresponsive_guardian_is_replaced_after_the_swap_notice_unless_it_confirms() {
+    let mut e = guarded(&["s1.testnet"], 60 * DAY);
+    assert_eq!(panic_code(|| e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g3.testnet"))), "E_GUARDIAN_AVAILABLE");
+    e.advance(30 * DAY);
+    e.as_("g1.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    e.as_("g2.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    e.as_("s1.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    e.advance(31 * DAY);
+    let s = gstatus(&mut e);
+    assert!(s.guardians[2].replaceable && !s.guardians[2].available && s.quorum_reachable);
+    e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g3.testnet"));
+    // g3 shows up: the swap is off.
+    e.as_("g3.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    assert!(gstatus(&mut e).pending.is_empty());
+    e.advance(61 * DAY);
+    e.as_("s1.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g3.testnet"));
+    assert_eq!(panic_code(|| e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g3.testnet"))), "E_GUARDIAN_CHANGE_PENDING");
+    assert_eq!(panic_code(|| e.as_("anyone.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g3.testnet"))), "E_CHANGE_NOT_DUE");
+    e.advance(3 * DAY);
+    e.as_("anyone.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g3.testnet"));
+    assert_eq!(e.plan().policy.guardians[2], acc("s1.testnet"));
+}
+
+#[test]
+fn owner_can_cancel_a_standby_swap() {
+    let mut e = guarded(&["s1.testnet"], 30 * DAY);
+    e.advance(31 * DAY);
+    // A standby that hasn't confirmed within the window isn't called on either.
+    assert_eq!(panic_code(|| e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g1.testnet"))), "E_NO_STANDBY");
+    e.as_("s1.testnet", 0).confirm_guardian(acc("owner.testnet"));
+    e.as_("anyone.testnet", 0).request_standby(acc("owner.testnet"), acc("g1.testnet"));
+    assert_eq!(panic_code(|| e.as_("g2.testnet", 0).cancel_guardian_change(acc("owner.testnet"), acc("g1.testnet"))), "E_UNAUTHORIZED");
+    e.as_("owner.testnet", 0).cancel_guardian_change(acc("owner.testnet"), acc("g1.testnet"));
+    e.advance(3 * DAY);
+    assert_eq!(panic_code(|| e.as_("anyone.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g1.testnet"))), "E_NO_GUARDIAN_CHANGE");
+}
+
+#[test]
+fn guardian_rotates_its_seat_to_a_new_account_after_the_notice() {
+    let mut e = Env::new();
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    assert_eq!(panic_code(|| e.as_("g1.testnet", 0).rotate_guardian(acc("owner.testnet"), acc("amara.testnet"))), "E_CONFLICTING_ROLE");
+    assert_eq!(panic_code(|| e.as_("g1.testnet", 0).rotate_guardian(acc("owner.testnet"), acc("g2.testnet"))), "E_INVALID_GUARDIANS");
+    e.as_("g1.testnet", 0).rotate_guardian(acc("owner.testnet"), acc("g1-new.testnet"));
+    e.as_("owner.testnet", 0).cancel_guardian_change(acc("owner.testnet"), acc("g1.testnet"));
+    e.as_("g1.testnet", 0).rotate_guardian(acc("owner.testnet"), acc("g1-new.testnet"));
+    // No settings: the notice is the plan's waiting period (30 days).
+    e.advance(29 * DAY);
+    assert_eq!(panic_code(|| e.as_("x.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g1.testnet"))), "E_CHANGE_NOT_DUE");
+    e.advance(DAY);
+    e.as_("x.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g1.testnet"));
+    assert_eq!(e.plan().policy.guardians[0], acc("g1-new.testnet"));
+    assert_eq!(panic_code(|| e.as_("g1.testnet", 0).confirm_guardian(acc("owner.testnet"))), "E_NOT_GUARDIAN");
+}
+
+#[test]
+fn a_seat_swap_mid_proposal_withdraws_the_outgoing_votes() {
+    let mut e = funded_overdue();
+    let id = e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), Some(U128(NEAR)), None, None);
+    e.as_("g1.testnet", 0).rotate_guardian(acc("owner.testnet"), acc("g1-new.testnet"));
+    e.advance(30 * DAY);
+    e.as_("x.testnet", 0).finalize_guardian_change(acc("owner.testnet"), acc("g1.testnet"));
+    assert!(e.plan().proposal.unwrap().approvals.is_empty());
+    e.as_("g1-new.testnet", 0).approve_release(acc("owner.testnet"), id);
+    assert_eq!(e.status(), PlanStatus::Proposed);
+    e.as_("g2.testnet", 0).approve_release(acc("owner.testnet"), id);
+    assert_eq!(e.status(), PlanStatus::Waiting);
+}
+
+#[test]
+fn guardian_settings_wait_out_the_edit_notice() {
+    let mut e = noticed(7 * DAY);
+    e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet"], 0)));
+    assert!(e.as_("x.testnet", 0).get_guardian_settings(acc("owner.testnet")).is_none());
+    e.advance(7 * DAY);
+    e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None);
+    assert_eq!(e.as_("x.testnet", 0).get_guardian_settings(acc("owner.testnet")).unwrap().standbys, vec![acc("s1.testnet")]);
+}
+
+#[test]
+fn standbys_count_toward_the_tier_guardian_limit() {
+    let mut e = Env::new().with_tiers();
+    e.pay("owner.testnet", "owner.testnet", 49 * DOLLAR);
+    e.as_("owner.testnet", NEAR).set_plan(plan_input());
+    // Standard: at most 5 guardians, standbys included.
+    assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet", "s2.testnet", "s3.testnet"], 0)))), "E_TIER_REQUIRED");
+    e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet", "s2.testnet"], 0)));
+}

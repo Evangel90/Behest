@@ -5,6 +5,8 @@
 
 mod errors;
 pub mod btc;
+pub mod changes;
+pub mod guardians;
 pub mod eth;
 pub mod ethproof;
 pub mod evm;
@@ -261,62 +263,36 @@ impl Contract {
     // ---------------------------------------------------------------- owner
 
     /// P1 create / P2 replace. Attach enough NEAR to cover storage growth;
-    /// the excess is refunded. Replacing counts as a check-in.
+    /// the excess is refunded. Replacing counts as a check-in. D28: with an
+    /// edit notice, a change to heirs, guardians or quorum waits out the
+    /// notice (`get_pending_changes`); timer changes still apply at once.
     #[payable]
     pub fn set_plan(&mut self, plan: PlanInput) {
         let owner = caller();
-        let policy = policy::validate(&owner, plan);
-        let before = self.read_plan(&owner).map(|p| tier_features(&owner, &p.policy));
-        tiers::check(&owner, before.as_ref(), &tier_features(&owner, &policy));
-        // Existing release rules and options must still fit the new heirs and guardians.
-        if let Some(r) = read_rules(&owner) {
-            policy::validate_rules(&owner, &policy, r, |a| btc_dest(&owner, a).is_some());
-        }
-        if let Some(o) = read_options(&owner) {
-            policy::validate_options(&owner, &policy, o);
-        }
         self.migrate_plan(&owner);
         if self.plans.contains_key(&owner) {
             self.archive_settled(&owner);
         }
         let storage_before = env::storage_usage();
         let new_plan = !self.plans.contains_key(&owner);
-        // A new plan version restates the owner's wishes: fixed amounts count afresh.
-        env::storage_remove(&fixed_paid_key(&owner));
-
-        let version = match self.plans.get_mut(&owner) {
-            Some(existing) => {
-                if existing.proposal.is_some() {
-                    fail(Error::ProposalOpen);
-                }
-                existing.policy = policy;
-                existing.version += 1;
-                existing.last_check_in_ms = now();
-                existing.version
+        let policy = self.check_plan(&owner, plan);
+        let notice = changes::notice(&owner);
+        match self.read_plan(&owner) {
+            Some(cur) if notice > 0 && changes::plan_high_impact(&cur.policy, &policy) => {
+                // Timers now; heirs, guardians and quorum after the notice.
+                let mut now_policy = cur.policy.clone();
+                changes::copy_timers(&mut now_policy, &policy);
+                self.queue_change(&owner, changes::Change::Plan(policy), notice);
+                self.write_plan(&owner, now_policy, true);
             }
-            None => {
-                if self.paused {
-                    fail(Error::Paused);
-                }
-                self.plans.insert(
-                    owner.clone(),
-                    Plan {
-                        owner: owner.clone(),
-                        version: 1,
-                        policy,
-                        last_check_in_ms: now(),
-                        escrow: U128(0),
-                        eth_next_nonce: 0,
-                        proposal: None,
-                        proposals_opened: 0,
-                    },
-                );
-                1
+            Some(_) if notice > 0 => {
+                // The owner restated the current heirs and guardians: that wins over a queued edit.
+                changes::drop_pending(&owner, changes::ChangeKind::Plan);
+                self.write_plan(&owner, policy, true);
             }
-        };
-        self.plans.flush();
+            _ => self.write_plan(&owner, policy, true),
+        }
         self.charge_storage(storage_before, &owner, new_plan);
-        emit("plan_set", near_sdk::serde_json::json!({"owner": owner, "version": version}));
     }
 
     /// P3. During `Proposed`/`Waiting` this also cancels the proposal (P7).
@@ -386,54 +362,17 @@ impl Contract {
 
     /// D17. The owner sets (or with `None` clears) the plan's release rules.
     /// Frozen while a release is open, so guardians approve what is applied.
+    /// D28: waits out the owner's edit notice, if one is set.
     #[payable]
     pub fn set_release_rules(&mut self, rules: Option<ReleaseRules>) {
-        let owner = caller();
-        let plan = self.plan_ref(&owner);
-        if release_open(&plan) {
-            fail(Error::ProposalOpen);
-        }
-        let after = tiers::features(&plan.policy, rules.as_ref(), read_options(&owner).as_ref(), btc_dests(&owner).len(), token_escrow_any(&owner));
-        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
-        let storage_before = env::storage_usage();
-        env::storage_remove(&fixed_paid_key(&owner));
-        match rules {
-            Some(r) => {
-                let r = policy::validate_rules(&owner, &plan.policy, r, |a| btc_dest(&owner, a).is_some());
-                env::storage_write(&rules_key(&owner), &near_sdk::borsh::to_vec(&r).expect("borsh"));
-                emit("release_rules_set", near_sdk::serde_json::json!({"owner": owner, "rules": r}));
-            }
-            None => {
-                env::storage_remove(&rules_key(&owner));
-                emit("release_rules_cleared", near_sdk::serde_json::json!({"owner": owner}));
-            }
-        }
-        self.charge_storage(storage_before, &owner, false);
+        self.owner_edit(changes::Change::Rules(rules));
     }
 
     /// D18/D19. The owner sets (or clears) release mode and delay signers.
+    /// D28: waits out the owner's edit notice, if one is set.
     #[payable]
     pub fn set_release_options(&mut self, options: Option<ReleaseOptions>) {
-        let owner = caller();
-        let plan = self.plan_ref(&owner);
-        if release_open(&plan) {
-            fail(Error::ProposalOpen);
-        }
-        let after = tiers::features(&plan.policy, read_rules(&owner).as_ref(), options.as_ref(), btc_dests(&owner).len(), token_escrow_any(&owner));
-        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
-        let storage_before = env::storage_usage();
-        match options {
-            Some(o) => {
-                let o = policy::validate_options(&owner, &plan.policy, o);
-                env::storage_write(&options_key(&owner), &near_sdk::borsh::to_vec(&o).expect("borsh"));
-                emit("release_options_set", near_sdk::serde_json::json!({"owner": owner, "options": o}));
-            }
-            None => {
-                env::storage_remove(&options_key(&owner));
-                emit("release_options_cleared", near_sdk::serde_json::json!({"owner": owner}));
-            }
-        }
-        self.charge_storage(storage_before, &owner, false);
+        self.owner_edit(changes::Change::Options(options));
     }
 
     /// D26. The owner names up to 10 accounts that may call `check_in` for
@@ -470,39 +409,10 @@ impl Contract {
     /// D27. Which recipients (heirs, named alternates, the fallback) are paid
     /// into their NEAR Intents account instead of their wallet. A Standard
     /// tier feature; frozen while a release is open; empty clears it.
+    /// D28: waits out the owner's edit notice, if one is set.
     #[payable]
     pub fn set_intents_delivery(&mut self, deliveries: Vec<intents::IntentsDelivery>) {
-        let owner = caller();
-        let plan = self.plan_ref(&owner);
-        if release_open(&plan) {
-            fail(Error::ProposalOpen);
-        }
-        let rules = read_rules(&owner);
-        let mut recipients: Vec<AccountId> = plan.policy.heirs.iter().map(|h| h.account_id.clone()).collect();
-        if let Some(r) = &rules {
-            recipients.extend(r.alternates.iter().map(|a| a.recipient.account_id.clone()));
-            recipients.extend(r.fallback.iter().map(|f| f.account_id.clone()));
-        }
-        let unique: std::collections::HashSet<&AccountId> = deliveries.iter().map(|d| &d.account_id).collect();
-        if unique.len() != deliveries.len() || deliveries.iter().any(|d| !recipients.contains(&d.account_id)) {
-            fail(Error::InvalidIntents);
-        }
-        let on = deliveries.iter().any(|d| d.enabled);
-        if on && intents::config().is_none() {
-            fail(Error::IntentsOff);
-        }
-        let mut after = tier_features(&owner, &plan.policy);
-        after.intents_delivery = on;
-        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
-        let storage_before = env::storage_usage();
-        let kept: Vec<intents::IntentsDelivery> = deliveries.into_iter().filter(|d| d.enabled).collect();
-        if kept.is_empty() {
-            env::storage_remove(&intents::delivery_key(&owner));
-        } else {
-            env::storage_write(&intents::delivery_key(&owner), &near_sdk::borsh::to_vec(&kept).expect("borsh"));
-        }
-        emit("intents_delivery_set", near_sdk::serde_json::json!({"owner": owner, "deliveries": kept}));
-        self.charge_storage(storage_before, &owner, false);
+        self.owner_edit(changes::Change::Intents(deliveries));
     }
 
     pub fn get_intents_delivery(&self, owner: AccountId) -> Vec<intents::IntentsDelivery> {
@@ -796,36 +706,10 @@ impl Contract {
 
     /// The owner sets Bitcoin destinations for heirs and for named alternates
     /// or the fallback (testnet SegWit addresses). Frozen while a release is open.
+    /// D28: waits out the owner's edit notice, if one is set.
     #[payable]
     pub fn set_btc_destinations(&mut self, destinations: Vec<BtcDestination>) {
-        let owner = caller();
-        let plan = self.plan_ref(&owner);
-        if release_open(&plan) {
-            fail(Error::ProposalOpen);
-        }
-        let rules = read_rules(&owner).unwrap_or_default();
-        let known = |a: &AccountId| {
-            plan.policy.heirs.iter().any(|h| &h.account_id == a)
-                || rules.alternates.iter().any(|x| &x.recipient.account_id == a)
-                || rules.fallback.as_ref().is_some_and(|f| &f.account_id == a)
-        };
-        if destinations.len() > policy::MAX_HEIRS * 2 + 1 {
-            fail(Error::InvalidHeirs);
-        }
-        for (i, d) in destinations.iter().enumerate() {
-            if btc::address_script(&d.address).is_none() {
-                fail(Error::InvalidBtcAddress);
-            }
-            if !known(&d.account_id) || destinations[..i].iter().any(|x| x.account_id == d.account_id) {
-                fail(Error::InvalidHeirs);
-            }
-        }
-        let after = tiers::features(&plan.policy, read_rules(&owner).as_ref(), read_options(&owner).as_ref(), destinations.len(), token_escrow_any(&owner));
-        tiers::check(&owner, Some(&tier_features(&owner, &plan.policy)), &after);
-        let before = env::storage_usage();
-        env::storage_write(&btc_dests_key(&owner), &near_sdk::borsh::to_vec(&destinations).expect("borsh"));
-        emit("btc_destinations_set", near_sdk::serde_json::json!({"owner": owner, "destinations": destinations}));
-        self.charge_storage(before, &owner, false);
+        self.owner_edit(changes::Change::Btc(destinations));
     }
 
     pub fn get_btc_destinations(&self, owner: AccountId) -> Vec<BtcDestination> {
@@ -2018,6 +1902,18 @@ pub const EVM_METHODS: &[&str] = &[
     "withdraw_vault",
     "withdraw_btc",
     "cancel_vault_withdrawal",
+    // D28
+    "set_edit_notice",
+    "cancel_change",
+    "apply_changes",
+    // D29
+    "set_guardian_settings",
+    "confirm_guardian",
+    "request_standby",
+    "rotate_guardian",
+    "resign_guardian",
+    "finalize_guardian_change",
+    "cancel_guardian_change",
 ];
 
 impl Contract {
@@ -2125,6 +2021,46 @@ impl Contract {
                     PromiseOrValue::Promise(p) => PromiseOrValue::Promise(p),
                     PromiseOrValue::Value(()) => PromiseOrValue::Value(Value::Null),
                 }
+            }
+            "set_edit_notice" => {
+                let notice_ms = evm_args!(args, { notice_ms: u64 });
+                unit(self.set_edit_notice(notice_ms))
+            }
+            "cancel_change" => {
+                let kind = evm_args!(args, { kind: Option<changes::ChangeKind> });
+                unit(self.cancel_change(kind))
+            }
+            "apply_changes" => {
+                let (owner, kind) = evm_args!(args, { owner: AccountId, kind: Option<changes::ChangeKind> });
+                PromiseOrValue::Value(json!(self.apply_changes(owner, kind)))
+            }
+            "set_guardian_settings" => {
+                let settings = evm_args!(args, { settings: Option<guardians::GuardianSettings> });
+                unit(self.set_guardian_settings(settings))
+            }
+            "confirm_guardian" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                unit(self.confirm_guardian(owner))
+            }
+            "request_standby" => {
+                let (owner, guardian) = evm_args!(args, { owner: AccountId, guardian: AccountId });
+                PromiseOrValue::Value(json!(self.request_standby(owner, guardian)))
+            }
+            "rotate_guardian" => {
+                let (owner, new_account) = evm_args!(args, { owner: AccountId, new_account: AccountId });
+                unit(self.rotate_guardian(owner, new_account))
+            }
+            "resign_guardian" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                unit(self.resign_guardian(owner))
+            }
+            "finalize_guardian_change" => {
+                let (owner, guardian) = evm_args!(args, { owner: AccountId, guardian: AccountId });
+                unit(self.finalize_guardian_change(owner, guardian))
+            }
+            "cancel_guardian_change" => {
+                let (owner, guardian) = evm_args!(args, { owner: AccountId, guardian: AccountId });
+                unit(self.cancel_guardian_change(owner, guardian))
             }
             _ => fail(Error::EvmMethod),
         }
@@ -2412,6 +2348,8 @@ fn tier_features(owner: &AccountId, policy: &PlanInput) -> tiers::Features {
     let mut f = tiers::features(policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), btc_dests(owner).len(), token_escrow_any(owner));
     f.checkin_delegates = env::storage_has_key(&delegates_key(owner));
     f.intents_delivery = intents::deliveries(owner).iter().any(|d| d.enabled);
+    // D29: standbys count toward the guardian limit.
+    f.guardians += guardians::standby_count(owner) as u8;
     f
 }
 
@@ -2551,6 +2489,193 @@ fn new_transfer(heir: &AccountId, asset: Asset, destination: String, amount: u12
         attempts: 0,
         tx_hash: None,
         failure: None,
+    }
+}
+
+impl Contract {
+    // ------------------------------------------- owner edits (D28: check, then write)
+
+    /// Validates a plan for `owner` (new or replacing): schema, tier, and that
+    /// existing rules, options and guardian settings still fit.
+    pub(crate) fn check_plan(&self, owner: &AccountId, plan: PlanInput) -> PlanInput {
+        let policy = policy::validate(owner, plan);
+        let cur = self.read_plan(owner);
+        let before = cur.as_ref().map(|p| tier_features(owner, &p.policy));
+        tiers::check(owner, before.as_ref(), &tier_features(owner, &policy));
+        let rules = read_rules(owner);
+        if let Some(r) = rules.clone() {
+            policy::validate_rules(owner, &policy, r, |a| btc_dest(owner, a).is_some());
+        }
+        if let Some(o) = read_options(owner) {
+            policy::validate_options(owner, &policy, o);
+        }
+        if let Some(g) = guardians::read_settings(owner) {
+            guardians::validate_settings(owner, &policy, rules.as_ref(), g);
+        }
+        match cur {
+            Some(p) if p.proposal.is_some() => fail(Error::ProposalOpen),
+            None if self.paused => fail(Error::Paused),
+            _ => policy,
+        }
+    }
+
+    pub(crate) fn write_plan(&mut self, owner: &AccountId, policy: PlanInput, check_in: bool) {
+        // A new plan version restates the owner's wishes: fixed amounts count afresh.
+        env::storage_remove(&fixed_paid_key(owner));
+        let guardian_list = policy.guardians.clone();
+        let version = match self.plans.get_mut(owner) {
+            Some(existing) => {
+                existing.policy = policy;
+                existing.version += 1;
+                if check_in {
+                    existing.last_check_in_ms = now();
+                }
+                existing.version
+            }
+            None => {
+                self.plans.insert(
+                    owner.clone(),
+                    Plan {
+                        owner: owner.clone(),
+                        version: 1,
+                        policy,
+                        last_check_in_ms: now(),
+                        escrow: U128(0),
+                        eth_next_nonce: 0,
+                        proposal: None,
+                        proposals_opened: 0,
+                    },
+                );
+                1
+            }
+        };
+        self.plans.flush();
+        guardians::sync(owner, &guardian_list);
+        emit("plan_set", near_sdk::serde_json::json!({"owner": owner, "version": version}));
+    }
+
+    pub(crate) fn check_rules(&self, owner: &AccountId, rules: Option<ReleaseRules>) -> Option<ReleaseRules> {
+        let plan = self.plan_ref(owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let mut after = tier_features(owner, &plan.policy);
+        after.release_rules = rules.is_some();
+        tiers::check(owner, Some(&tier_features(owner, &plan.policy)), &after);
+        let r = rules.map(|r| policy::validate_rules(owner, &plan.policy, r, |a| btc_dest(owner, a).is_some()));
+        // Alternates and the fallback are outsiders; a standby may become a guardian.
+        if let (Some(r), Some(g)) = (&r, guardians::read_settings(owner)) {
+            guardians::validate_settings(owner, &plan.policy, Some(r), g);
+        }
+        r
+    }
+
+    pub(crate) fn write_rules(&mut self, owner: &AccountId, rules: Option<ReleaseRules>) {
+        env::storage_remove(&fixed_paid_key(owner));
+        match rules {
+            Some(r) => {
+                env::storage_write(&rules_key(owner), &near_sdk::borsh::to_vec(&r).expect("borsh"));
+                emit("release_rules_set", near_sdk::serde_json::json!({"owner": owner, "rules": r}));
+            }
+            None => {
+                env::storage_remove(&rules_key(owner));
+                emit("release_rules_cleared", near_sdk::serde_json::json!({"owner": owner}));
+            }
+        }
+    }
+
+    pub(crate) fn check_options(&self, owner: &AccountId, options: Option<ReleaseOptions>) -> Option<ReleaseOptions> {
+        let plan = self.plan_ref(owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let after = tiers::features(&plan.policy, read_rules(owner).as_ref(), options.as_ref(), btc_dests(owner).len(), token_escrow_any(owner));
+        let mut full = tier_features(owner, &plan.policy);
+        full.advanced_release = after.advanced_release;
+        tiers::check(owner, Some(&tier_features(owner, &plan.policy)), &full);
+        options.map(|o| policy::validate_options(owner, &plan.policy, o))
+    }
+
+    pub(crate) fn write_options(&mut self, owner: &AccountId, options: Option<ReleaseOptions>) {
+        match options {
+            Some(o) => {
+                env::storage_write(&options_key(owner), &near_sdk::borsh::to_vec(&o).expect("borsh"));
+                emit("release_options_set", near_sdk::serde_json::json!({"owner": owner, "options": o}));
+            }
+            None => {
+                env::storage_remove(&options_key(owner));
+                emit("release_options_cleared", near_sdk::serde_json::json!({"owner": owner}));
+            }
+        }
+    }
+
+    pub(crate) fn check_btc_destinations(&self, owner: &AccountId, destinations: Vec<BtcDestination>) -> Vec<BtcDestination> {
+        let plan = self.plan_ref(owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let rules = read_rules(owner).unwrap_or_default();
+        let known = |a: &AccountId| {
+            plan.policy.heirs.iter().any(|h| &h.account_id == a)
+                || rules.alternates.iter().any(|x| &x.recipient.account_id == a)
+                || rules.fallback.as_ref().is_some_and(|f| &f.account_id == a)
+        };
+        if destinations.len() > policy::MAX_HEIRS * 2 + 1 {
+            fail(Error::InvalidHeirs);
+        }
+        for (i, d) in destinations.iter().enumerate() {
+            if btc::address_script(&d.address).is_none() {
+                fail(Error::InvalidBtcAddress);
+            }
+            if !known(&d.account_id) || destinations[..i].iter().any(|x| x.account_id == d.account_id) {
+                fail(Error::InvalidHeirs);
+            }
+        }
+        let after = tiers::features(&plan.policy, read_rules(owner).as_ref(), read_options(owner).as_ref(), destinations.len(), token_escrow_any(owner));
+        let mut full = tier_features(owner, &plan.policy);
+        full.external_assets = after.external_assets;
+        tiers::check(owner, Some(&tier_features(owner, &plan.policy)), &full);
+        destinations
+    }
+
+    pub(crate) fn write_btc_destinations(&mut self, owner: &AccountId, destinations: Vec<BtcDestination>) {
+        env::storage_write(&btc_dests_key(owner), &near_sdk::borsh::to_vec(&destinations).expect("borsh"));
+        emit("btc_destinations_set", near_sdk::serde_json::json!({"owner": owner, "destinations": destinations}));
+    }
+
+    /// Returns the enabled deliveries (what is stored).
+    pub(crate) fn check_intents_delivery(&self, owner: &AccountId, deliveries: Vec<intents::IntentsDelivery>) -> Vec<intents::IntentsDelivery> {
+        let plan = self.plan_ref(owner);
+        if release_open(&plan) {
+            fail(Error::ProposalOpen);
+        }
+        let rules = read_rules(owner);
+        let mut recipients: Vec<AccountId> = plan.policy.heirs.iter().map(|h| h.account_id.clone()).collect();
+        if let Some(r) = &rules {
+            recipients.extend(r.alternates.iter().map(|a| a.recipient.account_id.clone()));
+            recipients.extend(r.fallback.iter().map(|f| f.account_id.clone()));
+        }
+        let unique: std::collections::HashSet<&AccountId> = deliveries.iter().map(|d| &d.account_id).collect();
+        if unique.len() != deliveries.len() || deliveries.iter().any(|d| !recipients.contains(&d.account_id)) {
+            fail(Error::InvalidIntents);
+        }
+        let on = deliveries.iter().any(|d| d.enabled);
+        if on && intents::config().is_none() {
+            fail(Error::IntentsOff);
+        }
+        let mut after = tier_features(owner, &plan.policy);
+        after.intents_delivery = on;
+        tiers::check(owner, Some(&tier_features(owner, &plan.policy)), &after);
+        deliveries.into_iter().filter(|d| d.enabled).collect()
+    }
+
+    pub(crate) fn write_intents_delivery(&mut self, owner: &AccountId, kept: Vec<intents::IntentsDelivery>) {
+        if kept.is_empty() {
+            env::storage_remove(&intents::delivery_key(owner));
+        } else {
+            env::storage_write(&intents::delivery_key(owner), &near_sdk::borsh::to_vec(&kept).expect("borsh"));
+        }
+        emit("intents_delivery_set", near_sdk::serde_json::json!({"owner": owner, "deliveries": kept}));
     }
 }
 
@@ -3127,6 +3252,13 @@ impl Contract {
     fn vote(&mut self, owner: AccountId, proposal_id: u64, approve: bool) {
         let g = caller();
         let t = now();
+        // D29: a resigned seat can't vote; a vote counts as a confirmation.
+        if guardians::is_resigned(&owner, &g) {
+            fail(Error::GuardianResigned);
+        }
+        if self.plan_ref(&owner).policy.guardians.contains(&g) {
+            guardians::touch(&owner, &g);
+        }
         let plan = self.plan_mut(&owner);
         if !plan.policy.guardians.contains(&g) {
             fail(Error::NotGuardian);
