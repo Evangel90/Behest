@@ -27,7 +27,8 @@
     "e2e-dao": "tsx --env-file=../../.env src/dao-scenario.ts",
     "e2e-intents": "tsx --env-file=../../.env src/intents-scenario.ts",
     "e2e-recovery": "tsx --env-file=../../.env src/recovery-scenario.ts",
-    "e2e-destinations": "tsx --env-file=../../.env src/destinations-scenario.ts"
+    "e2e-destinations": "tsx --env-file=../../.env src/destinations-scenario.ts",
+    "e2e-private": "tsx --env-file=../../.env src/private-scenario.ts"
   },
   "dependencies": {
     "@behest/executor": "workspace:*",
