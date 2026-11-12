@@ -7,6 +7,7 @@ mod errors;
 pub mod btc;
 pub mod changes;
 pub mod destinations;
+pub mod privacy;
 pub mod guardians;
 pub mod eth;
 pub mod ethproof;
@@ -273,6 +274,7 @@ impl Contract {
         self.migrate_plan(&owner);
         if self.plans.contains_key(&owner) {
             self.archive_settled(&owner);
+            self.reseal(&owner);
         }
         let storage_before = env::storage_usage();
         let new_plan = !self.plans.contains_key(&owner);
@@ -307,11 +309,11 @@ impl Contract {
                 fail(Error::NotDelegate);
             }
             self.archive_settled(&owner);
-            let plan = self.plan_mut(&owner);
-            if plan.proposal.is_some() {
+            if self.plan_ref(&owner).proposal.is_some() {
                 fail(Error::ProposalOpen);
             }
-            plan.last_check_in_ms = now();
+            self.reseal(&owner);
+            self.plan_mut(&owner).last_check_in_ms = now();
             emit("check_in", near_sdk::serde_json::json!({"owner": owner, "at_ms": now(), "by": me}));
             return;
         }
@@ -321,6 +323,7 @@ impl Contract {
         if had_proposal {
             self.cancel_inner(&owner);
         }
+        self.reseal(&owner);
         let plan = self.plan_mut(&owner);
         plan.last_check_in_ms = now();
         emit("check_in", near_sdk::serde_json::json!({"owner": owner, "at_ms": now()}));
@@ -330,6 +333,7 @@ impl Contract {
     pub fn cancel_release(&mut self) {
         let owner = caller();
         self.cancel_inner(&owner);
+        self.reseal(&owner);
         self.plan_mut(&owner).last_check_in_ms = now();
     }
 
@@ -926,6 +930,8 @@ impl Contract {
         if !is_guardian && !(follow_up && is_heir) {
             fail(Error::NotGuardian);
         }
+        // D33: a sealed plan's heirs come from the revealed records.
+        self.unseal(&owner, t);
         let paid = read_fixed_paid(&owner);
         let plan = self.plan_mut(&owner);
         if plan.proposal.is_some() {
@@ -1915,6 +1921,9 @@ pub const EVM_METHODS: &[&str] = &[
     "resign_guardian",
     "finalize_guardian_change",
     "cancel_guardian_change",
+    // D33
+    "set_private_plan",
+    "reveal_heir",
     // D30, D31
     "prove_destination",
     "request_destination_change",
@@ -2067,6 +2076,14 @@ impl Contract {
             "cancel_guardian_change" => {
                 let (owner, guardian) = evm_args!(args, { owner: AccountId, guardian: AccountId });
                 unit(self.cancel_guardian_change(owner, guardian))
+            }
+            "set_private_plan" => {
+                let (plan, sealed) = evm_args!(args, { plan: PlanInput, sealed: privacy::SealedHeirs });
+                unit(self.set_private_plan(plan, sealed))
+            }
+            "reveal_heir" => {
+                let (owner, record) = evm_args!(args, { owner: AccountId, record: privacy::HeirRecord });
+                PromiseOrValue::Value(json!(self.reveal_heir(owner, record)))
             }
             "prove_destination" => {
                 let (owner, account_id, chain, destination, signature) =
@@ -2373,6 +2390,11 @@ fn tier_features(owner: &AccountId, policy: &PlanInput) -> tiers::Features {
     f.intents_delivery = intents::deliveries(owner).iter().any(|d| d.enabled);
     // D29: standbys count toward the guardian limit.
     f.guardians += guardians::standby_count(owner) as u8;
+    // D33: a sealed plan counts its sealed heirs; their hidden destinations may be external.
+    if let Some(s) = privacy::sealed(owner) {
+        f.heirs = f.heirs.max(s.commitments.len() as u8);
+        f.external_assets = true;
+    }
     f
 }
 
@@ -2545,6 +2567,10 @@ impl Contract {
     pub(crate) fn write_plan(&mut self, owner: &AccountId, policy: PlanInput, check_in: bool) {
         // A new plan version restates the owner's wishes: fixed amounts count afresh.
         env::storage_remove(&fixed_paid_key(owner));
+        // D33: a plan with heirs in the clear is public.
+        if !policy.heirs.is_empty() {
+            privacy::clear(owner);
+        }
         let guardian_list = policy.guardians.clone();
         let version = match self.plans.get_mut(owner) {
             Some(existing) => {
@@ -2586,6 +2612,10 @@ impl Contract {
         after.release_rules = rules.is_some();
         tiers::check(owner, Some(&tier_features(owner, &plan.policy)), &after);
         let r = rules.map(|r| policy::validate_rules(owner, &plan.policy, r, |a| btc_dest(owner, a).is_some()));
+        // D33: a sealed plan whose unrevealed shares go to the fallback keeps one.
+        if privacy::sealed(owner).is_some_and(|s| s.unrevealed == privacy::Unrevealed::Fallback) && r.as_ref().is_none_or(|r| r.fallback.is_none()) {
+            fail(Error::InvalidSealedHeirs);
+        }
         // Alternates and the fallback are outsiders; a standby may become a guardian.
         if let (Some(r), Some(g)) = (&r, guardians::read_settings(owner)) {
             guardians::validate_settings(owner, &plan.policy, Some(r), g);

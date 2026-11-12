@@ -44,6 +44,8 @@ pub enum Change {
     Btc(Vec<BtcDestination>),
     Intents(Vec<IntentsDelivery>),
     Notice(u64),
+    /// D33: a sealed plan (shares the `Plan` slot: one pending plan change).
+    Private(crate::privacy::PrivatePlan),
 }
 
 /// Also the order `apply_changes` applies due changes in: the plan first,
@@ -70,6 +72,7 @@ impl Change {
             Change::Btc(_) => ChangeKind::Btc,
             Change::Intents(_) => ChangeKind::Intents,
             Change::Notice(_) => ChangeKind::Notice,
+            Change::Private(_) => ChangeKind::Plan,
         }
     }
 }
@@ -180,6 +183,7 @@ impl Contract {
     pub(crate) fn check_change(&self, owner: &AccountId, change: Change) -> Change {
         match change {
             Change::Plan(p) => Change::Plan(self.check_plan(owner, p)),
+            Change::Private(p) => Change::Private(self.check_private(owner, p)),
             Change::Guardians(g) => Change::Guardians(self.check_guardian_settings(owner, g)),
             Change::Rules(r) => Change::Rules(self.check_rules(owner, r)),
             Change::Options(o) => Change::Options(self.check_options(owner, o)),
@@ -198,6 +202,7 @@ impl Contract {
     pub(crate) fn write_change(&mut self, owner: &AccountId, change: Change) {
         match change {
             Change::Plan(p) => self.write_plan(owner, p, false),
+            Change::Private(p) => self.write_private(owner, p, false),
             Change::Guardians(g) => self.write_guardian_settings(owner, g),
             Change::Rules(r) => self.write_rules(owner, r),
             Change::Options(o) => self.write_options(owner, o),
@@ -212,7 +217,8 @@ impl Contract {
 
     fn is_current(&self, owner: &AccountId, change: &Change) -> bool {
         match change {
-            Change::Plan(p) => self.read_plan(owner).is_some_and(|c| !plan_high_impact(&c.policy, p)),
+            Change::Plan(p) => crate::privacy::sealed(owner).is_none() && self.read_plan(owner).is_some_and(|c| !plan_high_impact(&c.policy, p)),
+            Change::Private(p) => self.private_is_current(owner, p),
             Change::Guardians(g) => &crate::guardians::read_settings(owner) == g,
             Change::Rules(r) => &read_rules(owner) == r,
             Change::Options(o) => &read_options(owner) == o,
@@ -288,6 +294,10 @@ impl Contract {
                 Change::Plan(mut p) => {
                     changes_copy_current_timers(self, &owner, &mut p);
                     Change::Plan(p)
+                }
+                Change::Private(mut p) => {
+                    changes_copy_current_timers(self, &owner, &mut p.plan);
+                    Change::Private(p)
                 }
                 other => other,
             };

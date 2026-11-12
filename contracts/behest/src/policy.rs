@@ -70,6 +70,19 @@ pub fn validate(owner: &AccountId, mut p: PlanInput) -> PlanInput {
         fail(Error::InvalidShares);
     }
 
+    validate_common(owner, p, &heir_ids)
+}
+
+/// D33: a sealed (private) plan: no heirs in the clear, `commitments` of them
+/// sealed. Heir-level checks happen when each heir is revealed.
+pub fn validate_sealed(owner: &AccountId, p: PlanInput, commitments: usize) -> PlanInput {
+    if !p.heirs.is_empty() || commitments == 0 || commitments > MAX_HEIRS {
+        fail(Error::InvalidHeirs);
+    }
+    validate_common(owner, p, &HashSet::new())
+}
+
+fn validate_common(owner: &AccountId, p: PlanInput, heir_ids: &HashSet<AccountId>) -> PlanInput {
     let guardians: HashSet<_> = p.guardians.iter().collect();
     if p.guardians.is_empty() || p.guardians.len() > MAX_GUARDIANS || guardians.len() != p.guardians.len() {
         fail(Error::InvalidGuardians);

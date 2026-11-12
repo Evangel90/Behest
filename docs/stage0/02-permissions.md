@@ -15,6 +15,8 @@
 | Cancel a pending seat change (D29) | ✓ (any) | ✓ (own) | ✗ | ✗ | ✗ | ✗ |
 | Prove control of a destination (D30) | ✗ | ✗ | ✓ (from the NEAR destination, or anyone submitting a valid signature) | ✓ | ✓ | ✓ |
 | Request a destination change (D31) | ✗ | ✗ | ✓ (own; alternates and the fallback too; only while the owner is active) | ✗ | ✗ | ✗ |
+| Save a sealed plan (D33) | ✓ (an edit under D28) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Reveal a sealed heir (D33) | ✗ | ✓ (anyone holding the record, once overdue) | ✓ | ✓ | ✓ | ✓ |
 | Approve or reject a destination request (D31) | ✓ (an edit under D28) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Check in | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Cancel proposal (before `waiting_ends_at`) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |

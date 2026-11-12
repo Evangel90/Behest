@@ -82,6 +82,12 @@ pub enum Error {
     OwnerNotActive,
     DestinationProof,
     DestinationProofUnsupported,
+    InvalidSealedHeirs,
+    NotSealed,
+    UnknownCommitment,
+    AlreadyRevealed,
+    RevealNotOpen,
+    RevealsPending,
 }
 
 impl Error {
@@ -166,6 +172,12 @@ impl Error {
             Error::OwnerNotActive => "E_OWNER_NOT_ACTIVE",
             Error::DestinationProof => "E_DESTINATION_PROOF",
             Error::DestinationProofUnsupported => "E_DESTINATION_PROOF_UNSUPPORTED",
+            Error::InvalidSealedHeirs => "E_INVALID_SEALED_HEIRS",
+            Error::NotSealed => "E_NOT_SEALED",
+            Error::UnknownCommitment => "E_UNKNOWN_COMMITMENT",
+            Error::AlreadyRevealed => "E_ALREADY_REVEALED",
+            Error::RevealNotOpen => "E_REVEAL_NOT_OPEN",
+            Error::RevealsPending => "E_REVEALS_PENDING",
         }
     }
 }

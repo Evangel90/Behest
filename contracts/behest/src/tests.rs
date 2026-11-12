@@ -4131,3 +4131,150 @@ mod proofs {
         assert_eq!(r.alternates[0].recipient.near_destination, Some(acc("kemi-new.testnet")));
     }
 }
+
+// ------------------------------------------------------------- D33 sealed (private) heirs
+
+mod sealed {
+    use super::*;
+    use privacy::{HeirRecord, SealedHeirs, Unrevealed};
+
+    fn rec(account: &str, bps: u16, salt: u8) -> HeirRecord {
+        HeirRecord { account_id: acc(account), share_bps: bps, near_destination: Some(acc(account)), eth_destination: None, btc_destination: None, salt: format!("{salt:02x}").repeat(32) }
+    }
+    fn records() -> Vec<HeirRecord> {
+        vec![rec("amara.testnet", 6000, 1), rec("tobi.testnet", 3000, 2), rec("kemi.testnet", 1000, 3)]
+    }
+    fn commitments(e: &mut Env, rs: &[HeirRecord]) -> Vec<String> {
+        rs.iter().map(|r| e.as_("x.testnet", 0).get_heir_commitment(acc("owner.testnet"), r.clone())).collect()
+    }
+    fn sealed_plan() -> PlanInput {
+        PlanInput { heirs: vec![], ..plan_input() }
+    }
+    /// A funded sealed plan with three heirs; `unrevealed` decides the rest.
+    fn env(unrevealed: Unrevealed) -> Env {
+        let mut e = Env::new();
+        let c = commitments(&mut e, &records());
+        if unrevealed == Unrevealed::Fallback {
+            e.as_("owner.testnet", NEAR).set_plan(plan_input());
+            e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { fallback: Some(outsider("fund.testnet", Some("fund.testnet"), None)), claim_window_ms: WINDOW, ..Default::default() }));
+        }
+        e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { commitments: c, reveal_window_ms: 14 * DAY, unrevealed });
+        e.as_("owner.testnet", 10 * NEAR).deposit(acc("owner.testnet"));
+        e
+    }
+    fn propose(e: &mut Env) -> u64 {
+        e.as_("g1.testnet", 0).propose_release(acc("owner.testnet"), None, None, None)
+    }
+    fn shares(e: &mut Env) -> Vec<(String, u16)> {
+        e.plan().policy.heirs.iter().map(|h| (h.account_id.to_string(), h.share_bps)).collect()
+    }
+
+    #[test]
+    fn a_sealed_plan_shows_no_heirs_and_validates_its_commitments() {
+        let mut e = env(Unrevealed::Redistribute);
+        assert!(e.plan().policy.heirs.is_empty());
+        let v = e.as_("x.testnet", 0).get_private_heirs(acc("owner.testnet")).unwrap();
+        assert_eq!((v.commitments.len(), v.revealed.len()), (3, 0));
+        let ok = SealedHeirs { commitments: vec!["ab".repeat(32)], reveal_window_ms: 14 * DAY, unrevealed: Unrevealed::Redistribute };
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_private_plan(plan_input(), ok.clone())), "E_INVALID_HEIRS");
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { commitments: vec!["AB".repeat(32)], ..ok.clone() })), "E_INVALID_SEALED_HEIRS");
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { commitments: vec![], ..ok.clone() })), "E_INVALID_SEALED_HEIRS");
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { reveal_window_ms: 0, ..ok.clone() })), "E_DURATION_OUT_OF_BOUNDS");
+        // The unrevealed share can only go to a fallback that exists.
+        assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { unrevealed: Unrevealed::Fallback, ..ok })), "E_INVALID_SEALED_HEIRS");
+    }
+
+    #[test]
+    fn heirs_reveal_after_the_owner_is_overdue_and_the_release_pays_their_shares() {
+        let mut e = env(Unrevealed::Redistribute);
+        let [a, t, k] = <[HeirRecord; 3]>::try_from(records()).unwrap();
+        assert_eq!(panic_code(|| e.as_("amara.testnet", 0).reveal_heir(acc("owner.testnet"), a.clone())), "E_REVEAL_NOT_OPEN");
+        e.advance(97 * DAY);
+        let mut wrong = a.clone();
+        wrong.share_bps = 9000;
+        assert_eq!(panic_code(|| e.as_("amara.testnet", 0).reveal_heir(acc("owner.testnet"), wrong)), "E_UNKNOWN_COMMITMENT");
+        // Anyone can submit a record: funds still go to its destination.
+        assert_eq!(e.as_("stranger.testnet", 0).reveal_heir(acc("owner.testnet"), a.clone()), 0);
+        assert_eq!(panic_code(|| e.as_("amara.testnet", 0).reveal_heir(acc("owner.testnet"), a.clone())), "E_ALREADY_REVEALED");
+        e.as_("tobi.testnet", 0).reveal_heir(acc("owner.testnet"), t);
+        assert_eq!(panic_code(|| propose(&mut e)), "E_REVEALS_PENDING");
+        e.as_("kemi.testnet", 0).reveal_heir(acc("owner.testnet"), k);
+        propose(&mut e);
+        assert_eq!(shares(&mut e), vec![("amara.testnet".into(), 6000), ("tobi.testnet".into(), 3000), ("kemi.testnet".into(), 1000)]);
+        let p = e.plan().proposal.unwrap();
+        let near: Vec<(String, u128)> = p.transfers.iter().map(|x| (x.heir.to_string(), x.amount.0)).collect();
+        assert_eq!(near.iter().map(|x| x.1).sum::<u128>(), p.near_snapshot.0);
+        assert_eq!(near[0].1 * 10 / p.near_snapshot.0, 6);
+    }
+
+    #[test]
+    fn after_the_reveal_window_unrevealed_shares_are_redistributed() {
+        let mut e = env(Unrevealed::Redistribute);
+        e.advance(97 * DAY);
+        let rs = records();
+        e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), rs[0].clone());
+        e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), rs[1].clone());
+        e.advance(14 * DAY);
+        propose(&mut e);
+        // 6000 : 3000 scaled to 100%.
+        assert_eq!(shares(&mut e), vec![("amara.testnet".into(), 6667), ("tobi.testnet".into(), 3333)]);
+    }
+
+    #[test]
+    fn or_go_to_the_fallback_when_the_owner_chose_that() {
+        let mut e = env(Unrevealed::Fallback);
+        e.advance(97 * DAY);
+        e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), records()[0].clone());
+        e.advance(14 * DAY);
+        propose(&mut e);
+        assert_eq!(shares(&mut e), vec![("amara.testnet".into(), 6000), ("fund.testnet".into(), 4000)]);
+        // The fallback can't be removed while unrevealed shares go to it.
+        e.as_("owner.testnet", 0).cancel_release();
+        assert_eq!(panic_code(|| e.as_("owner.testnet", 0).set_release_rules(None)), "E_INVALID_SEALED_HEIRS");
+    }
+
+    #[test]
+    fn the_owner_showing_up_reseals_the_plan() {
+        let mut e = env(Unrevealed::Redistribute);
+        e.advance(97 * DAY);
+        for r in records() {
+            e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), r);
+        }
+        propose(&mut e);
+        assert_eq!(e.plan().policy.heirs.len(), 3);
+        e.as_("owner.testnet", 0).check_in(None);
+        assert!(e.plan().policy.heirs.is_empty());
+        assert!(e.as_("x.testnet", 0).get_private_heirs(acc("owner.testnet")).unwrap().revealed.is_empty());
+        // Overdue again: everyone reveals again.
+        e.advance(97 * DAY);
+        assert_eq!(panic_code(|| propose(&mut e)), "E_REVEALS_PENDING");
+    }
+
+    #[test]
+    fn reveals_refuse_roles_and_shares_above_100_percent() {
+        let mut e = Env::new();
+        let bad = vec![rec("g1.testnet", 5000, 1), rec("amara.testnet", 6000, 2), rec("tobi.testnet", 5000, 3)];
+        let c = commitments(&mut e, &bad);
+        e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { commitments: c, reveal_window_ms: 14 * DAY, unrevealed: Unrevealed::Redistribute });
+        e.advance(97 * DAY);
+        assert_eq!(panic_code(|| e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), bad[0].clone())), "E_CONFLICTING_ROLE");
+        e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), bad[1].clone());
+        assert_eq!(panic_code(|| e.as_("x.testnet", 0).reveal_heir(acc("owner.testnet"), bad[2].clone())), "E_INVALID_SHARES");
+    }
+
+    #[test]
+    fn going_public_drops_the_seal_and_sealing_waits_out_the_edit_notice() {
+        let mut e = env(Unrevealed::Redistribute);
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        assert!(e.as_("x.testnet", 0).get_private_heirs(acc("owner.testnet")).is_none());
+        assert_eq!(e.plan().policy.heirs.len(), 2);
+        e.as_("owner.testnet", NEAR / 100).set_edit_notice(7 * DAY);
+        let c = commitments(&mut e, &records());
+        e.as_("owner.testnet", NEAR).set_private_plan(sealed_plan(), SealedHeirs { commitments: c, reveal_window_ms: 14 * DAY, unrevealed: Unrevealed::Redistribute });
+        assert_eq!(e.plan().policy.heirs.len(), 2, "queued");
+        e.advance(7 * DAY);
+        e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None);
+        assert!(e.plan().policy.heirs.is_empty());
+        assert_eq!(e.as_("x.testnet", 0).get_private_heirs(acc("owner.testnet")).unwrap().commitments.len(), 3);
+    }
+}
