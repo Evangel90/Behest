@@ -329,3 +329,26 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
   a { color: inherit; }
   code { white-space: pre-wrap; }
 }
+
+/* ---------------------------------------------------------- brand loader */
+/* Colours by surface: black discs with #7FA9EE overlap on light, white with #2F62B5 on dark. */
+.behest-loader { --ld-m: #000000; --ld-l: #7FA9EE; }
+.behest-loader--dark { --ld-m: #FFFFFF; --ld-l: #2F62B5; }
+:root[data-theme="dark"] .behest-loader--theme { --ld-m: #FFFFFF; --ld-l: #2F62B5; }
+:root:not([data-theme="dark"]) .behest-loader--inverse { --ld-m: #FFFFFF; --ld-l: #2F62B5; }
+:root[data-theme="dark"] .behest-loader--inverse { --ld-m: #000000; --ld-l: #7FA9EE; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .behest-loader--theme { --ld-m: #FFFFFF; --ld-l: #2F62B5; }
+  :root:not([data-theme="light"]) .behest-loader--inverse { --ld-m: #000000; --ld-l: #7FA9EE; }
+}
+.behest-loader .m { fill: var(--ld-m); }
+.behest-loader .l { fill: var(--ld-l); }
+.behest-loader .r { fill: none; stroke: var(--ld-m); stroke-width: 6; }
+.behest-loader .p { animation: behest-loader 1.8s cubic-bezier(.6, 0, .3, 1) infinite; }
+@keyframes behest-loader {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(14px, 14px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .behest-loader .p { animation: none; }
+}

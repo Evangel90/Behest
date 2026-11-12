@@ -3,7 +3,7 @@
 // funding, then a plain-language review before anything is signed.
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, LoaderCircle, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
@@ -42,6 +42,7 @@ import {
   type Unit,
   type WizardStep,
 } from "@/lib/wizard";
+import { BehestLoader } from "@/components/BehestLoader";
 
 /** Storage for set_intents_delivery; the contract refunds what it doesn't use. */
 const INTENTS_DEPOSIT = 10_000_000_000_000_000_000_000n;
@@ -1245,7 +1246,7 @@ function SigningProgress({ phase, withDeposit, evm }: { phase: "idle" | "plan" |
       {rows.map(([label, on, done]) => (
         <li key={label} className="flex items-center gap-3 text-[15px]">
           <span className={cx("flex size-6 items-center justify-center rounded-full", done ? "bg-ok-bg text-ok" : on ? "bg-s-approved text-[var(--s-approved-fg)]" : "bg-subtle text-muted")}>
-            {done ? <Check aria-hidden className="size-3.5" /> : on ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
+            {done ? <Check aria-hidden className="size-3.5" /> : on ? <BehestLoader size={20} label="In progress" /> : null}
           </span>
           <span className={cx(!on && !done && "text-muted")}>{label}</span>
           {on && <span className="text-sm text-muted">· {evm ? "sign the message in your wallet" : "confirm in your wallet"}</span>}

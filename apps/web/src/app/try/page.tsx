@@ -3,7 +3,7 @@
 // release in about five minutes.
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, Eye, FlaskConical, Gift, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, Sparkles, Wallet } from "lucide-react";
+import { ArrowRight, Check, Eye, FlaskConical, Gift, KeyRound, RotateCcw, ShieldCheck, Sparkles, Wallet } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { useConfirm } from "@/components/feedback";
 import { Address, Countdown, Disclosure } from "@/components/interactive";
@@ -16,6 +16,7 @@ import { PERSONA_INFO, PERSONA_ROLES, clearSandbox, heirWallet, loadSandbox, sav
 import { humanError, usePlan } from "@/lib/hooks";
 import { newKeyPair, personaSession, useSession } from "@/lib/session";
 import { getTier, getTierConfig, mintTest, payFromWallet, payable } from "@/lib/tiers";
+import { BehestLoader } from "@/components/BehestLoader";
 
 const MIN = 60_000;
 const ROLE_ICON: Record<PersonaRole, typeof KeyRound> = { owner: KeyRound, g1: ShieldCheck, g2: ShieldCheck, g3: ShieldCheck, amara: Gift, tobi: Gift };
@@ -133,7 +134,7 @@ function CreateSandbox({ onCreated }: { onCreated: (s: Sandbox) => void }) {
           {STEPS.map((label, i) => (
             <li key={label} className={cx("flex items-center gap-3 text-[15px]", i > step && "text-muted")}>
               <span className={cx("flex size-6 items-center justify-center rounded-full", i < step ? "bg-ok-bg text-ok" : i === step ? "bg-s-approved text-[var(--s-approved-fg)]" : "bg-card")}>
-                {i < step ? <Check aria-hidden className="size-3.5" /> : i === step ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
+                {i < step ? <Check aria-hidden className="size-3.5" /> : i === step ? <BehestLoader size={20} label="In progress" /> : null}
               </span>
               {label}
               {i === step && "…"}

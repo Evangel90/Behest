@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, FlaskConical, Hexagon, Landmark, LoaderCircle, Mail, Puzzle, Smartphone, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, FlaskConical, Hexagon, Landmark, Mail, Puzzle, Smartphone, Wallet, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { humanError } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { CopyButton, Dialog } from "./interactive";
 import { QrCode } from "./QrCode";
 import { Notice, TestnetTag, cx } from "./ui";
+import { BehestLoader } from "./BehestLoader";
 
 const NEAR_AUTH_ENABLED = Boolean(process.env.NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID);
 const WC_ENABLED = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
@@ -125,7 +126,7 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
         ) : (
           <div className="flex flex-col gap-2">
             {wallets === null ? (
-              <WalletRow icon={<LoaderCircle aria-hidden className="size-5 animate-spin text-muted" />} title="Looking for browser wallets…" disabled />
+              <WalletRow icon={<BehestLoader size={20} label="Looking for browser wallets" />} title="Looking for browser wallets…" disabled />
             ) : wallets.length === 0 ? (
               <div className="flex items-start gap-3 rounded-row border border-dashed border-line-strong p-4">
                 <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-tile bg-subtle text-muted">
@@ -219,10 +220,10 @@ function WalletConnectQr({ uri }: { uri: string | null }) {
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex size-[248px] items-center justify-center rounded-card border border-line bg-white p-4" aria-live="polite">
-        {uri ? <QrCode value={uri} label="WalletConnect pairing code" className="size-full text-[#0A0A0A]" /> : <LoaderCircle aria-label="Preparing the code" className="size-6 animate-spin text-[#6B6B6B]" />}
+        {uri ? <QrCode value={uri} label="WalletConnect pairing code" className="size-full text-[#0A0A0A]" /> : <BehestLoader size={48} label="Preparing the code" tone="light" />}
       </div>
       <p role="status" className="flex items-center gap-2 text-sm text-muted">
-        {uri && <LoaderCircle aria-hidden className="size-4 animate-spin" />}
+        {uri && <BehestLoader size={20} label="Waiting for your wallet" />}
         {uri ? "Waiting for your wallet to connect…" : "Preparing a pairing code…"}
       </p>
       {uri && (
@@ -255,7 +256,7 @@ function WalletRow({ icon, title, body, tag, onClick, disabled, loading }: { ico
     >
       <span aria-hidden className="relative flex size-10 shrink-0 items-center justify-center rounded-tile bg-subtle">
         {icon}
-        {loading && <LoaderCircle className="absolute -right-1 -top-1 size-4 animate-spin rounded-full bg-card text-signal" />}
+        {loading && <BehestLoader size={20} label="Connecting" className="absolute -right-1.5 -top-1.5 rounded-full bg-card" />}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex flex-wrap items-center justify-between gap-2 font-semibold">

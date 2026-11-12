@@ -1,10 +1,11 @@
 // Presentational primitives (no hooks), safe in server and client components.
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
-import { ArrowUpRight, CircleAlert, CircleCheck, Info, LoaderCircle, TriangleAlert, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, CircleAlert, CircleCheck, Info, TriangleAlert, type LucideIcon } from "lucide-react";
 import { MoreText } from "./more";
 import { STATUS_STYLE, TRANSFER_STYLE, type Actions, type ChipStyle } from "@/lib/plan";
 import type { PlanStatus, TransferState } from "@/lib/types";
+import { BehestLoader, type LoaderTone } from "./BehestLoader";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -45,10 +46,12 @@ interface BtnExtra {
   loading?: boolean;
 }
 
-function Inner({ icon: I, iconRight: R, loading, children }: Pick<BtnExtra, "icon" | "iconRight" | "loading"> & { children?: ReactNode }) {
+const LOADER_TONE: Record<Variant, LoaderTone> = { primary: "dark", mint: "dark", night: "dark", "outline-light": "dark", ink: "inverse", outline: "theme", subtle: "theme", ghost: "theme", danger: "theme" };
+
+function Inner({ icon: I, iconRight: R, loading, variant = "ink", children }: Pick<BtnExtra, "icon" | "iconRight" | "loading" | "variant"> & { children?: ReactNode }) {
   return (
     <>
-      {loading ? <LoaderCircle aria-hidden className="size-[18px] shrink-0 animate-spin" /> : I && <I aria-hidden className="size-[18px] shrink-0" strokeWidth={2} />}
+      {loading ? <BehestLoader size={20} label="Working" tone={LOADER_TONE[variant]} /> : I && <I aria-hidden className="size-[18px] shrink-0" strokeWidth={2} />}
       {children}
       {R && !loading && <R aria-hidden className="size-[18px] shrink-0" strokeWidth={2} />}
     </>
@@ -58,7 +61,7 @@ function Inner({ icon: I, iconRight: R, loading, children }: Pick<BtnExtra, "ico
 export function Button({ variant = "ink", size = "md", icon, iconRight, loading, className, children, disabled, ...p }: ComponentProps<"button"> & BtnExtra) {
   return (
     <button className={cx(base, SIZES[size], VARIANTS[variant], className)} disabled={disabled || loading} aria-busy={loading || undefined} {...p}>
-      <Inner icon={icon} iconRight={iconRight} loading={loading}>
+      <Inner icon={icon} iconRight={iconRight} loading={loading} variant={variant}>
         {children}
       </Inner>
     </button>

@@ -1,11 +1,12 @@
 "use client";
 // App-wide feedback: toasts for transaction results and a confirm dialog for
 // actions that can't be taken back. Mounted once in the root layout.
-import { Check, CircleAlert, LoaderCircle, X } from "lucide-react";
+import { Check, CircleAlert, X } from "lucide-react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "./interactive";
 import { Button, cx } from "./ui";
+import { BehestLoader } from "./BehestLoader";
 
 // ------------------------------------------------------------------ toasts
 
@@ -94,10 +95,10 @@ function ToastProvider({ children }: { children: ReactNode }) {
                 aria-hidden
                 className={cx(
                   "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full",
-                  t.tone === "error" ? "bg-[#E11D48] text-white" : t.tone === "pending" ? "bg-[var(--toast-sub)]" : "bg-primary text-white",
+                  t.tone === "error" ? "bg-[#E11D48] text-white" : t.tone === "pending" ? "" : "bg-primary text-white",
                 )}
               >
-                {t.tone === "error" ? <CircleAlert className="size-3.5" /> : t.tone === "pending" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                {t.tone === "error" ? <CircleAlert className="size-3.5" /> : t.tone === "pending" ? <BehestLoader size={20} label="Pending" tone="dark" delay={0} /> : <Check className="size-3.5" />}
               </span>
               <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
                 <span className="text-[15px] font-semibold leading-snug">{t.title}</span>
