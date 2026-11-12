@@ -287,7 +287,7 @@ function GuardianSettingsForm({ rec, onSaved }: { rec: Recovery; onSaved: () => 
     if (list.length > 5) return setErr("At most 5 standbys.");
     setErr(null);
     const queued = rec.notice > 0;
-    await act(clearing ? "Remove standby settings" : "Save standby settings", "set_guardian_settings", { settings: next }, { deposit: STORAGE, done: queued ? `Saved. It takes effect after your ${duration(rec.notice)} edit notice.` : "Standby settings saved." });
+    await act(clearing ? "Remove standby settings" : "Save standby settings", "set_guardian_settings", { settings: next }, { deposit: STORAGE, done: queued ? `Saved. It takes effect when your edit notice ends (${duration(rec.notice)}).` : "Standby settings saved." });
   }
 
   return (

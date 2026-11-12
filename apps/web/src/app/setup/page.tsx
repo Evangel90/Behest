@@ -291,7 +291,7 @@ function Setup() {
       }
       // D28: big edits are queued. Say so; the plan screen shows them with a countdown.
       const queued = editing && editNotice > 0 ? await viewCall<{ effective_at_ms: number }[]>("get_pending_changes", { owner: session.accountId }).catch(() => []) : [];
-      if (queued.length) setQueuedNote(`Your changes to heirs, guardians or quorum take effect after your ${duration(editNotice)} edit notice. Your guardians and heirs have been told, and you can cancel from the plan screen until then.`);
+      if (queued.length) setQueuedNote(`Your changes to heirs, guardians or quorum take effect when your edit notice ends (${duration(editNotice)}). Your guardians and heirs have been told, and you can cancel from the plan screen until then.`);
       // D27: who receives through NEAR Intents (after set_plan: only the plan's recipients may opt in).
       try {
         if (deliveries.length || savedIntents.length) {
