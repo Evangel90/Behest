@@ -14,7 +14,7 @@ import type { Asset, ContractConfig, PlanView, Transfer } from "@/lib/types";
 import { useVault, type Vault } from "@/lib/vault";
 import { BtcOwnerCard, useBtc } from "../Bitcoin";
 import { useConfirm } from "../feedback";
-import { Address, Dialog, Field, Term } from "../interactive";
+import { Address, Dialog, Field, Segmented, Term } from "../interactive";
 import { GuardianList, Timeline, receiptUrl } from "../PlanParts";
 import { Pulse } from "../Pulse";
 import { OptionsCard } from "../ReleaseOptions";
@@ -26,6 +26,7 @@ import { EditNoticeCard, GuardianHealthCard } from "../Recovery";
 import { AccountRecoveryCard, DestinationsOwnerCard } from "../Destinations";
 import { PlanSummaryCard } from "../Summary";
 import { Heirs, SealedOwnerCard } from "../Sealed";
+import { NearDepositAddress } from "../NearVault";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -184,6 +185,9 @@ function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; bu
   const evm = useSession().session?.kind === "evm";
   const [dlg, setDlg] = useState<"add" | "withdraw" | null>(null);
   const [amount, setAmount] = useState("0.1");
+  // NEAR wallets can attach NEAR; anyone can use the deposit address.
+  const [how, setHow] = useState<"wallet" | "address">(evm ? "address" : "wallet");
+  const viaAddress = dlg === "add" && (evm || how === "address");
   let units: bigint | null = null;
   try {
     units = parseNear(amount || "0");
@@ -211,16 +215,13 @@ function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; bu
       {!open ? (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
-            {!evm && (
-              <Button size="sm" variant="ink" icon={ArrowDownToLine} disabled={busy} onClick={() => setDlg("add")}>
-                Add
-              </Button>
-            )}
+            <Button size="sm" variant="ink" icon={ArrowDownToLine} disabled={busy} onClick={() => setDlg("add")}>
+              Add
+            </Button>
             <Button size="sm" variant="outline" icon={ArrowUpFromLine} disabled={busy || escrow === 0n} onClick={() => setDlg("withdraw")}>
               Withdraw
             </Button>
           </div>
-          {evm && <span className="text-[13px] leading-relaxed text-muted">An Ethereum wallet can&apos;t attach NEAR. Anyone with a NEAR wallet can add NEAR to this plan for you; ETH and Bitcoin go straight to the vaults.</span>}
         </div>
       ) : (
         <span className="text-[13px] text-muted">Locked while a release is open.</span>
@@ -233,13 +234,32 @@ function NearCard({ view, open, busy, act }: { view: PlanView; open: boolean; bu
         description={dlg === "add" ? "It's held by the contract for this plan and split between heirs on release." : `The plan holds ${formatNear(escrow)} NEAR. It goes back to your account.`}
         size="sm"
         footer={
-          <Button variant="primary" loading={busy} disabled={!!err} onClick={submit} className="w-full sm:w-auto">
-            {dlg === "add" ? `Add ${amount || 0} NEAR` : `Withdraw ${amount || 0} NEAR`}
-          </Button>
+          viaAddress ? undefined : (
+            <Button variant="primary" loading={busy} disabled={!!err} onClick={submit} className="w-full sm:w-auto">
+              {dlg === "add" ? `Add ${amount || 0} NEAR` : `Withdraw ${amount || 0} NEAR`}
+            </Button>
+          )
         }
       >
-        <AmountField value={amount} onChange={setAmount} unit="NEAR" max={dlg === "withdraw" ? formatNear(escrow, 24) : undefined} />
-        {amount && err && <span className="text-[13px] font-semibold text-error">{err}</span>}
+        {dlg === "add" && !evm && (
+          <Segmented
+            label="How to add NEAR"
+            value={how}
+            onChange={setHow}
+            options={[
+              { value: "wallet", label: "From this wallet" },
+              { value: "address", label: "Send to an address" },
+            ]}
+          />
+        )}
+        {viaAddress ? (
+          <NearDepositAddress owner={view.plan.owner} act={act} busy={busy} />
+        ) : (
+          <>
+            <AmountField value={amount} onChange={setAmount} unit="NEAR" max={dlg === "withdraw" ? formatNear(escrow, 24) : undefined} />
+            {amount && err && <span className="text-[13px] font-semibold text-error">{err}</span>}
+          </>
+        )}
       </Dialog>
     </Card>
   );

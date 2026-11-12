@@ -151,6 +151,8 @@ export function describeAction(method: string, args: Record<string, unknown>, ac
     case "respond_destination_change":
       return `${args.approve ? "Approve" : "Reject"} ${String(args.account_id)}'s new ${String(args.chain)} address`;
     // D33
+    case "register_near_vault":
+      return `Create a NEAR deposit address for ${plan}`;
     case "set_private_plan":
       return "Save your private inheritance plan";
     case "reveal_heir":
