@@ -14,6 +14,7 @@ export const SPONSORED_METHODS = {
   approve_extension: "delay_signer",
   release: "participant",
   register_btc_vault: "participant",
+  register_near_vault: "participant",
   rebase_btc: "guardian",
   // D24: owner configuration with no deposit; the contract pays its storage
   // from the sponsor pool (per-owner allowance, daily cap on new plans).

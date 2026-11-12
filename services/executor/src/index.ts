@@ -3,6 +3,7 @@ import { createBtcPort } from "./bitcoin.js";
 import { Engine } from "./engine.js";
 import { createEthPort } from "./eth.js";
 import { createNearPort } from "./near.js";
+import { createNearVaultPort, sweepVaults } from "./nearvault.js";
 import { fileStore } from "./store.js";
 
 function env(name: string, fallback?: string): string {
@@ -34,12 +35,23 @@ const engine = new Engine(
   createBtcPort(env("BTC_ESPLORA_URL", "https://blockstream.info/testnet4/api")),
 );
 
+const nearVaults = createNearVaultPort({
+  rpcUrl: env("NEAR_RPC_URL", "https://test.rpc.fastnear.com"),
+  contractId: env("BEHEST_CONTRACT_ID"),
+  executorAccountId: env("EXECUTOR_ACCOUNT_ID"),
+  executorPrivateKey: env("EXECUTOR_PRIVATE_KEY") as KeyPairString,
+});
+// NEAR vaults are swept less often than releases are checked.
+const sweepEvery = Number(env("NEAR_VAULT_SWEEP_EVERY", "4"));
+let ticks = 0;
+
 const interval = Number(env("POLL_INTERVAL_MS", "15000"));
 log("executor started", { interval });
 for (;;) {
   try {
     const outcomes = await engine.tick();
     for (const [key, outcome] of outcomes) if (outcome !== "noop") log("outcome", { key, outcome });
+    if (ticks++ % sweepEvery === 0) await sweepVaults(nearVaults, log);
   } catch (e) {
     log("tick failed", { error: String(e) });
   }

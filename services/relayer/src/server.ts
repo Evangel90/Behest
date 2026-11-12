@@ -6,7 +6,7 @@
 // Both POSTs answer {tx_hash, status: "ok"|"failed", failure?, result?} once
 // the transaction is included; policy refusals are 4xx {code, error}.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { Account, JsonRpcProvider, actions, base64Decode, teraToGas, type KeyPairString } from "near-api-js";
+import { Account, FailoverRpcProvider, JsonRpcProvider, actions, base64Decode, teraToGas, type KeyPairString } from "near-api-js";
 import { Limiter, PolicyError, check, checkEvm, decode, holdsRole, type CallIntent } from "./policy.js";
 
 function env(name: string, fallback?: string): string {
@@ -16,7 +16,12 @@ function env(name: string, fallback?: string): string {
 }
 
 const contractId = env("BEHEST_CONTRACT_ID");
-const provider = new JsonRpcProvider({ url: env("NEAR_RPC_URL", "https://test.rpc.fastnear.com") });
+// The main RPC plus fallbacks (comma-separated NEAR_RPC_FALLBACK_URLS): one
+// rate-limiting or down endpoint doesn't stop relays.
+const rpcUrls = [env("NEAR_RPC_URL", "https://test.rpc.fastnear.com"), ...(process.env.NEAR_RPC_FALLBACK_URLS ?? "https://rpc.testnet.fastnear.com,https://rpc.testnet.near.org").split(",")]
+  .map((u) => u.trim())
+  .filter((u, i, all) => u && all.indexOf(u) === i);
+const provider = new FailoverRpcProvider(rpcUrls.map((url) => new JsonRpcProvider({ url })));
 // Policy reads (plans, roles, nonces) may use another RPC than transactions, so
 // a per-IP rate limit on one doesn't block the other.
 const viewProvider = process.env.NEAR_VIEW_RPC_URL ? new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL }) : provider;
@@ -112,8 +117,11 @@ async function submit(tx: Parameters<Account["signAndSendTransaction"]>[0]): Pro
       return await relayer.signAndSendTransaction(tx);
     } catch (e) {
       if (i >= 4 || !/429|rate limit/i.test(String(e))) throw e;
-      log("rpc rate-limited; retrying", { attempt: i + 1 });
-      await new Promise((r) => setTimeout(r, 1_000 * 2 ** i));
+      // Honour "retry after N seconds" when the RPC says so (capped).
+      const after = Number(/retry after (\d+)/i.exec(String(e))?.[1] ?? 0) * 1_000;
+      const wait = Math.min(30_000, Math.max(after, 1_000 * 2 ** i));
+      log("rpc rate-limited; retrying", { attempt: i + 1, waitMs: wait });
+      await new Promise((r) => setTimeout(r, wait));
     }
   }
 }
