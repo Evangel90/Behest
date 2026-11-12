@@ -67,3 +67,24 @@ export function PageLoader({ label = "Loading" }: { label?: string }) {
     </div>
   );
 }
+
+/**
+ * The loader as a large, faint background watermark (the landing hero).
+ * Decorative only: hidden from assistive tech, theme-coloured, and it drifts
+ * at a slower pace than the loader (still under reduced motion).
+ */
+export function BehestWatermark({ className }: { className?: string }) {
+  const id = useId();
+  return (
+    <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false" className={cx("behest-loader behest-loader--theme behest-watermark pointer-events-none select-none", className)}>
+      <clipPath id={id}>
+        <circle cx="32" cy="32" r="32" />
+      </clipPath>
+      <circle className="m" cx="32" cy="32" r="32" />
+      <g clipPath={`url(#${id})`}>
+        <circle className="l p" cx="60" cy="60" r="24" />
+      </g>
+      <circle className="r p" cx="60" cy="60" r="21" />
+    </svg>
+  );
+}

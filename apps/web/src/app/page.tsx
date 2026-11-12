@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BehestWatermark } from "@/components/BehestLoader";
 import { Mark, SiteHeader } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Pricing } from "@/components/Tiers";
@@ -96,8 +97,9 @@ export default function Landing() {
         Skip to content
       </a>
       <main id="main">
-        <section>
-          <div className={frame}>
+        <section className="relative overflow-hidden">
+          <BehestWatermark className="absolute right-[-12%] top-[-6%] -z-0 w-[min(760px,95vw)] sm:right-[-4%] lg:right-[2%]" />
+          <div className={`${frame} relative`}>
             <div className="flex animate-fade-up flex-col items-start gap-6 px-4 pb-16 pt-[clamp(64px,8vw,96px)] sm:px-8">
               <h1 className="max-w-[900px] text-[clamp(36px,5vw,60px)] font-medium leading-none tracking-[-0.025em]">
                 Everything you own,
