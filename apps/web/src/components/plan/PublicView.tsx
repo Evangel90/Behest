@@ -10,6 +10,7 @@ import { GuardianList, HeirList, Row, Timeline } from "../PlanParts";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
+import { GuardianHealthCard } from "../Recovery";
 import { useTx } from "../tx";
 import { CanAct, Card, SectionTitle, Skeleton } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -59,6 +60,7 @@ export function PublicView({ ctx }: { ctx: PlanCtx }) {
         </div>
       </div>
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} technical />}
+      <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
       <Group title="Rules and history">
         <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn={!!me} />
         <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} state={options} />

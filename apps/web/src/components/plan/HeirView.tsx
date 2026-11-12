@@ -18,6 +18,7 @@ import { Row, Timeline, receiptUrl } from "../PlanParts";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
+import { GuardianHealthCard } from "../Recovery";
 import { useTx } from "../tx";
 import { Button, ButtonLink, ExtLink, Progress, TickerDisc, TransferPill, cx } from "../ui";
 import type { PlanCtx } from "./common";
@@ -169,6 +170,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
       <GetNotified role="heir" />
       {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
       <HistoryCard view={view} history={history} />
+      <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
       <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
       <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} state={options} />
       <Disclosure icon={Wrench} title="Technical details" sub="Accounts, destinations and transaction hashes">

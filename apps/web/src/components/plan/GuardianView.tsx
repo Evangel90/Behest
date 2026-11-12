@@ -10,6 +10,7 @@ import { GuardianList, HeirList, Timeline } from "../PlanParts";
 import { ExtensionControls, OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
+import { GuardianHealthCard, MySeatCard } from "../Recovery";
 import { useTx } from "../tx";
 import { Button, Card, SectionTitle } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -54,12 +55,14 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
       {p && <ProposalPanel view={view} now={now} me={me} act={act} busy={!!busy} vote />}
       <BtcRebase view={view} btc={btc} />
       {s === "Active" && <GetNotified role="guardian" />}
+      {me && <MySeatCard owner={view.plan.owner} me={me} rec={ctx.recovery} now={now} />}
       <PlainWords ctx={ctx} />
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <GuardianList view={view} me={me} />
           <HeirList view={view} />
         </div>
+        <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
       </Group>
       <Group title="Rules and history">
         <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />

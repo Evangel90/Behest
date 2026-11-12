@@ -22,6 +22,7 @@ import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
 import { TierCard } from "../Tiers";
 import { DelegatesCard } from "../Dao";
+import { EditNoticeCard, GuardianHealthCard } from "../Recovery";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -118,6 +119,11 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
           <HeirList view={view} />
           <GuardianList view={view} />
         </div>
+      </Group>
+
+      <Group title="Safety">
+        <EditNoticeCard rec={ctx.recovery} editable />
+        <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={!view.plan.proposal || s === "Settled"} />
       </Group>
 
       <Group title="Plan and fees">

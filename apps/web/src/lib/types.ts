@@ -178,3 +178,49 @@ export interface BtcRelease {
   signed: number;
   last: number | null;
 }
+
+// ------------------------------------------------- D28 edit notice, D29 guardian recovery
+
+export type ChangeKind = "Plan" | "Guardians" | "Rules" | "Options" | "Btc" | "Intents" | "Notice";
+
+/** `get_pending_changes`: `change` is `{ <ChangeKind>: value }`. */
+export interface PendingChange {
+  change: Partial<Record<ChangeKind, unknown>>;
+  queued_at_ms: number;
+  effective_at_ms: number;
+}
+
+export interface GuardianSettings {
+  standbys: string[];
+  availability_ms: number;
+  swap_delay_ms: number;
+}
+
+export interface GuardianSeat {
+  account_id: string;
+  last_seen_ms: number | null;
+  available: boolean;
+  resigned: boolean;
+  replaceable: boolean;
+}
+
+export interface GuardianChange {
+  kind: "Standby" | "Rotation";
+  out: string;
+  into: string;
+  requested_by: string;
+  requested_at_ms: number;
+  effective_at_ms: number;
+}
+
+export interface GuardianStatus {
+  tracking: boolean;
+  availability_ms: number;
+  swap_delay_ms: number;
+  quorum: number;
+  available: number;
+  quorum_reachable: boolean;
+  guardians: GuardianSeat[];
+  standbys: GuardianSeat[];
+  pending: GuardianChange[];
+}

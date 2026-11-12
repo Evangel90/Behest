@@ -120,6 +120,28 @@ export function describeAction(method: string, args: Record<string, unknown>, ac
       const ds = Array.isArray(args.deliveries) ? (args.deliveries as { account_id: string; enabled: boolean }[]).filter((x) => x.enabled) : [];
       return ds.length ? `Pay ${ds.map((x) => x.account_id).join(", ")} through NEAR Intents` : "Stop paying heirs through NEAR Intents";
     }
+    // D28
+    case "set_edit_notice":
+      return Number(args.notice_ms) ? "Set your plan's edit notice" : "Turn your plan's edit notice off";
+    case "cancel_change":
+      return "Cancel a waiting change to your plan";
+    case "apply_changes":
+      return `Apply the waiting changes to ${plan}`;
+    // D29
+    case "set_guardian_settings":
+      return args.settings ? "Save your standby guardians" : "Remove your standby guardians";
+    case "confirm_guardian":
+      return `Confirm you're available for ${plan}`;
+    case "request_standby":
+      return `Ask a standby to take a guardian seat on ${plan}`;
+    case "rotate_guardian":
+      return `Move your guardian seat on ${plan} to ${String(args.new_account)}`;
+    case "resign_guardian":
+      return `Step down as a guardian of ${plan}`;
+    case "finalize_guardian_change":
+      return `Complete a guardian seat change on ${plan}`;
+    case "cancel_guardian_change":
+      return `Cancel a guardian seat change on ${plan}`;
     default:
       return `Call ${method} on Behest`;
   }

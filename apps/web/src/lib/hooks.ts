@@ -112,6 +112,15 @@ const ERRORS: Record<string, string> = {
   // D23/D24: Ethereum-wallet signed actions and sponsored storage
   E_NOT_DELEGATE: "This account isn't one of the plan's check-in delegates.",
   E_INVALID_DELEGATES: "Check-in delegates: at most 10, no repeats, and not the owner.",
+  // D28/D29
+  E_NO_PENDING_CHANGE: "There's no waiting change to apply or cancel. It may already have been applied.",
+  E_CHANGE_NOT_DUE: "That change's notice period hasn't ended yet.",
+  E_INVALID_GUARDIAN_SETTINGS: "Standby guardians: at most 5, no repeats, and not the owner, a heir, a guardian, an alternate or the fallback.",
+  E_GUARDIAN_AVAILABLE: "That guardian has confirmed recently, so a standby can't take the seat.",
+  E_NO_STANDBY: "No standby guardian is free and available to take the seat.",
+  E_GUARDIAN_RESIGNED: "This guardian has resigned and can no longer vote or confirm.",
+  E_GUARDIAN_CHANGE_PENDING: "A seat change for that guardian (or to that account) is already waiting.",
+  E_NO_GUARDIAN_CHANGE: "There's no waiting seat change for that guardian.",
   ERR_MIN_BOND: "The DAO's proposal bond changed. Reload and try again.",
   ERR_PERMISSION_DENIED: "Your role in the DAO doesn't allow that.",
   E_INVALID_TIERS: "That tier schedule isn't valid (the first tier must be free, prices must rise, and the last tier must allow everything).",

@@ -93,11 +93,14 @@ function Setup() {
   const [ack, setAck] = useState(false);
   const [spons, setSpons] = useState<Sponsorship | null | undefined>(undefined);
   const [paidBy, setPaidBy] = useState<"behest" | "you">("you");
+  // D28: the owner's edit notice; with one, big edits wait it out instead of applying.
+  const [editNotice, setEditNotice] = useState(0);
+  const [queuedNote, setQueuedNote] = useState<string | null>(null);
   /** D26: acting as a DAO, saving is a proposal; this is its id. */
   const [proposed, setProposed] = useState<number | null | undefined>(undefined);
   // D25: what the saved plan already has beside the policy (rules, options,
   // Bitcoin destinations, token escrow) counts toward the tier it needs.
-  const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean; delegates: number }>({ rules: null, options: null, btc: 0, tokens: false, delegates: 0 });
+  const [extras, setExtras] = useState<{ rules: ReleaseRules | null; options: ReleaseOptions | null; btc: number; tokens: boolean; delegates: number; standbys: number }>({ rules: null, options: null, btc: 0, tokens: false, delegates: 0, standbys: 0 });
   // D27: NEAR Intents delivery, when this deployment has a verifier; how many recipients the saved plan opted in.
   const [intentsCfg, setIntentsCfg] = useState<IntentsConfig | null>(null);
   const [savedIntents, setSavedIntents] = useState<IntentsDelivery[]>([]);
@@ -107,6 +110,10 @@ function Setup() {
   const top = useRef<HTMLDivElement>(null);
   // An owner who already has a plan always edits it (the contract keeps one plan per account).
   const editing = asked || !!existing;
+  useEffect(() => {
+    if (!session?.accountId || !editing) return;
+    void viewCall<number>("get_edit_notice", { owner: session.accountId }).then(setEditNotice, () => setEditNotice(0));
+  }, [session?.accountId, editing]);
   const steps = WIZARD_STEPS.filter((s) => !(editing && s === "funding"));
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
 
@@ -155,7 +162,9 @@ function Setup() {
       viewCall<ReleaseOptions | null>("get_release_options", { owner }).catch(() => null),
       getBtcDestinations(owner).catch(() => []),
       viewCall<string[]>("get_checkin_delegates", { owner }).catch(() => []),
-    ]).then(([rules, options, btc, delegates]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n), delegates: delegates.length }));
+      // D29: standby guardians count toward the tier's guardian limit
+      viewCall<{ standbys: string[] } | null>("get_guardian_settings", { owner }).catch(() => null),
+    ]).then(([rules, options, btc, delegates, g]) => setExtras({ rules, options, btc: btc.length, tokens: (existing.ft_escrow ?? []).some((t) => BigInt(t.amount) > 0n), delegates: delegates.length, standbys: g?.standbys.length ?? 0 }));
     getIntentsDelivery(owner)
       .then((ds) => {
         setSavedIntents(ds);
@@ -221,7 +230,8 @@ function Setup() {
   // D25: the tier this draft needs, and whether the owner has it (or already uses it).
   const tiersOn = !!tierCfg?.fee_token;
   const deliveries = intentsDeliveries(d.heirs);
-  const draftFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates, deliveries.length > 0);
+  const baseFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates, deliveries.length > 0);
+  const draftFeatures = { ...baseFeatures, guardians: baseFeatures.guardians + extras.standbys };
   const needTier = tierCfg && tiersOn ? requiredTier(tierCfg, draftFeatures) : 0;
   const allowance = tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0;
   const tierBlocked = tiersOn && (!tier || needTier > allowance);
@@ -279,19 +289,28 @@ function Setup() {
         await session.call("set_plan", { plan }, { deposit: 100_000_000_000_000_000_000_000n });
         setPaidBy("you");
       }
+      // D28: big edits are queued. Say so; the plan screen shows them with a countdown.
+      const queued = editing && editNotice > 0 ? await viewCall<{ effective_at_ms: number }[]>("get_pending_changes", { owner: session.accountId }).catch(() => []) : [];
+      if (queued.length) setQueuedNote(`Your changes to heirs, guardians or quorum take effect after your ${duration(editNotice)} edit notice. Your guardians and heirs have been told, and you can cancel from the plan screen until then.`);
       // D27: who receives through NEAR Intents (after set_plan: only the plan's recipients may opt in).
-      if (deliveries.length || savedIntents.length) {
-        const summary = deliveries.length ? "Choose who receives through NEAR Intents" : "Stop paying heirs through NEAR Intents";
-        let done = false;
-        if (sponsored || evm) {
-          try {
-            await session.call("set_intents_delivery", { deliveries }, { sponsor: true, summary });
-            done = true;
-          } catch (e) {
-            if (evm || !(e instanceof SponsorRefused)) throw e;
+      try {
+        if (deliveries.length || savedIntents.length) {
+          const summary = deliveries.length ? "Choose who receives through NEAR Intents" : "Stop paying heirs through NEAR Intents";
+          let done = false;
+          if (sponsored || evm) {
+            try {
+              await session.call("set_intents_delivery", { deliveries }, { sponsor: true, summary });
+              done = true;
+            } catch (e) {
+              if (evm || !(e instanceof SponsorRefused)) throw e;
+            }
           }
+          if (!done) await session.call("set_intents_delivery", { deliveries }, { deposit: INTENTS_DEPOSIT, summary });
         }
-        if (!done) await session.call("set_intents_delivery", { deliveries }, { deposit: INTENTS_DEPOSIT, summary });
+      } catch (e) {
+        // A new heir isn't a recipient until the queued plan change lands.
+        if (!queued.length) throw e;
+        setQueuedNote((n) => `${n ?? ""} Save the NEAR Intents choices again once it has taken effect.`);
       }
       if (!editing && depositYocto && depositYocto > 0n) {
         setPhase("deposit");
@@ -301,7 +320,7 @@ function Setup() {
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch {}
-      setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
+      if (!queued.length) setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
     } catch (e) {
       setError(humanError(e));
       setPhase("idle");
@@ -354,14 +373,14 @@ function Setup() {
           <span className="flex size-20 animate-pop items-center justify-center rounded-full bg-ok-bg text-ok">
             <CircleCheck aria-hidden className="size-10" />
           </span>
-          <h1 className="text-[clamp(32px,6vw,48px)] font-medium leading-none tracking-[-0.04em]">{proposed !== undefined ? "Proposed to the DAO." : editing ? "Plan updated." : "Your plan is live."}</h1>
+          <h1 className="text-[clamp(32px,6vw,48px)] font-medium leading-none tracking-[-0.04em]">{proposed !== undefined ? "Proposed to the DAO." : queuedNote ? "Changes requested." : editing ? "Plan updated." : "Your plan is live."}</h1>
           {proposed !== undefined ? (
             <p role="status" className="max-w-[460px] text-lg text-muted">
               {proposed !== null ? `Proposal #${proposed}` : "The proposal"} {editing ? "updates" : "creates"} the plan once {owner}&apos;s council approves it. Vote on it from the plan page or your DAO app.
             </p>
           ) : (
             <p role="status" className="max-w-[420px] text-lg text-muted">
-              Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.
+              {queuedNote ?? <>Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.</>}
             </p>
           )}
           <ButtonLink href={`/plan/${encodeURIComponent(owner)}`} variant="primary" iconRight={ArrowRight}>

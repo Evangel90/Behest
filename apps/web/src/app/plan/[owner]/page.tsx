@@ -12,6 +12,7 @@ import { HeirView } from "@/components/plan/HeirView";
 import { OwnerView } from "@/components/plan/OwnerView";
 import { DaoBanner, DaoProposals, DelegateCheckIn } from "@/components/Dao";
 import { PublicView } from "@/components/plan/PublicView";
+import { PendingChanges, StandbyCard, useRecovery } from "@/components/Recovery";
 import { useOptions } from "@/components/ReleaseOptions";
 import { useRules } from "@/components/ReleaseRules";
 import { lastSettledAt, useHistory } from "@/components/Rounds";
@@ -43,6 +44,7 @@ function PlanScreen() {
   const options = useOptions(owner, prop?.id, prop?.waiting_ends_at_ms);
   const rules = useRules(owner);
   const history = useHistory(owner, view ? `${view.status}:${prop?.id}` : undefined);
+  const recovery = useRecovery(owner, view ? `${view.plan.version}:${view.status}:${view.plan.policy.guardians.join()}:${prop?.approvals.join()}` : undefined);
 
   const roles = useMemo<UiRole[]>(() => {
     const r: UiRole[] = rolesOf(view ?? null, me);
@@ -65,7 +67,7 @@ function PlanScreen() {
   }, [view, owner]);
 
   const ctx: PlanCtx | null = view
-    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options }
+    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options, recovery }
     : null;
 
   return (
@@ -96,7 +98,9 @@ function PlanScreen() {
         <>
           <PlanHeader view={ctx.view} role={role} roles={roles} onRole={setRole} />
           {error && <p className="text-sm text-muted">Showing the last update; reconnecting…</p>}
+          <PendingChanges owner={owner} me={me} rec={recovery} now={chainNow} onChanged={refresh} />
           <DelegateCheckIn owner={owner} me={me ?? ""} open={!!ctx.view.plan.proposal && ctx.view.status !== "Settled"} onDone={refresh} />
+          <StandbyCard owner={owner} me={me} rec={recovery} now={chainNow} />
           <Swap id={role} className="flex flex-col gap-6">
             {role === "owner" && <OwnerView ctx={ctx} />}
             {role === "guardian" && <GuardianView ctx={ctx} />}
