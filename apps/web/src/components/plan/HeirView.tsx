@@ -19,6 +19,7 @@ import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
 import { GuardianHealthCard } from "../Recovery";
+import { MyDestinationsCard } from "../Destinations";
 import { useTx } from "../tx";
 import { Button, ButtonLink, ExtLink, Progress, TickerDisc, TransferPill, cx } from "../ui";
 import type { PlanCtx } from "./common";
@@ -166,6 +167,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
         </section>
       )}
 
+      {me && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
       <HeirIntentsCard owner={view.plan.owner} holding={intents} />
       <GetNotified role="heir" />
       {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}

@@ -13,6 +13,7 @@ import { Address, Countdown, Segmented } from "../interactive";
 import { ApprovalMeter, Avatar, TransferTable } from "../PlanParts";
 import type { OptionsState } from "../ReleaseOptions";
 import { SnapshotCheck } from "../Rounds";
+import type { Destinations } from "../Destinations";
 import type { Recovery } from "../Recovery";
 import type { Act } from "../tx";
 import { Button, Card, Notice, SectionTitle, StatusPill, cx } from "../ui";
@@ -29,6 +30,8 @@ export interface PlanCtx {
   options: OptionsState;
   /** D28/D29: queued edits, edit notice, guardian health. */
   recovery: Recovery;
+  /** D30/D31: destinations with proof status, and requests. */
+  destinations: Destinations;
 }
 
 export const ROLE_ICON: Record<UiRole, LucideIcon> = { owner: KeyRound, guardian: ShieldCheck, heir: Gift, delay: Hourglass, public: Eye };

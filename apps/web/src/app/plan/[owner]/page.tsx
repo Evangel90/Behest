@@ -13,6 +13,7 @@ import { OwnerView } from "@/components/plan/OwnerView";
 import { DaoBanner, DaoProposals, DelegateCheckIn } from "@/components/Dao";
 import { PublicView } from "@/components/plan/PublicView";
 import { PendingChanges, StandbyCard, useRecovery } from "@/components/Recovery";
+import { useDestinations } from "@/components/Destinations";
 import { useOptions } from "@/components/ReleaseOptions";
 import { useRules } from "@/components/ReleaseRules";
 import { lastSettledAt, useHistory } from "@/components/Rounds";
@@ -45,6 +46,7 @@ function PlanScreen() {
   const rules = useRules(owner);
   const history = useHistory(owner, view ? `${view.status}:${prop?.id}` : undefined);
   const recovery = useRecovery(owner, view ? `${view.plan.version}:${view.status}:${view.plan.policy.guardians.join()}:${prop?.approvals.join()}` : undefined);
+  const destinations = useDestinations(owner, view ? `${view.plan.version}:${view.status}:${recovery.pending.length}` : undefined);
 
   const roles = useMemo<UiRole[]>(() => {
     const r: UiRole[] = rolesOf(view ?? null, me);
@@ -67,7 +69,7 @@ function PlanScreen() {
   }, [view, owner]);
 
   const ctx: PlanCtx | null = view
-    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options, recovery }
+    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options, recovery, destinations }
     : null;
 
   return (

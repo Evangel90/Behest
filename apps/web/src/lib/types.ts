@@ -224,3 +224,12 @@ export interface GuardianStatus {
   standbys: GuardianSeat[];
   pending: GuardianChange[];
 }
+
+// D30/D31: destination proof of control and requests.
+export type DestChain = "Near" | "Eth" | "Btc" | "Intents";
+export interface DestinationView {
+  account_id: string;
+  chain: DestChain;
+  destination: string;
+  proven_at_ms: number | null;
+}

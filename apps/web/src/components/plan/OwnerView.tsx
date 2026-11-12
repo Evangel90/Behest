@@ -23,6 +23,7 @@ import { HistoryCard } from "../Rounds";
 import { TierCard } from "../Tiers";
 import { DelegatesCard } from "../Dao";
 import { EditNoticeCard, GuardianHealthCard } from "../Recovery";
+import { AccountRecoveryCard, DestinationsOwnerCard } from "../Destinations";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -32,6 +33,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
   const confirm = useConfirm();
   const { busy, act } = useTx(refresh);
   const vault = useVault(view.plan.owner);
+  const { session } = useSession();
   const btc = useBtc(view.plan.owner);
   const p = view.plan.policy;
   const s = view.status;
@@ -124,6 +126,8 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
       <Group title="Safety">
         <EditNoticeCard rec={ctx.recovery} editable />
         <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={!view.plan.proposal || s === "Settled"} />
+        <DestinationsOwnerCard planView={view} dest={ctx.destinations} notice={ctx.recovery.notice} editable={!view.plan.proposal || s === "Settled"} onChanged={async () => { await ctx.recovery.reload(); await ctx.refresh(); }} />
+        <AccountRecoveryCard owner={view.plan.owner} kind={session?.kind} notice={ctx.recovery.notice} />
       </Group>
 
       <Group title="Plan and fees">
