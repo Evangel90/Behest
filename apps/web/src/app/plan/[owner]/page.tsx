@@ -75,7 +75,7 @@ function PlanScreen() {
     : null;
 
   return (
-    <AppShell narrow={role === "heir"}>
+    <AppShell>
       {view === undefined && !error && <PlanSkeleton />}
       {error && view === undefined && (
         <EmptyState icon={WifiOff} tone="error" title="Couldn't load this plan" body={`The NEAR network didn't answer: ${error}. Your plan is safe; this is only a display problem.`}>

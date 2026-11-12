@@ -71,129 +71,134 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
   const retry = (index: number) => act("Retry", "retry_transfer", { owner: view.plan.owner, index }, { tgas: 300, done: "Retrying. This page updates as it lands." }).then((ok) => (ok && intents.reload(), ok));
 
   return (
-    <>
-      <div className="flex flex-col gap-3">
-        <h2 key={step.title} className="animate-fade-up text-[clamp(34px,8vw,44px)] font-medium leading-[0.98] tracking-[-0.04em]">
-          {step.title}
-        </h2>
-        <p className="text-[17px] leading-relaxed text-muted">{step.body}</p>
-      </div>
-
-      <section aria-label="Set aside for you" className="rounded-row border border-line bg-subtle px-1 pb-1">
-        <div className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
-          <Gift aria-hidden className="size-4 text-muted" />
-          Set aside for you
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start">
+      {/* What the heir came for stays in view on desktop; details sit beside it. */}
+      <div className="flex flex-col gap-6 lg:sticky lg:top-6">
+        <div className="flex flex-col gap-3">
+          <h2 key={step.title} className="animate-fade-up text-[clamp(34px,8vw,44px)] font-medium leading-[0.98] tracking-[-0.04em]">
+            {step.title}
+          </h2>
+          <p className="text-[17px] leading-relaxed text-muted">{step.body}</p>
         </div>
-        <div className="flex flex-col gap-2 rounded-tile border border-line bg-card p-4">
-          <span className="text-[28px] font-medium leading-none tracking-[-0.03em]">
-            {heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share passed to you` : "—"}
-          </span>
-          <span className="text-[15px] leading-normal text-muted">
-            {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" + ") : p ? `Nothing for you in release #${p.id}.` : "Amounts are fixed when a release is proposed."}
-            {heir?.eth_destination && <> · Ethereum wallet ending in <strong className="text-ink">{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
-            {heir?.near_destination && <> · NEAR account <strong className="text-ink">{heir.near_destination.split(".")[0]}</strong></>}
-            {mine.length > 0 && " · fees paid"}
-          </span>
-        </div>
-      </section>
 
-      {s === "Waiting" && ready && (
-        <div className="flex animate-fade-up flex-wrap items-center justify-between gap-2 rounded-tile bg-gradient-to-b from-[#A9CCFF] to-[#6E9BFF] px-5 py-4 text-[#0A0A0A]">
-          <span className="flex flex-col">
-            <span className="text-[15px]">Ready from</span>
-            <span className="text-2xl font-medium tracking-[-0.02em]">{new Date(ready).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-          </span>
-          <Countdown to={ready} now={now} className="rounded-full bg-white/40 px-3 py-1.5 text-sm font-semibold" prefix="in " />
-        </div>
-      )}
-
-      {canReceive && (
-        <div className="flex flex-col gap-2">
-          <Button variant="primary" size="lg" className="min-h-14 w-full text-lg" icon={Gift} loading={busy === "Receive"} disabled={!!busy && busy !== "Receive"} onClick={claim}>
-            Receive my share
-          </Button>
-          {fees && (
-            <p className="text-center text-sm text-muted">
-              <Term k="feeReserve">Network fees</Term> come from the plan&apos;s reserve, not your share: {fees}.
-            </p>
-          )}
-        </div>
-      )}
-
-      {started && (
-        <section aria-label="Your transfers" className="flex flex-col gap-2">
-          <h3 className="px-1 text-sm font-semibold text-muted">Your transfers</h3>
-          <ul className="flex flex-col gap-2">
-            {mine.map(({ t, index }) => {
-              const url = receiptUrl(t);
-              return (
-                <li key={index} className="flex animate-fade-up flex-col gap-3 rounded-row border border-line bg-card p-4">
-                  <div className="flex items-center gap-3">
-                    <TickerDisc ticker={tickerOf(t)} size={40} />
-                    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                      <span className="text-[17px] font-semibold">{formatAmount(t)}</span>
-                      <Progress value={TRANSFER_PROGRESS[t.state]} tone={t.state === "Failed" ? "error" : t.state === "Confirmed" ? "ok" : "signal"} label={`${formatAmount(t)} progress`} />
-                    </div>
-                    <TransferPill state={t.state} />
-                  </div>
-                  {t.state === "Failed" && (
-                    <div className="flex flex-col gap-3 rounded-tile bg-error-bg p-3 text-sm text-error">
-                      <p className="leading-relaxed">{failureText(t)}</p>
-                      <div className="grid grid-cols-2 gap-2 text-ink">
-                        <span className="flex flex-col rounded-tile bg-card p-2.5">
-                          <span className="text-xs text-muted">Your funds</span>
-                          <span className="font-semibold">Safe in the plan</span>
-                        </span>
-                        <span className="flex flex-col rounded-tile bg-card p-2.5">
-                          <span className="text-xs text-muted">Address</span>
-                          <span className="font-semibold">Unchanged</span>
-                        </span>
-                      </div>
-                      {!["GasLimitTooLow", "Reverted"].includes(t.failure ?? "") && (
-                        <Button variant="ink" size="sm" icon={RotateCcw} className="self-start" disabled={!!busy} onClick={() => retry(index)}>
-                          Try again
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  {url && (
-                    <ExtLink href={url} className="self-start text-sm font-semibold">
-                      View receipt
-                    </ExtLink>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+        <section aria-label="Set aside for you" className="rounded-row border border-line bg-subtle px-1 pb-1">
+          <div className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+            <Gift aria-hidden className="size-4 text-muted" />
+            Set aside for you
+          </div>
+          <div className="flex flex-col gap-2 rounded-tile border border-line bg-card p-4">
+            <span className="text-[28px] font-medium leading-none tracking-[-0.03em]">
+              {heir ? `${(heir.share_bps / 100).toFixed(heir.share_bps % 100 ? 2 : 0)}% of ${owner}'s plan` : mine.length ? `A share passed to you` : "—"}
+            </span>
+            <span className="text-[15px] leading-normal text-muted">
+              {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" + ") : p ? `Nothing for you in release #${p.id}.` : "Amounts are fixed when a release is proposed."}
+              {heir?.eth_destination && <> · Ethereum wallet ending in <strong className="text-ink">{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
+              {heir?.near_destination && <> · NEAR account <strong className="text-ink">{heir.near_destination.split(".")[0]}</strong></>}
+              {mine.length > 0 && " · fees paid"}
+            </span>
+          </div>
         </section>
-      )}
 
-      {me && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
-      <HeirIntentsCard owner={view.plan.owner} holding={intents} />
-      <GetNotified role="heir" />
-      {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
-      <HistoryCard view={view} history={history} />
-      <PlanSummaryCard ctx={ctx} role="heir" />
-      <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
-      <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
-      <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} state={options} />
-      <Disclosure icon={Wrench} title="Technical details" sub="Accounts, destinations and transaction hashes">
-        <div>
-          <Row k="Plan" v={view.plan.owner} mono />
-          <Row k="Contract" v={CONTRACT_ID} mono />
-          {mine.map(({ t, index }) => (
-            <Row key={index} k={`${assetLabel(t.asset)} transfer #${index}`} v={`${t.destination}${t.tx_hash ? ` · ${t.tx_hash}` : ""}${t.eth_tx ? ` · nonce ${t.eth_tx.nonce}` : ""}`} mono />
-          ))}
-        </div>
-      </Disclosure>
-      <Button variant="subtle" size="lg" icon={CircleHelp} className="w-full" onClick={() => setHelp(true)}>
-        What happens next?
-      </Button>
-      {heir && (
-        <ButtonLink href={`/plan/${encodeURIComponent(view.plan.owner)}/packet?heir=${encodeURIComponent(heir.account_id)}`} variant="outline" size="lg" icon={FileText} className="w-full">
-          Recovery packet to print and keep
-        </ButtonLink>
-      )}
+        {s === "Waiting" && ready && (
+          <div className="flex animate-fade-up flex-wrap items-center justify-between gap-2 rounded-tile bg-gradient-to-b from-[#A9CCFF] to-[#6E9BFF] px-5 py-4 text-[#0A0A0A]">
+            <span className="flex flex-col">
+              <span className="text-[15px]">Ready from</span>
+              <span className="text-2xl font-medium tracking-[-0.02em]">{new Date(ready).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            </span>
+            <Countdown to={ready} now={now} className="rounded-full bg-white/40 px-3 py-1.5 text-sm font-semibold" prefix="in " />
+          </div>
+        )}
+
+        {canReceive && (
+          <div className="flex flex-col gap-2">
+            <Button variant="primary" size="lg" className="min-h-14 w-full text-lg" icon={Gift} loading={busy === "Receive"} disabled={!!busy && busy !== "Receive"} onClick={claim}>
+              Receive my share
+            </Button>
+            {fees && (
+              <p className="text-center text-sm text-muted">
+                <Term k="feeReserve">Network fees</Term> come from the plan&apos;s reserve, not your share: {fees}.
+              </p>
+            )}
+          </div>
+        )}
+
+        {started && (
+          <section aria-label="Your transfers" className="flex flex-col gap-2">
+            <h3 className="px-1 text-sm font-semibold text-muted">Your transfers</h3>
+            <ul className="flex flex-col gap-2">
+              {mine.map(({ t, index }) => {
+                const url = receiptUrl(t);
+                return (
+                  <li key={index} className="flex animate-fade-up flex-col gap-3 rounded-row border border-line bg-card p-4">
+                    <div className="flex items-center gap-3">
+                      <TickerDisc ticker={tickerOf(t)} size={40} />
+                      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                        <span className="text-[17px] font-semibold">{formatAmount(t)}</span>
+                        <Progress value={TRANSFER_PROGRESS[t.state]} tone={t.state === "Failed" ? "error" : t.state === "Confirmed" ? "ok" : "signal"} label={`${formatAmount(t)} progress`} />
+                      </div>
+                      <TransferPill state={t.state} />
+                    </div>
+                    {t.state === "Failed" && (
+                      <div className="flex flex-col gap-3 rounded-tile bg-error-bg p-3 text-sm text-error">
+                        <p className="leading-relaxed">{failureText(t)}</p>
+                        <div className="grid grid-cols-2 gap-2 text-ink">
+                          <span className="flex flex-col rounded-tile bg-card p-2.5">
+                            <span className="text-xs text-muted">Your funds</span>
+                            <span className="font-semibold">Safe in the plan</span>
+                          </span>
+                          <span className="flex flex-col rounded-tile bg-card p-2.5">
+                            <span className="text-xs text-muted">Address</span>
+                            <span className="font-semibold">Unchanged</span>
+                          </span>
+                        </div>
+                        {!["GasLimitTooLow", "Reverted"].includes(t.failure ?? "") && (
+                          <Button variant="ink" size="sm" icon={RotateCcw} className="self-start" disabled={!!busy} onClick={() => retry(index)}>
+                            Try again
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {url && (
+                      <ExtLink href={url} className="self-start text-sm font-semibold">
+                        View receipt
+                      </ExtLink>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        <Button variant="subtle" size="lg" icon={CircleHelp} className="w-full" onClick={() => setHelp(true)}>
+          What happens next?
+        </Button>
+        {heir && (
+          <ButtonLink href={`/plan/${encodeURIComponent(view.plan.owner)}/packet?heir=${encodeURIComponent(heir.account_id)}`} variant="outline" size="lg" icon={FileText} className="w-full">
+            Recovery packet to print and keep
+          </ButtonLink>
+        )}
+      </div>
+      <div className="flex flex-col gap-6">
+        {me && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
+        <HeirIntentsCard owner={view.plan.owner} holding={intents} />
+        <GetNotified role="heir" />
+        {followUp && <ProposeCard view={view} act={act} busy={!!busy} followUp asHeir />}
+        <HistoryCard view={view} history={history} />
+        <PlanSummaryCard ctx={ctx} role="heir" />
+        <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
+        <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
+        <OptionsCard view={view} now={now} me={me} editable={false} act={act} busy={!!busy} state={options} />
+        <Disclosure icon={Wrench} title="Technical details" sub="Accounts, destinations and transaction hashes">
+          <div>
+            <Row k="Plan" v={view.plan.owner} mono />
+            <Row k="Contract" v={CONTRACT_ID} mono />
+            {mine.map(({ t, index }) => (
+              <Row key={index} k={`${assetLabel(t.asset)} transfer #${index}`} v={`${t.destination}${t.tx_hash ? ` · ${t.tx_hash}` : ""}${t.eth_tx ? ` · nonce ${t.eth_tx.nonce}` : ""}`} mono />
+            ))}
+          </div>
+        </Disclosure>
+      </div>
       <Dialog open={help} onClose={() => setHelp(false)} title="What happens next" description={`How a release of ${owner}'s plan reaches you.`} sheet bottom>
         <Timeline view={view} now={now} />
         <ol className="flex flex-col gap-3 text-[15px] leading-relaxed">
@@ -216,6 +221,6 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
           Read the FAQ <ArrowRight aria-hidden className="size-4" />
         </a>
       </Dialog>
-    </>
+    </div>
   );
 }
