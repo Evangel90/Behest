@@ -44,6 +44,10 @@ export const SPONSORED_METHODS = {
   request_destination_change: "recipient",
   cancel_destination_change: "recipient",
   respond_destination_change: "owner",
+  // D33: a sealed plan is saved like set_plan; a heir reveals its own record
+  // (checked against the plan's commitments first), or a participant does.
+  set_private_plan: "self",
+  reveal_heir: "sealed_heir",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 

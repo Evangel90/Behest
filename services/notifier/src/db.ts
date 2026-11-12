@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries (status, next_ms);
 CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, account TEXT NOT NULL, expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tg_links (token_hash TEXT PRIMARY KEY, account TEXT NOT NULL, expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, account TEXT NOT NULL, expires_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS records (owner TEXT NOT NULL, account TEXT NOT NULL, sealed TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY (owner, account));
 CREATE TABLE IF NOT EXISTS email_log (address TEXT NOT NULL, account TEXT NOT NULL, at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS email_log_address ON email_log (address, at_ms);
 `;
@@ -133,6 +134,20 @@ export class Store {
   }
   private run(sql: string, ...args: (string | number | null)[]) {
     return this.db.prepare(sql).run(...args);
+  }
+
+  // ---- D33 record backups (encrypted by the API before they get here)
+  setRecords(owner: string, rows: { account: string; sealed: string }[], now = Date.now()) {
+    this.tx(() => {
+      this.run("DELETE FROM records WHERE owner = ?", owner);
+      for (const r of rows) this.run("INSERT INTO records (owner, account, sealed, created_ms) VALUES (?, ?, ?, ?)", owner, r.account, r.sealed, now);
+    });
+  }
+  records(owner: string): { account: string; sealed: string; created_ms: number }[] {
+    return this.all("SELECT account, sealed, created_ms FROM records WHERE owner = ? ORDER BY account", owner);
+  }
+  record(owner: string, account: string): { account: string; sealed: string; created_ms: number } | undefined {
+    return this.get("SELECT account, sealed, created_ms FROM records WHERE owner = ? AND account = ?", owner, account);
   }
 
   // ---- meta

@@ -85,6 +85,13 @@ async function authorize(intent: CallIntent) {
     ]);
     plan.destinations = [...cur, ...req].map((d) => d.destination);
   }
+  if (plan && intent.role === "sealed_heir") {
+    const [sealed, c] = await Promise.all([
+      view<{ commitments: string[] } | null>("get_private_heirs", { owner: intent.owner }).catch(() => null),
+      view<string>("get_heir_commitment", { owner: intent.owner, record: intent.args.record }).catch(() => null),
+    ]);
+    plan.sealed_match = !!c && !!sealed?.commitments.includes(c);
+  }
   if (!holdsRole(plan as never, intent)) throw new PolicyError("NO_ROLE", `${intent.sender} is not the ${intent.role} of ${intent.owner}`);
 }
 

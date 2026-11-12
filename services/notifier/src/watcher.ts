@@ -64,7 +64,7 @@ export class Watcher {
     const s: Snapshot = { view };
     const p = view.plan.proposal;
     const prevP = prev?.view.plan.proposal;
-    const [options, extension, history, withdrawal, pending, guardians, destinations, destinationRequests] = await Promise.all([
+    const [options, extension, history, withdrawal, pending, guardians, destinations, destinationRequests, sealed] = await Promise.all([
       p ? this.view<Options | null>("get_release_options", { owner }) : Promise.resolve(undefined),
       p?.waiting_ends_at_ms ? this.view<ExtensionState | null>("get_extension", { owner }) : Promise.resolve(undefined),
       // needed to tell settled from cancelled, and to spot follow-up rounds
@@ -76,6 +76,8 @@ export class Watcher {
       // D30/D31
       this.view<DestinationRow[]>("get_destinations", { owner }).catch(() => undefined),
       this.view<DestinationRow[]>("get_destination_requests", { owner }).catch(() => undefined),
+      // D33
+      this.view<{ commitments: string[]; revealed: { index: number; account_id: string }[]; reveal_deadline_ms: number } | null>("get_private_heirs", { owner }).catch(() => undefined),
     ]);
     if (options !== undefined) s.options = options;
     if (extension !== undefined) s.extension = extension;
@@ -85,6 +87,7 @@ export class Watcher {
     if (guardians !== undefined) s.guardians = guardians;
     if (destinations !== undefined) s.destinations = destinations;
     if (destinationRequests !== undefined) s.destinationRequests = destinationRequests;
+    if (sealed !== undefined) s.sealed = sealed ? { count: sealed.commitments.length, revealed: sealed.revealed.map((r) => ({ index: r.index, account_id: r.account_id })), reveal_deadline_ms: sealed.reveal_deadline_ms } : null;
     return s;
   }
 

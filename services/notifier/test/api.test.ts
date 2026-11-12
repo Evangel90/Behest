@@ -37,6 +37,14 @@ beforeAll(async () => {
     email,
     telegram,
     isMember: async (owner, account) => owner === "kemi.testnet" && account === "amara.testnet",
+    records: {
+      key: Buffer.alloc(32, 7),
+      chain: {
+        commitments: async (o) => (o === "kemi.testnet" ? ["c-amara", "c-tobi"] : null),
+        commitmentOf: async (_o, r) => (r.salt === "a".repeat(64) ? `c-${r.account_id.split(".")[0]}` : "nope"),
+        overdue: async () => overdue,
+      },
+    },
     councilOf: async (dao) => (dao === "family.sputnikv2.testnet" ? ["kemi.testnet", "dayo.testnet"] : dao === "rpc.sputnikv2.testnet" ? Promise.reject(new Error("down")) : null),
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
@@ -48,6 +56,7 @@ afterAll(async () => {
   await Promise.all([sink.close(), tg.close(), rx.close()]);
 });
 
+let overdue = false;
 const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
   const res = await fetch(`${base}${path}`, { method, headers: { origin: ORIGIN, ...(body ? { "content-type": "application/json" } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
@@ -188,5 +197,26 @@ describe("notifier API", () => {
     expect((await call("POST", "/v1/contacts", await sign("kemi", "contacts.add", { channel: "sms", address: "1" }))).json.code).toBe("BAD_CHANNEL");
     expect((await call("POST", "/v1/contacts", await sign("kemi", "contacts.add", { channel: "webhook", url: "ftp://x" }))).json.code).toBe("BAD_URL");
     expect((await call("GET", "/nope")).status).toBe(404);
+  });
+
+  it("D33: backs up sealed records (encrypted), gives the owner all and each heir its own once overdue", async () => {
+    const rec = (account: string, salt = "a".repeat(64)) => ({ account_id: account, share_bps: 5000, near_destination: account, eth_destination: null, btc_destination: null, salt });
+    expect((await call("PUT", "/v1/records", await sign("amara", "records.set", { records: [rec("amara.testnet")] }))).json.code).toBe("NOT_SEALED");
+    expect((await call("PUT", "/v1/records", await sign("kemi", "records.set", { records: [rec("amara.testnet", "b".repeat(64))] }))).json.code).toBe("NO_MATCH");
+    expect((await call("PUT", "/v1/records", await sign("kemi", "records.set", { records: [{ ...rec("amara.testnet"), salt: "short" }] }))).json.code).toBe("BAD_REQUEST");
+    const put = await call("PUT", "/v1/records", await sign("kemi", "records.set", { records: [rec("amara.testnet"), rec("tobi.testnet")] }));
+    expect(put.json.accounts).toEqual(["amara.testnet", "tobi.testnet"]);
+    // Stored encrypted: no plaintext address in the database.
+    expect(JSON.stringify(store.records("kemi.testnet"))).not.toMatch(/amara|tobi/);
+    const own = await call("GET", "/v1/records?owner=kemi.testnet", undefined, await session("kemi"));
+    expect(own.json.records.map((r: { account_id: string }) => r.account_id)).toEqual(["amara.testnet", "tobi.testnet"]);
+    const heir = await session("amara");
+    expect((await call("GET", "/v1/records?owner=kemi.testnet", undefined, heir)).json.code).toBe("NOT_YET");
+    overdue = true;
+    const mine = await call("GET", "/v1/records?owner=kemi.testnet", undefined, heir);
+    expect(mine.json.records).toHaveLength(1);
+    expect(mine.json.records[0]).toMatchObject({ account_id: "amara.testnet", salt: "a".repeat(64) });
+    expect((await call("DELETE", "/v1/records", await sign("kemi", "records.clear"))).status).toBe(200);
+    expect((await call("GET", "/v1/records?owner=kemi.testnet", undefined, heir)).json.code).toBe("NOT_FOUND");
   });
 });

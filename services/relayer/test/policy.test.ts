@@ -138,6 +138,11 @@ describe("holdsRole", () => {
     expect(holdsRole(plan, intent("alt.testnet", "recipient" as never))).toBe(false);
     expect(holdsRole({ ...plan, destinations: ["wallet.testnet"] }, intent("wallet.testnet", "participant_or_destination" as never))).toBe(true);
     expect(holdsRole(plan, intent("wallet.testnet", "participant_or_destination" as never))).toBe(false);
+    // D33: a sealed heir reveals its own (matching) record; strangers and non-matching records aren't sponsored.
+    const rev = (sender: string, m: boolean) => holdsRole({ ...plan, sealed_match: m }, { ...intent(sender, "sealed_heir" as never), args: { owner: plan.plan.owner, record: { account_id: "secret.testnet" } } });
+    expect(rev("secret.testnet", true)).toBe(true);
+    expect(rev("secret.testnet", false)).toBe(false);
+    expect(rev("stranger.testnet", true)).toBe(false);
   });
 });
 

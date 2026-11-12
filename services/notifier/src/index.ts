@@ -5,6 +5,7 @@
 // private in a local SQLite database and managed through a signed HTTP API.
 import { JsonRpcProvider } from "near-api-js";
 import { createApi } from "./api.js";
+import { parseKey, type HeirRecord } from "./records.js";
 import { councilReader } from "./council.js";
 import { EmailSender } from "./channels/email.js";
 import { TelegramBot } from "./channels/telegram.js";
@@ -33,7 +34,21 @@ const engine = new Engine(store, cfg, { email, telegram, webhook }, log);
 const watcher = new Watcher(store, engine, view, { owners: cfg.owners, appUrl: cfg.appUrl, contractId: cfg.contractId, councilOf }, log);
 if (telegram) telegram.onLinked = (account, id, who) => engine.security(account, "Telegram linked", `Telegram ${who} now receives the notifications for ${account}. If you didn't do this, remove it in Behest.`, id);
 
-const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrl), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log });
+const recordsKey = parseKey(process.env.NOTIFY_RECORDS_KEY);
+const records = recordsKey
+  ? {
+      key: recordsKey,
+      chain: {
+        commitments: async (owner: string) => (await view<{ commitments: string[] } | null>("get_private_heirs", { owner }))?.commitments ?? null,
+        commitmentOf: (owner: string, record: HeirRecord) => view<string>("get_heir_commitment", { owner, record }),
+        overdue: async (owner: string) => {
+          const p = await view<{ now_ms: number; overdue_at_ms: number } | null>("get_plan", { owner });
+          return !!p && p.now_ms >= p.overdue_at_ms;
+        },
+      },
+    }
+  : undefined;
+const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrl), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log, records });
 api.listen(cfg.port, cfg.host, () => log("notifier api listening", { port: cfg.port, publicUrl: cfg.publicUrl }));
 
 log("notifier started", {

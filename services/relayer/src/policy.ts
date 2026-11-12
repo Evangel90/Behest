@@ -138,6 +138,8 @@ interface PlanRoles {
   recipients?: string[];
   /** D30: every registered and requested destination (`get_destinations`, `get_destination_requests`). */
   destinations?: string[];
+  /** D33: the record's commitment is one of the plan's (`get_heir_commitment` vs `get_private_heirs`). */
+  sealed_match?: boolean;
 }
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
@@ -170,6 +172,11 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
       return plan.plan.policy.heirs.some((h) => h.account_id === intent.sender) || (plan.recipients ?? []).includes(intent.sender);
     case "participant_or_destination":
       return holdsRole(plan, { ...intent, role: "participant" }) || (plan.recipients ?? []).includes(intent.sender) || (plan.destinations ?? []).includes(intent.sender);
+    case "sealed_heir": {
+      if (!plan.sealed_match) return false;
+      const record = intent.args.record as { account_id?: string } | undefined;
+      return record?.account_id === intent.sender || holdsRole(plan, { ...intent, role: "participant" });
+    }
     case "owner_or_guardian":
       return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender);
   }

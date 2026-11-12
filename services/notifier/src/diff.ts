@@ -122,6 +122,8 @@ export interface Snapshot {
   /** D30 current destinations with proof status, D31 open requests. */
   destinations?: DestinationRow[];
   destinationRequests?: DestinationRow[];
+  /** D33: a sealed plan's commitments count and who has been revealed. */
+  sealed?: { count: number; revealed: { index: number; account_id: string }[]; reveal_deadline_ms: number } | null;
 }
 
 export const KINDS = [
@@ -344,6 +346,30 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
       subject: `${who} hasn't checked in`,
       text: `${who} hasn't checked in and is now counted as unreachable. Guardians can propose a release; ${who} can still check in.`,
     });
+    // D33: a sealed plan's heirs must reveal their recovery records first.
+    const sl = cur.sealed;
+    if (sl) {
+      add({
+        key: `${o}:reveal_open:${checkIn}`,
+        kind: "overdue",
+        to: ["owner", "guardians"],
+        subject: `${who}'s heirs can now reveal themselves`,
+        text: `${who}'s plan keeps its heirs private. Each heir (or anyone holding their recovery record) can now reveal it in Behest. A release can start once all ${sl.count} are revealed, or after ${when(sl.reveal_deadline_ms)}. If you hold a record, reveal it now.`,
+      });
+    }
+  }
+  if (cur.sealed && prev?.sealed) {
+    for (const r of cur.sealed.revealed) {
+      if (prev.sealed.revealed.some((x) => x.index === r.index)) continue;
+      add({
+        key: `${o}:revealed:${checkIn}:${r.index}`,
+        kind: "overdue",
+        to: ["owner", "guardians"],
+        accounts: [r.account_id],
+        subject: `A private heir of ${who}'s plan was revealed (${cur.sealed.revealed.length} of ${cur.sealed.count})`,
+        text: `${name(r.account_id)} was revealed as heir ${r.index + 1} of ${cur.sealed.count}. ${cur.sealed.revealed.length === cur.sealed.count ? "Every heir is revealed: guardians can propose the release." : `A release can start once all are revealed, or after ${when(cur.sealed.reveal_deadline_ms)}.`}`,
+      });
+    }
   }
 
   // ---- the open proposal

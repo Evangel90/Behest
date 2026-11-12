@@ -296,3 +296,15 @@ describe("D31 destination requests", () => {
     expect(closed.text).toContain("unchanged");
   });
 });
+
+describe("D33 sealed plans", () => {
+  it("tells guardians reveals are open, and announces each reveal (to the heir too)", () => {
+    const sealed = { count: 2, revealed: [] as { index: number; account_id: string }[], reveal_deadline_ms: 9_999_999 };
+    const a: Snapshot = { ...s("Overdue"), sealed };
+    expect(notices(null, a).some((n) => n.key.includes("reveal_open") && n.to.includes("guardians"))).toBe(true);
+    const b: Snapshot = { ...s("Overdue"), sealed: { ...sealed, revealed: [{ index: 1, account_id: "tobi.testnet" }] } };
+    const r = notices(a, b).find((n) => n.key.includes(":revealed:"))!;
+    expect(r.subject).toContain("1 of 2");
+    expect(recipients(b, r)).toContain("tobi.testnet");
+  });
+});

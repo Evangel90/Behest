@@ -16,6 +16,9 @@
 //   PUT    /v1/preferences                signed "preferences.set"
 //   PUT    /v1/watches                    signed "watches.set"
 //   PUT    /v1/council                    signed "council.set" by a council member: the DAO's notices go to its whole council (D26)
+//   PUT    /v1/records                    signed "records.set" by a sealed plan's owner: back up its heirs' recovery records (D33)
+//   DELETE /v1/records                    signed "records.clear"
+//   GET    /v1/records?owner=…            bearer: the owner gets all; a heir gets its own once the plan is overdue
 //   GET    /v1/verify?token=…             page with a confirm button (mail scanners don't confirm by fetching)
 //   POST   /v1/verify                     confirm an email
 //   GET    /v1/unsubscribe?token=…        page with an unsubscribe button
@@ -33,6 +36,7 @@ import { ALWAYS_ON, KIND_INFO, KINDS, type Kind } from "./diff.js";
 import type { CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 import type { KeyLookup } from "./nep413.js";
+import { cleanRecord, open, rowId, seal, type HeirRecord, type RecordsChain } from "./records.js";
 
 export const LIMITS = {
   email: 3,
@@ -62,6 +66,8 @@ export interface ApiDeps {
   councilOf?: CouncilOf;
   log?: (msg: string, data?: Record<string, unknown>) => void;
   now?: () => number;
+  /** D33 record backup: off unless a key is configured. */
+  records?: { key: Buffer; chain: RecordsChain };
 }
 
 class HttpError extends Error {
@@ -234,6 +240,7 @@ export function createApi(d: ApiDeps): Server {
         kinds: KINDS.map((k) => ({ kind: k, ...KIND_INFO[k], always_on: ALWAYS_ON.includes(k) })),
         limits: { email: LIMITS.email, telegram: LIMITS.telegram, webhook: LIMITS.webhook, watches: LIMITS.watches },
         webhook_https_only: !cfg.webhookAllowInsecure,
+        records: Boolean(d.records),
       });
     }
 
@@ -388,6 +395,48 @@ export function createApi(d: ApiDeps): Server {
       if (!members.includes(a.account)) throw new HttpError(403, "NOT_COUNCIL", `${a.account} isn't on ${dao}'s council`);
       store.setCouncil(dao, a.account, a.enabled, now());
       return json(req, res, 200, { dao, enabled: a.enabled, members });
+    }
+
+    // ---- D33 recovery record backups
+    if (path === "/v1/records") {
+      const r = d.records;
+      if (!r) throw new HttpError(503, "RECORDS_UNAVAILABLE", "record backup isn't enabled on this notifier");
+      const aad = (owner: string, account: string) => `behest-record:${cfg.contractId}:${owner}:${account}`;
+      if (m === "PUT") {
+        const a = await signed(req, "records.set");
+        const list = Array.isArray(a.records) ? a.records.map(cleanRecord) : null;
+        if (!list || !list.length || list.length > 10 || list.some((x) => !x)) throw new HttpError(400, "BAD_REQUEST", "records must be 1–10 heir records");
+        const recs = list as HeirRecord[];
+        if (new Set(recs.map((x) => x.account_id)).size !== recs.length) throw new HttpError(400, "BAD_REQUEST", "one record per heir");
+        const sealedOn = await r.chain.commitments(a.account).catch(() => {
+          throw new HttpError(502, "RPC", "couldn't read the plan; try again");
+        });
+        if (!sealedOn) throw new HttpError(400, "NOT_SEALED", "this plan doesn't keep its heirs private");
+        for (const rec of recs) {
+          const c = await r.chain.commitmentOf(a.account, rec);
+          if (!sealedOn.includes(c)) throw new HttpError(400, "NO_MATCH", `the record for ${rec.account_id} doesn't match the plan`);
+        }
+        store.setRecords(a.account, recs.map((rec) => { const id = rowId(r.key, a.account, rec.account_id); return { account: id, sealed: seal(r.key, JSON.stringify(rec), aad(a.account, id)) }; }), now());
+        engine.security(a.account, "Heir records backed up", `Behest now keeps an encrypted copy of ${recs.length} recovery record${recs.length === 1 ? "" : "s"} for your plan. Each heir can get theirs once you're overdue. If you didn't do this, remove the backup in Behest.`);
+        return json(req, res, 200, { owner: a.account, accounts: recs.map((x) => x.account_id) });
+      }
+      if (m === "DELETE") {
+        const a = await signed(req, "records.clear");
+        store.setRecords(a.account, [], now());
+        return json(req, res, 200, { owner: a.account, accounts: [] });
+      }
+      if (m === "GET") {
+        const account = bearer(req);
+        const owner = url.searchParams.get("owner") ?? "";
+        if (!ACCOUNT.test(owner)) throw new HttpError(400, "BAD_REQUEST", "owner must be an account id");
+        const read = (row: { account: string; sealed: string; created_ms: number }) => ({ ...(JSON.parse(open(r.key, row.sealed, aad(owner, row.account))) as HeirRecord), backed_up_ms: row.created_ms });
+        if (account === owner) return json(req, res, 200, { owner, records: store.records(owner).map(read).sort((x, y) => x.account_id.localeCompare(y.account_id)) });
+        const row = store.record(owner, rowId(r.key, owner, account));
+        if (!row) throw new HttpError(404, "NOT_FOUND", "Behest doesn't keep a record for you on this plan");
+        if (!(await r.chain.overdue(owner).catch(() => false))) throw new HttpError(403, "NOT_YET", "your record is released once the owner is overdue");
+        log("record released", { owner, account });
+        return json(req, res, 200, { owner, records: [read(row)] });
+      }
     }
 
     // ---- email confirmation and unsubscribe (opened from emails)
