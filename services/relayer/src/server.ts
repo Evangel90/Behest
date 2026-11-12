@@ -62,7 +62,11 @@ async function view<T>(method: string, args: Record<string, unknown>): Promise<T
 
 /** The sender must hold the method's role in the plan it names. */
 async function authorize(intent: CallIntent) {
-  const plan = (await view<Record<string, unknown> | null>("get_plan", { owner: intent.owner }).catch(() => null)) as Record<string, unknown> | null;
+  // A failed read isn't "no plan": say the RPC is down rather than refuse the caller's role.
+  const plan = (await view<Record<string, unknown> | null>("get_plan", { owner: intent.owner }).catch((e) => {
+    log("plan read failed", { owner: intent.owner, error: String(e) });
+    throw new PolicyError("RPC_UNAVAILABLE", "couldn't read the plan from NEAR right now; try again shortly");
+  })) as Record<string, unknown> | null;
   if (plan && intent.role === "delay_signer") {
     const o = await view<{ delay_signers?: string[] } | null>("get_release_options", { owner: intent.owner }).catch(() => null);
     plan.delay_signers = o?.delay_signers ?? [];
@@ -174,7 +178,7 @@ async function evmNonce(url: URL, res: ServerResponse) {
 }
 
 function fail(res: ServerResponse, e: unknown) {
-  if (e instanceof PolicyError) return send(res, 400, { code: e.code, error: e.message });
+  if (e instanceof PolicyError) return send(res, e.code === "RPC_UNAVAILABLE" ? 503 : 400, { code: e.code, error: e.message });
   if (e instanceof SyntaxError) return send(res, 400, { code: "BAD_REQUEST", error: "invalid JSON" });
   log("relay error", { error: String(e) });
   send(res, 502, { code: "RELAY_FAILED", error: "could not submit the transaction" });

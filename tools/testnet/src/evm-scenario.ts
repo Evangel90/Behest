@@ -16,7 +16,7 @@ import { ensureScenarioFunds } from "./funding.js";
 
 // Reads go to a separate RPC (fastnear rate-limits per IP and also carries the
 // transactions), with backoff on rate limits.
-const provider = new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL || "https://rpc.testnet.near.org" });
+const provider = new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL || "https://test.rpc.fastnear.com" });
 async function view<T>(contractId: string, method: string, args: Record<string, unknown> = {}): Promise<T> {
   for (let i = 0; ; i++) {
     try {
