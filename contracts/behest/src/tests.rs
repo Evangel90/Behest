@@ -4278,3 +4278,95 @@ mod sealed {
         assert_eq!(e.as_("x.testnet", 0).get_private_heirs(acc("owner.testnet")).unwrap().commitments.len(), 3);
     }
 }
+
+#[cfg(test)]
+mod near_vault {
+    use super::*;
+    use crate::nearvault::{base58_encode, parse_ed25519, sweep_tx};
+    use near_sdk::PromiseResult;
+
+    const PK: &str = "4d7a80636b24694ba9c928394118cd539bf863f5e5773a0de27c7677d3eb0a87";
+    const BLOCK_HASH: &str = "CgAvK69Ec8WnofJ9ES26MqqZTG545C7s4wdZTCEoydTE";
+    const TX: &str = "4000000034643761383036333662323436393462613963393238333934313138636435333962663836336635653537373361306465323763373637376433656230613837004d7a80636b24694ba9c928394118cd539bf863f5e5773a0de27c7677d3eb0a8707000000000000000e0000006265686573742e746573746e6574ad796c62fb45228395a2479745fd1de03e6878087def116dd886aedce23257810100000002070000006465706f736974190000007b226f776e6572223a226f776e65722e746573746e6574227d00a0724e180900000080c8f865051f9b241a000000000000";
+    const SIG: &str = "a14673fa6cd64e2396c1360a886018375551ea5d1b93c56282b27a8451d4f77d5447cc17c1a6054d5d50962a30fd31d772c8f061eb0a620809a88d943613360d";
+    const SIGNED_B64: &str = "QAAAADRkN2E4MDYzNmIyNDY5NGJhOWM5MjgzOTQxMThjZDUzOWJmODYzZjVlNTc3M2EwZGUyN2M3Njc3ZDNlYjBhODcATXqAY2skaUupySg5QRjNU5v4Y/XldzoN4nx2d9PrCocHAAAAAAAAAA4AAABiZWhlc3QudGVzdG5ldK15bGL7RSKDlaJHl0X9HeA+aHgIfe8RbdiGrtziMleBAQAAAAIHAAAAZGVwb3NpdBkAAAB7Im93bmVyIjoib3duZXIudGVzdG5ldCJ9AKByThgJAAAAgMj4ZQUfmyQaAAAAAAAAAKFGc/ps1k4jlsE2CohgGDdVUepdG5PFYoKyeoRR1Pd9VEfMF8GmBU1dUJYqMP0x13LI8GHrCmIICaiNlDYTNg0=";
+
+    fn cb(e: &mut Env, results: Vec<PromiseResult>) -> &mut Contract {
+        let ctx = VMContextBuilder::new().current_account_id(acc("behest.testnet")).predecessor_account_id(acc("behest.testnet")).block_timestamp(e.t * 1_000_000).build();
+        testing_env!(ctx, near_sdk::test_vm_config(), near_sdk::RuntimeFeesConfig::test(), Default::default(), results);
+        &mut e.c
+    }
+    fn pk() -> [u8; 32] {
+        eth::hex_decode(PK).unwrap().try_into().unwrap()
+    }
+    /// A plan whose NEAR vault key is the vector's key.
+    fn env() -> Env {
+        let mut e = Env::new();
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        let key = format!("\"ed25519:{}\"", base58_encode(&pk()));
+        assert!(cb(&mut e, vec![PromiseResult::Successful(key.into_bytes())]).on_near_vault_key(acc("owner.testnet")));
+        e
+    }
+    const AMOUNT: u128 = 123_456_789_000_000_000_000_000;
+
+    #[test]
+    fn builds_the_same_transaction_as_near_api_js() {
+        let bh: [u8; 32] = base58_decode(BLOCK_HASH).unwrap().try_into().unwrap();
+        assert_eq!(base58_encode(&bh), BLOCK_HASH);
+        assert_eq!(eth::hex_encode(&sweep_tx(&acc("behest.testnet"), &acc("owner.testnet"), &pk(), 7, &bh, AMOUNT)), TX);
+    }
+
+    #[test]
+    fn registers_once_and_lists_the_vault() {
+        let mut e = env();
+        let v = e.as_("x.testnet", 0).get_near_vault(acc("owner.testnet")).unwrap();
+        assert_eq!(v.account_id, PK);
+        assert_eq!(v.path, "behest/v1/owner.testnet/near");
+        assert!(v.public_key.starts_with("ed25519:"));
+        assert_eq!(e.as_("x.testnet", 0).get_near_vaults(None, None), vec![(acc("owner.testnet"), PK.to_string())]);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("x.testnet", 0).register_near_vault(acc("owner.testnet"))));
+        assert!(r.is_err(), "second registration refused");
+    }
+
+    #[test]
+    fn keeps_only_a_signature_that_verifies() {
+        let mut e = env();
+        let _ = e.as_("executor.testnet", 0).sweep_near_vault(acc("owner.testnet"), U128(AMOUNT), 7, BLOCK_HASH.into());
+        let s = e.as_("x.testnet", 0).get_near_vault_sweep(acc("owner.testnet")).unwrap();
+        assert_eq!(s.hash, eth::hex_encode(&env::sha256_array(eth::hex_decode(TX).unwrap())));
+        assert!(s.signed_tx.is_none());
+        // a signature from another key, then the real one (as a byte array)
+        let mut bad = eth::hex_decode(SIG).unwrap();
+        bad[0] ^= 1;
+        let resp = |sig: &[u8]| near_sdk::serde_json::json!({"scheme": "Ed25519", "signature": sig}).to_string().into_bytes();
+        assert!(!cb(&mut e, vec![PromiseResult::Successful(resp(&bad))]).on_near_vault_signed(acc("owner.testnet"), BLOCK_HASH.into()));
+        assert!(e.as_("x.testnet", 0).get_near_vault_sweep(acc("owner.testnet")).unwrap().signed_tx.is_none());
+        assert!(cb(&mut e, vec![PromiseResult::Successful(resp(&eth::hex_decode(SIG).unwrap()))]).on_near_vault_signed(acc("owner.testnet"), BLOCK_HASH.into()));
+        assert_eq!(e.as_("x.testnet", 0).get_near_vault_sweep(acc("owner.testnet")).unwrap().signed_tx.as_deref(), Some(SIGNED_B64));
+    }
+
+    #[test]
+    fn reads_signatures_in_every_shape() {
+        let sig = eth::hex_decode(SIG).unwrap();
+        let want: [u8; 64] = sig.clone().try_into().unwrap();
+        for v in [
+            near_sdk::serde_json::json!({"scheme": "Ed25519", "signature": sig}),
+            near_sdk::serde_json::json!({"scheme": "Ed25519", "signature": SIG}),
+            near_sdk::serde_json::json!({"scheme": "Ed25519", "signature": {"bytes": sig}}),
+            near_sdk::serde_json::json!({"Ed25519": {"signature": sig}}),
+        ] {
+            assert_eq!(parse_ed25519(&v), Some(want), "{v}");
+        }
+        assert_eq!(parse_ed25519(&near_sdk::serde_json::json!({"signature": [1, 2]})), None);
+    }
+
+    #[test]
+    fn sweeps_need_a_vault_and_valid_inputs() {
+        let mut e = Env::new();
+        e.as_("owner.testnet", NEAR).set_plan(plan_input());
+        for (amount, nonce, bh) in [(AMOUNT, 7, BLOCK_HASH), (0, 7, BLOCK_HASH), (AMOUNT, 7, "nope")] {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.as_("x.testnet", 0).sweep_near_vault(acc("owner.testnet"), U128(amount), nonce, bh.into())));
+            assert!(r.is_err());
+        }
+    }
+}

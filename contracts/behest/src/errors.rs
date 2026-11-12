@@ -88,6 +88,9 @@ pub enum Error {
     AlreadyRevealed,
     RevealNotOpen,
     RevealsPending,
+    NoNearVault,
+    NearVaultExists,
+    InvalidSweep,
 }
 
 impl Error {
@@ -178,6 +181,9 @@ impl Error {
             Error::AlreadyRevealed => "E_ALREADY_REVEALED",
             Error::RevealNotOpen => "E_REVEAL_NOT_OPEN",
             Error::RevealsPending => "E_REVEALS_PENDING",
+            Error::NoNearVault => "E_NO_NEAR_VAULT",
+            Error::NearVaultExists => "E_NEAR_VAULT_EXISTS",
+            Error::InvalidSweep => "E_INVALID_SWEEP",
         }
     }
 }

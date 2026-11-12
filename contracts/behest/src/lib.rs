@@ -8,6 +8,7 @@ pub mod btc;
 pub mod changes;
 pub mod destinations;
 pub mod privacy;
+pub mod nearvault;
 pub mod guardians;
 pub mod eth;
 pub mod ethproof;
@@ -91,6 +92,8 @@ pub struct SignRequestArgs {
 #[near(serializers = [json])]
 pub enum SignPayload {
     Ecdsa(String),
+    /// Ed25519 (domain 1): the message itself, hex. Used by the NEAR vault.
+    Eddsa(String),
 }
 
 /// MPC response: `{"scheme":"Secp256k1","big_r":{"affine_point":".."},"s":{"scalar":".."},"recovery_id":0}`.
@@ -1897,6 +1900,7 @@ pub const EVM_METHODS: &[&str] = &[
     "approve_extension",
     "release",
     "register_btc_vault",
+    "register_near_vault",
     "rebase_btc",
     "set_plan",
     "set_release_rules",
@@ -1993,6 +1997,10 @@ impl Contract {
             "register_btc_vault" => {
                 let owner = evm_args!(args, { owner: AccountId });
                 PromiseOrValue::Promise(self.register_btc_vault(owner))
+            }
+            "register_near_vault" => {
+                let owner = evm_args!(args, { owner: AccountId });
+                PromiseOrValue::Promise(self.register_near_vault(owner))
             }
             "rebase_btc" => {
                 let (owner, utxos) = evm_args!(args, { owner: AccountId, utxos: Vec<BtcUtxo> });
@@ -2338,7 +2346,7 @@ fn to_tx(b: &BtcTx) -> btc::Tx {
     }
 }
 
-fn base58_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn base58_decode(s: &str) -> Option<Vec<u8>> {
     const A: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     let mut out: Vec<u8> = vec![];
     for c in s.bytes() {
