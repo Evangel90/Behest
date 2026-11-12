@@ -6,6 +6,7 @@
 mod errors;
 pub mod btc;
 pub mod changes;
+pub mod destinations;
 pub mod guardians;
 pub mod eth;
 pub mod ethproof;
@@ -1914,6 +1915,11 @@ pub const EVM_METHODS: &[&str] = &[
     "resign_guardian",
     "finalize_guardian_change",
     "cancel_guardian_change",
+    // D30, D31
+    "prove_destination",
+    "request_destination_change",
+    "cancel_destination_change",
+    "respond_destination_change",
 ];
 
 impl Contract {
@@ -2061,6 +2067,23 @@ impl Contract {
             "cancel_guardian_change" => {
                 let (owner, guardian) = evm_args!(args, { owner: AccountId, guardian: AccountId });
                 unit(self.cancel_guardian_change(owner, guardian))
+            }
+            "prove_destination" => {
+                let (owner, account_id, chain, destination, signature) =
+                    evm_args!(args, { owner: AccountId, account_id: AccountId, chain: destinations::DestChain, destination: String, signature: Option<String> });
+                unit(self.prove_destination(owner, account_id, chain, destination, signature))
+            }
+            "request_destination_change" => {
+                let (owner, chain, destination, signature) = evm_args!(args, { owner: AccountId, chain: destinations::DestChain, destination: String, signature: Option<String> });
+                unit(self.request_destination_change(owner, chain, destination, signature))
+            }
+            "cancel_destination_change" => {
+                let (owner, chain) = evm_args!(args, { owner: AccountId, chain: destinations::DestChain });
+                unit(self.cancel_destination_change(owner, chain))
+            }
+            "respond_destination_change" => {
+                let (account_id, chain, approve) = evm_args!(args, { account_id: AccountId, chain: destinations::DestChain, approve: bool });
+                unit(self.respond_destination_change(account_id, chain, approve))
             }
             _ => fail(Error::EvmMethod),
         }

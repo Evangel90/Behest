@@ -13,6 +13,9 @@
 | Rotate own seat to a new account; resign (D29) | ✗ | ✓ (own seat) | ✗ | ✗ | ✗ | ✗ |
 | Ask a standby to fill a resigned or unresponsive seat; finalize a due seat change (D29) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Cancel a pending seat change (D29) | ✓ (any) | ✓ (own) | ✗ | ✗ | ✗ | ✗ |
+| Prove control of a destination (D30) | ✗ | ✗ | ✓ (from the NEAR destination, or anyone submitting a valid signature) | ✓ | ✓ | ✓ |
+| Request a destination change (D31) | ✗ | ✗ | ✓ (own; alternates and the fallback too; only while the owner is active) | ✗ | ✗ | ✗ |
+| Approve or reject a destination request (D31) | ✓ (an edit under D28) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Check in | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Cancel proposal (before `waiting_ends_at`) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Deposit NEAR to plan escrow | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |

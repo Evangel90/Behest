@@ -124,7 +124,7 @@ fn parse_decimal(s: &str) -> Option<u64> {
     s.parse().ok()
 }
 
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn hex_decode(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 {
         return None;
     }

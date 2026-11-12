@@ -1,0 +1,8 @@
+{
+  "eth_address": "0xe1fae9b4fab2f5726677ecfa912d96b0b683e6a9",
+  "btc_address": "tb1qj2spud8qnkvexw0wnuhyny0pcft3ul54m0mre7",
+  "eth_amara": "0x73844f98a04e1b1dcd36c00b7acf407378bb86bf2b42b421e7ec15560d1371556e0d255b227733bca90ec33072b4e152c45ebdd17cdbcfa133e9aa9e6cd49bb71c",
+  "eth_tobi": "0x62bc24da814b332a8099ade40e756ecc50b4ee06af287362e54c29b11e87085a21dd059c61a08e1f2fc1d11afc0b8bbcc7418dbde5ca2245ddee689f294974d11c",
+  "btc_amara": "279f2f03a82a91d327c6ad57d7b1c2dd623ff8fd3fab57d25fd85001cdf53af94e00bcadd2e222ca9aac2df5469e0db88b7ac09847554e2e8ef583192760be4570",
+  "message_sample": "Behest destination proof\n\nI control this address and agree to receive through it.\nContract: behest.testnet\nPlan owner: owner.testnet\nRecipient: amara.testnet\nChain: Ethereum\nAddress: 0xe1fae9b4fab2f5726677ecfa912d96b0b683e6a9"
+}

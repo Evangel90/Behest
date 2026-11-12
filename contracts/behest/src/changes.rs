@@ -144,16 +144,25 @@ impl Contract {
     pub(crate) fn owner_edit(&mut self, change: Change) {
         let owner = caller();
         let before = env::storage_usage();
-        let change = self.check_change(&owner, change);
-        let n = notice(&owner);
-        if n == 0 {
-            self.write_change(&owner, change);
-        } else if self.is_current(&owner, &change) {
-            drop_pending(&owner, change.kind());
-        } else {
-            self.queue_change(&owner, change, n);
-        }
+        self.apply_or_queue(&owner, change);
         self.charge_storage(before, &owner, false);
+    }
+
+    /// Validates `change` for `owner`, then writes it, or queues it when the
+    /// owner has an edit notice. Returns true when queued.
+    pub(crate) fn apply_or_queue(&mut self, owner: &AccountId, change: Change) -> bool {
+        let change = self.check_change(owner, change);
+        let n = notice(owner);
+        if n == 0 {
+            self.write_change(owner, change);
+            false
+        } else if self.is_current(owner, &change) {
+            drop_pending(owner, change.kind());
+            false
+        } else {
+            self.queue_change(owner, change, n);
+            true
+        }
     }
 
     pub(crate) fn queue_change(&mut self, owner: &AccountId, change: Change, notice_ms: u64) {

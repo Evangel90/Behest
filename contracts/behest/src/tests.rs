@@ -4008,3 +4008,126 @@ fn standbys_count_toward_the_tier_guardian_limit() {
     assert_eq!(panic_code(|| e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet", "s2.testnet", "s3.testnet"], 0)))), "E_TIER_REQUIRED");
     e.as_("owner.testnet", NEAR / 100).set_guardian_settings(Some(gsettings(&["s1.testnet", "s2.testnet"], 0)));
 }
+
+// ------------------------------------------------- D30 proof of control, D31 destination requests
+
+mod proofs {
+    use super::*;
+    use destinations::DestChain;
+
+    fn vec_(k: &str) -> String {
+        let v: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(include_str!("testdata/proof-vectors.json")).unwrap();
+        v[k].as_str().unwrap().to_string()
+    }
+
+    /// Plan whose heir Amara has the vector Ethereum address.
+    fn env() -> Env {
+        let mut e = Env::new();
+        let mut p = plan_input();
+        p.heirs[0].eth_destination = Some(vec_("eth_address"));
+        e.as_("owner.testnet", NEAR).set_plan(p);
+        e
+    }
+
+    fn dest(e: &mut Env, account: &str, chain: DestChain) -> destinations::DestinationView {
+        e.as_("x.testnet", 0).get_destinations(acc("owner.testnet")).into_iter().find(|d| d.account_id.as_str() == account && d.chain == chain).unwrap()
+    }
+
+    #[test]
+    fn message_names_contract_owner_recipient_chain_and_address() {
+        let mut e = env();
+        let m = e.as_("x.testnet", 0).get_proof_message(acc("owner.testnet"), acc("amara.testnet"), DestChain::Eth, vec_("eth_address"));
+        assert_eq!(m, vec_("message_sample"));
+    }
+
+    #[test]
+    fn ethereum_destination_is_proven_by_a_personal_sign_signature() {
+        let mut e = env();
+        let addr = vec_("eth_address");
+        assert!(dest(&mut e, "amara.testnet", DestChain::Eth).proven_at_ms.is_none());
+        // Tobi's signature is over a different recipient: refused.
+        assert_eq!(panic_code(|| e.as_("relayer.testnet", 0).prove_destination(acc("owner.testnet"), acc("amara.testnet"), DestChain::Eth, addr.clone(), Some(vec_("eth_tobi")))), "E_DESTINATION_PROOF");
+        e.as_("relayer.testnet", 0).prove_destination(acc("owner.testnet"), acc("amara.testnet"), DestChain::Eth, addr.to_uppercase().replace("0X", "0x"), Some(vec_("eth_amara")));
+        assert_eq!(dest(&mut e, "amara.testnet", DestChain::Eth).proven_at_ms, Some(e.t));
+        // The owner changes the address: the proof no longer counts.
+        let mut p = plan_input();
+        p.heirs[0].eth_destination = Some("0x00000000000000000000000000000000000000aa".into());
+        e.as_("owner.testnet", NEAR).set_plan(p);
+        assert!(dest(&mut e, "amara.testnet", DestChain::Eth).proven_at_ms.is_none());
+    }
+
+    #[test]
+    fn near_destination_is_proven_by_calling_from_it() {
+        let mut e = env();
+        assert_eq!(panic_code(|| e.as_("tobi.testnet", 0).prove_destination(acc("owner.testnet"), acc("tobi.testnet"), DestChain::Near, "tobi-wallet.testnet".into(), None)), "E_DESTINATION_PROOF");
+        e.as_("tobi-wallet.testnet", 0).prove_destination(acc("owner.testnet"), acc("tobi.testnet"), DestChain::Near, "tobi-wallet.testnet".into(), None);
+        assert!(dest(&mut e, "tobi.testnet", DestChain::Near).proven_at_ms.is_some());
+        // Only a registered (or requested) destination can be proven.
+        assert_eq!(panic_code(|| e.as_("other.testnet", 0).prove_destination(acc("owner.testnet"), acc("tobi.testnet"), DestChain::Near, "other.testnet".into(), None)), "E_INVALID_DESTINATION");
+    }
+
+    #[test]
+    fn bitcoin_p2wpkh_destination_is_proven_by_a_signed_message_and_taproot_is_not_supported() {
+        let mut e = env();
+        e.as_("owner.testnet", NEAR / 100).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: vec_("btc_address") }]);
+        e.as_("x.testnet", 0).prove_destination(acc("owner.testnet"), acc("amara.testnet"), DestChain::Btc, vec_("btc_address"), Some(vec_("btc_amara")));
+        assert!(dest(&mut e, "amara.testnet", DestChain::Btc).proven_at_ms.is_some());
+        let taproot = "tb1p5e6v9v2j5wp3y6c79gaqdqltq7jdv45fswnnm7exmmp2020mqepsvssqqw";
+        e.as_("owner.testnet", NEAR / 100).set_btc_destinations(vec![BtcDestination { account_id: acc("amara.testnet"), address: taproot.into() }]);
+        assert_eq!(panic_code(|| e.as_("x.testnet", 0).prove_destination(acc("owner.testnet"), acc("amara.testnet"), DestChain::Btc, taproot.into(), Some(vec_("btc_amara")))), "E_DESTINATION_PROOF_UNSUPPORTED");
+    }
+
+    #[test]
+    fn heir_requests_a_proven_new_destination_and_the_owner_approves() {
+        let mut e = env();
+        let addr = vec_("eth_address");
+        assert_eq!(panic_code(|| e.as_("stranger.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Eth, addr.clone(), None)), "E_NOT_RECIPIENT");
+        e.as_("tobi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Eth, addr.clone(), Some(vec_("eth_tobi")));
+        let r = e.as_("x.testnet", 0).get_destination_requests(acc("owner.testnet"));
+        assert_eq!((r.len(), r[0].proven_at_ms.is_some()), (1, true));
+        // Nobody but the owner can act on it.
+        assert_eq!(panic_code(|| e.as_("tobi.testnet", 0).respond_destination_change(acc("tobi.testnet"), DestChain::Eth, true)), "E_NO_DESTINATION_REQUEST");
+        e.as_("owner.testnet", NEAR / 100).respond_destination_change(acc("tobi.testnet"), DestChain::Eth, true);
+        assert_eq!(e.plan().policy.heirs[1].eth_destination.as_deref(), Some(addr.as_str()));
+        assert!(e.as_("x.testnet", 0).get_destination_requests(acc("owner.testnet")).is_empty());
+        assert!(dest(&mut e, "tobi.testnet", DestChain::Eth).proven_at_ms.is_some(), "the proof carries over");
+    }
+
+    #[test]
+    fn requests_only_while_the_owner_is_active_and_rejection_changes_nothing() {
+        let mut e = env();
+        e.as_("tobi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Near, "tobi-new.testnet".into(), None);
+        e.as_("owner.testnet", 0).respond_destination_change(acc("tobi.testnet"), DestChain::Near, false);
+        assert_eq!(e.plan().policy.heirs[1].near_destination, Some(acc("tobi-wallet.testnet")));
+        e.as_("tobi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Near, "tobi-new.testnet".into(), None);
+        e.as_("tobi.testnet", 0).cancel_destination_change(acc("owner.testnet"), DestChain::Near);
+        assert_eq!(panic_code(|| e.as_("owner.testnet", 0).respond_destination_change(acc("tobi.testnet"), DestChain::Near, true)), "E_NO_DESTINATION_REQUEST");
+        e.advance(97 * DAY);
+        assert_eq!(panic_code(|| e.as_("tobi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Near, "tobi-new.testnet".into(), None)), "E_OWNER_NOT_ACTIVE");
+    }
+
+    #[test]
+    fn approval_waits_out_the_edit_notice_and_keeps_the_proof() {
+        let mut e = env();
+        e.as_("owner.testnet", NEAR / 100).set_edit_notice(7 * DAY);
+        e.as_("tobi-new.testnet", 0);
+        e.as_("tobi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Near, "tobi-new.testnet".into(), None);
+        e.as_("tobi-new.testnet", 0).prove_destination(acc("owner.testnet"), acc("tobi.testnet"), DestChain::Near, "tobi-new.testnet".into(), None);
+        e.as_("owner.testnet", NEAR / 100).respond_destination_change(acc("tobi.testnet"), DestChain::Near, true);
+        assert_eq!(e.plan().policy.heirs[1].near_destination, Some(acc("tobi-wallet.testnet")), "queued");
+        e.advance(7 * DAY);
+        e.as_("x.testnet", 0).apply_changes(acc("owner.testnet"), None);
+        assert_eq!(e.plan().policy.heirs[1].near_destination, Some(acc("tobi-new.testnet")));
+        assert!(dest(&mut e, "tobi.testnet", DestChain::Near).proven_at_ms.is_some());
+    }
+
+    #[test]
+    fn an_alternate_can_request_too() {
+        let mut e = env();
+        e.as_("owner.testnet", NEAR / 100).set_release_rules(Some(ReleaseRules { alternates: vec![Alternate { heir: acc("amara.testnet"), recipient: outsider("kemi.testnet", Some("kemi.testnet"), None) }], claim_window_ms: WINDOW, ..Default::default() }));
+        e.as_("kemi.testnet", 0).request_destination_change(acc("owner.testnet"), DestChain::Near, "kemi-new.testnet".into(), None);
+        e.as_("owner.testnet", NEAR / 100).respond_destination_change(acc("kemi.testnet"), DestChain::Near, true);
+        let r = e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).unwrap();
+        assert_eq!(r.alternates[0].recipient.near_destination, Some(acc("kemi-new.testnet")));
+    }
+}

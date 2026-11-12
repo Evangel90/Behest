@@ -76,6 +76,12 @@ pub enum Error {
     GuardianResigned,
     GuardianChangePending,
     NoGuardianChange,
+    InvalidDestination,
+    NotRecipient,
+    NoDestinationRequest,
+    OwnerNotActive,
+    DestinationProof,
+    DestinationProofUnsupported,
 }
 
 impl Error {
@@ -154,6 +160,12 @@ impl Error {
             Error::GuardianResigned => "E_GUARDIAN_RESIGNED",
             Error::GuardianChangePending => "E_GUARDIAN_CHANGE_PENDING",
             Error::NoGuardianChange => "E_NO_GUARDIAN_CHANGE",
+            Error::InvalidDestination => "E_INVALID_DESTINATION",
+            Error::NotRecipient => "E_NOT_RECIPIENT",
+            Error::NoDestinationRequest => "E_NO_DESTINATION_REQUEST",
+            Error::OwnerNotActive => "E_OWNER_NOT_ACTIVE",
+            Error::DestinationProof => "E_DESTINATION_PROOF",
+            Error::DestinationProofUnsupported => "E_DESTINATION_PROOF_UNSUPPORTED",
         }
     }
 }
