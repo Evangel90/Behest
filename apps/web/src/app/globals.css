@@ -5,6 +5,7 @@
    point at them, so `bg-paper`, `text-ink`, `border-line`… follow the theme. */
 :root {
   --paper: #FAFAFA;          /* page */
+  --mark-inner: #7FA9EE;     /* brand mark: inner circle (ink mark) */
   --card: #FFFFFF;
   --subtle: #F5F5F5;
   --ink: #0A0A0A;            /* text, and the dark button */
@@ -49,6 +50,7 @@
 
 :root[data-theme="dark"] {
   --paper: #0F0F10;
+  --mark-inner: #2F62B5;
   --card: #171718;
   --subtle: #1F1F21;
   --ink: #F4F4F5;
@@ -107,6 +109,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #0F0F10;
+    --mark-inner: #2F62B5;
     --card: #171718;
     --subtle: #1F1F21;
     --ink: #F4F4F5;

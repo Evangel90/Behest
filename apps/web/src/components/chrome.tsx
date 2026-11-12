@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Repeat, Search, Sun, UserRound, Wallet, type LucideIcon } from "lucide-react";
 import { loadSandbox, PERSONA_ROLES, type Sandbox } from "@/lib/demo";
 import { humanError } from "@/lib/hooks";
@@ -39,13 +39,22 @@ const isActive = (path: string, href: string) => path === href || path.startsWit
 
 // -------------------------------------------------------------------- brand
 
-/** The mark: a dark disc with a blue ring (light variant on dark surfaces). */
+/**
+ * The mark (public/brand/behest-mark-*.svg): a disc with a smaller circle
+ * rising from its lower right, ringed. Ink on light surfaces (follows the
+ * theme), paper on dark ones.
+ */
 export function Mark({ size = 28, light }: { size?: number; light?: boolean }) {
+  const id = useId();
+  const disc = light ? "#FFFFFF" : "currentColor";
   return (
-    <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true">
-      <circle cx="14" cy="14" r="14" fill={light ? "#FEFEFE" : "currentColor"} />
-      <circle cx="14" cy="14" r="8" fill="none" stroke="#2F6BFF" strokeWidth="2.5" />
-      <circle cx="14" cy="14" r="3" fill={light ? "#262626" : "var(--paper)"} />
+    <svg width={size} height={size} viewBox="0 0 84 84" aria-hidden="true" className={light ? undefined : "text-ink"}>
+      <clipPath id={id}>
+        <circle cx="32" cy="32" r="32" />
+      </clipPath>
+      <circle cx="32" cy="32" r="32" fill={disc} />
+      <circle cx="60" cy="60" r="24" fill={light ? "#2F62B5" : "var(--mark-inner)"} clipPath={`url(#${id})`} />
+      <circle cx="60" cy="60" r="21" fill="none" stroke={disc} strokeWidth="6" />
     </svg>
   );
 }
