@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/.next
+target
+contracts
+.git
+.claude
+.env
+.env.*
+!.env.example
+*.db*
+.executor-state.json*
+.notifier-state.json*
+.testnet-wallets.json
+docs

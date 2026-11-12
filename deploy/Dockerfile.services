@@ -1,0 +1,23 @@
+# One lean container for relayer + executor + notifier (Railway).
+FROM node:26-slim AS build
+WORKDIR /app
+RUN corepack enable
+COPY . .
+RUN pnpm install --frozen-lockfile --filter "@behest/relayer" --filter "@behest/executor" --filter "@behest/notifier" \
+ && for s in relayer executor notifier; do (cd services/$s && ./node_modules/.bin/tsc -p tsconfig.build.json) || exit 1; done
+
+FROM node:26-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/deploy/start.mjs ./deploy/start.mjs
+COPY --from=build /app/services/relayer/package.json ./services/relayer/package.json
+COPY --from=build /app/services/relayer/dist ./services/relayer/dist
+COPY --from=build /app/services/relayer/node_modules ./services/relayer/node_modules
+COPY --from=build /app/services/executor/package.json ./services/executor/package.json
+COPY --from=build /app/services/executor/dist ./services/executor/dist
+COPY --from=build /app/services/executor/node_modules ./services/executor/node_modules
+COPY --from=build /app/services/notifier/package.json ./services/notifier/package.json
+COPY --from=build /app/services/notifier/dist ./services/notifier/dist
+COPY --from=build /app/services/notifier/node_modules ./services/notifier/node_modules
+CMD ["node", "deploy/start.mjs"]
