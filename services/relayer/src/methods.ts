@@ -25,6 +25,19 @@ export const SPONSORED_METHODS = {
   set_checkin_delegates: "owner",
   // D27
   set_intents_delivery: "owner",
+  // D28: edit notice. Applying a due change is open to anyone on-chain; the
+  // relayer sponsors it for the plan's participants and standbys.
+  set_edit_notice: "owner",
+  cancel_change: "owner",
+  apply_changes: "participant_or_standby",
+  // D29: guardian recovery
+  set_guardian_settings: "owner",
+  confirm_guardian: "guardian_or_standby",
+  request_standby: "participant_or_standby",
+  rotate_guardian: "guardian",
+  resign_guardian: "guardian",
+  finalize_guardian_change: "participant_or_standby",
+  cancel_guardian_change: "owner_or_guardian",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 

@@ -70,6 +70,10 @@ async function authorize(intent: CallIntent) {
   if (plan && intent.role === "owner_or_delegate" && intent.owner !== intent.sender) {
     plan.checkin_delegates = await view<string[]>("get_checkin_delegates", { owner: intent.owner }).catch(() => []);
   }
+  if (plan && (intent.role === "guardian_or_standby" || intent.role === "participant_or_standby")) {
+    const g = await view<{ standbys?: string[] } | null>("get_guardian_settings", { owner: intent.owner }).catch(() => null);
+    plan.standbys = g?.standbys ?? [];
+  }
   if (!holdsRole(plan as never, intent)) throw new PolicyError("NO_ROLE", `${intent.sender} is not the ${intent.role} of ${intent.owner}`);
 }
 

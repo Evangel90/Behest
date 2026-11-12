@@ -128,6 +128,11 @@ describe("holdsRole", () => {
     expect(holdsRole({ ...plan, delay_signers: ["ife.testnet"] }, intent("ife.testnet", "delay_signer"))).toBe(true);
     expect(holdsRole(plan, intent("ife.testnet", "delay_signer"))).toBe(false);
     expect(holdsRole({ ...plan, delay_signers: ["ife.testnet"] }, intent("dayo.testnet", "delay_signer"))).toBe(false);
+    // D29: standbys may confirm and trigger or finalize a seat change; strangers may not.
+    expect(holdsRole({ ...plan, standbys: ["sade.testnet"] }, intent("sade.testnet", "guardian_or_standby" as never))).toBe(true);
+    expect(holdsRole({ ...plan, standbys: ["sade.testnet"] }, intent("sade.testnet", "participant_or_standby" as never))).toBe(true);
+    expect(holdsRole(plan, intent("sade.testnet", "participant_or_standby" as never))).toBe(false);
+    expect(holdsRole(plan, intent("kemi.testnet", "owner_or_guardian" as never))).toBe(true);
   });
 });
 

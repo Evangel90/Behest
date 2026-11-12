@@ -132,6 +132,8 @@ interface PlanRoles {
   delay_signers?: string[];
   /** D26: from `get_checkin_delegates`, fetched only for check-ins naming another owner. */
   checkin_delegates?: string[];
+  /** D29: from `get_guardian_settings`, fetched only for methods standbys may call. */
+  standbys?: string[];
 }
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
@@ -156,6 +158,12 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
       return plan.plan.policy.guardians.includes(intent.sender) || plan.plan.policy.heirs.some((h) => h.account_id === intent.sender);
     case "participant":
       return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender) || holdsRole(plan, { ...intent, role: "heir" });
+    case "guardian_or_standby":
+      return plan.plan.policy.guardians.includes(intent.sender) || (plan.standbys ?? []).includes(intent.sender);
+    case "participant_or_standby":
+      return holdsRole(plan, { ...intent, role: "participant" }) || (plan.standbys ?? []).includes(intent.sender);
+    case "owner_or_guardian":
+      return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender);
   }
 }
 
