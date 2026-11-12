@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BehestWatermark } from "@/components/BehestLoader";
+import { BehestAssemble, BehestWatermark } from "@/components/BehestLoader";
 import { Mark, SiteHeader } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Pricing } from "@/components/Tiers";
@@ -304,10 +304,11 @@ export default function Landing() {
           </div>
         </section>
 
-        <section className="bg-gradient-to-b from-[#A9CCFF] via-[#6E9BFF] to-[#2F6BFF]">
-          <div className="mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] sm:px-8">
-            <h2 className={`${h2} text-black`}>Your plan is minutes away.</h2>
-            <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, pick a preset, add your heirs, and you&apos;re set.</p>
+        <section className="overflow-hidden bg-gradient-to-b from-[#A9CCFF] via-[#6E9BFF] to-[#2F6BFF]">
+          <div className="relative mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] max-md:pb-[260px] sm:px-8">
+            <BehestAssemble className="absolute bottom-[-24px] right-[-28px] w-[240px] md:bottom-auto md:right-[4%] md:top-1/2 md:w-[min(380px,34vw)] md:-translate-y-1/2" />
+            <h2 className={`${h2} relative text-black`}>Your plan is minutes away.</h2>
+            <p className={`relative max-w-[560px] text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, pick a preset, add your heirs, and you&apos;re set.</p>
             <ButtonLink href="/setup" size="lg" iconRight={ArrowRight} variant="night" className="mt-2">
               Create a plan
             </ButtonLink>

@@ -88,3 +88,34 @@ export function BehestWatermark({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/**
+ * The mark assembling itself (the landing "minutes away" band): when it
+ * scrolls into view the ring glides in from outside, docks against the disc
+ * and the overlap fills: a plan coming together. Then it breathes like the
+ * loader, slowly. Reduced motion: the finished mark.
+ */
+export function BehestAssemble({ className }: { className?: string }) {
+  const id = useId();
+  const [inView, setInView] = useState(false);
+  const [el, setEl] = useState<SVGSVGElement | null>(null);
+  useEffect(() => {
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") return setInView(true);
+    const io = new IntersectionObserver(([e]) => e?.isIntersecting && (setInView(true), io.disconnect()), { threshold: 0.35 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [el]);
+  return (
+    <svg ref={setEl} viewBox="0 0 100 100" aria-hidden="true" focusable="false" data-in={inView || undefined} className={cx("behest-assemble pointer-events-none select-none", className)}>
+      <clipPath id={id}>
+        <circle cx="32" cy="32" r="32" />
+      </clipPath>
+      <circle className="m" cx="32" cy="32" r="32" />
+      <g clipPath={`url(#${id})`}>
+        <circle className="l p" cx="60" cy="60" r="24" />
+      </g>
+      <circle className="r p" cx="60" cy="60" r="21" />
+    </svg>
+  );
+}
