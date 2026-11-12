@@ -94,6 +94,16 @@ pnpm --filter @behest/testnet e2e-intents   # live: failing, half-refunding and 
 pnpm --filter @behest/testnet e2e-recovery   # live: queued, cancelled and applied edits; standby swap, rotation, resignation
 ```
 
+### Destination proofs and requests (D30, D31)
+
+- **Proof of control.** A heir, alternate or fallback proves it controls each registered address: a NEAR account by calling from it, an Ethereum address with a `personal_sign` signature, a Bitcoin `tb1q…` address with a signed message (Electrum, Sparrow, Bitcoin Core). The signed text names the contract, owner, recipient, chain and address. A proof only counts for that exact address, and it never blocks a release. Taproot (`tb1p…`) proofs aren't supported yet.
+- **New addresses while the owner is active.** A recipient asks for a new address on one network, optionally proving it at once. Only the owner can approve; approving is an ordinary edit, so the edit notice applies. Requests close once the plan is overdue or a release is open.
+- **Owner account recovery** is guidance, not a contract path: a second full-access key, check-in delegates, the edit notice, or a DAO owner. The plan follows the owner's account.
+
+```sh
+pnpm --filter @behest/testnet e2e-destinations   # live: NEAR, EIP-191 and BIP-137 proofs; rejected and approved requests
+```
+
 ## Notifications
 
 `services/notifier` watches plans with view calls only (it holds no NEAR keys, so nothing it does or fails to do can change a plan) and delivers notices to each person over email, Telegram and webhooks. People choose channels on the web app's **Notifications** screen; contacts stay in the notifier's own SQLite database, never on-chain, and every change is a NEP-413 message signed by the account (a signature, not a transaction).
@@ -246,6 +256,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 
 `e2e-recovery`, 2026-11-12, after upgrading `behest-ekkr6.testnet` in place (wasm `9c77731b…`, demo timers). A fresh owner paid Standard and saved a plan with G1–G3 (quorum 2), Tobi as standby, a 1-minute availability window and swap notice, and a 1-minute edit notice. Changing Amara's destination was queued, not applied. Applying it early failed (`E_CHANGE_NOT_DUE`), and the owner cancelled it. Queued again together with turning the notice off, both waited out the notice and a guardian applied them. G3 went past the window; Amara called the standby; finishing early failed; G3 confirmed and the swap was called off. G3 went quiet again, and Tobi took the seat after the delay, with the quorum still 2. With G1 and G2 also quiet, the status reported 1 of 2 available until they confirmed. G1 moved its seat to a new account: the owner cancelled the first request, and the second landed after the delay; the old account was then refused (`E_NOT_GUARDIAN`). G2 resigned with no standby left: the seat stayed, marked resigned (`E_GUARDIAN_RESIGNED`), with the quorum unchanged. In the app (headless Chrome, personas) the owner set a 2-minute notice and saved standby settings, which showed as waiting with a countdown. Guardian G1 saw the warning banner and confirmed from "Your guardian seat", standby Tobi confirmed from the standby card, and the owner cancelled the queued change from the banner.
 
+### Destination proofs and requests (D30, D31)
+
+`e2e-destinations`, 2026-11-12, after upgrading `behest-ekkr6.testnet` in place (wasm `892bd62b…`, demo timers). A fresh owner paid Standard and gave Amara a NEAR wallet account, a fresh Ethereum key and a fresh `tb1q` address. Amara's own account couldn't prove the wallet (`E_DESTINATION_PROOF`); the wallet proved itself. A guardian submitted Amara's EIP-191 and BIP-137 signatures, which were accepted; a signature from another key and an unregistered address were refused. A guardian couldn't ask for a change (`E_NOT_RECIPIENT`). Amara asked for a new, proven Ethereum address, and the owner rejected it: nothing changed. With a 1-minute edit notice on, Amara asked for a second NEAR wallet, which proved itself; the owner approved; the change was queued, applying it early failed (`E_CHANGE_NOT_DUE`), and a guardian applied it after the notice, with the proof carried over. In the app (headless Chrome, personas), Amara saw three proven addresses and asked for a new one; the owner saw "3 of 3 proven", the request marked as not proven, and the recovery guidance, and rejected it.
+
 ### Clean reproduction (Stage 1 exit gate)
 
 On 2026-11-08 a second deployment was built from scratch with no faucet: `bootstrap r1`, a source rebuild (same wasm sha256 `0e2c65ea…` as the main deployment), then `deploy-contract r1 --parent` (`deployments/r1.json`). Every NEAR scenario passed on it. So did `e2e-eth`: [Tobi, nonce 0](https://sepolia.etherscan.io/tx/0x5f1abb07f7b96c33cbc22676dc0b0cf959fba10519beff9d1875def09035de21) and [Amara, nonce 1](https://sepolia.etherscan.io/tx/0x020eccf530488d8991f0e8db5d91d23ba7176c1ae9230497fca055d46f743e85), each with its exact share. The run surfaced two tooling issues, both fixed: scenario owners were never reclaimed, and an error check crashed on BigInt fields.
@@ -294,8 +308,8 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Claim modes per heir and asset group (D19, shipped in Stage 2)
 - [x] Edit notice (cooling-off) for high-impact edits: validated and queued, re-validated and applied by anyone after the notice, cancellable by the owner, never during an open release; lowering it also waits; notices to guardians and heirs that can't be switched off (D28, threats 1, 54; live `e2e-recovery`)
 - [x] Guardian recovery without lowering the quorum: standby guardians, availability confirmations (votes count), standby swaps after a notice that the guardian cancels by confirming, key rotation, resignation, "quorum unreachable" status and alerts (D29, threats 3, 52–53, 55; live `e2e-recovery`)
-- [ ] Heir proof-of-control for registered destinations
-- [ ] Owner account-recovery guidance and destination updates while active
+- [x] Heir proof-of-control for registered destinations: NEAR by calling, EIP-191, BIP-137 for `tb1q`; bound to the exact address; evidence only (D30, threats 17, 56; live `e2e-destinations`)
+- [x] Destination updates while the owner is active: recipient requests, owner approval under the edit notice; owner account-recovery guidance in the app (D31, threats 57–59; live `e2e-destinations`)
 - [ ] Guided presets with a plain-language consequence summary
 - [ ] Commitment-based private heir details (public mode stays)
 - [ ] Property/state-machine tests and fuzzing; upgrade and long-timer tests
