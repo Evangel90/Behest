@@ -3,6 +3,7 @@
 // Telegram, webhooks), which notices it sends, and which plans it watches.
 // Contacts are kept by the notifier service, never on-chain; each change is
 // signed by the account (a message, not a transaction).
+import { Explain } from "./more";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { BellRing, Eye, History, KeyRound, ListChecks, Mail, Plus, RefreshCw, Send, Trash2, UserRound, Users, Webhook, WifiOff, type LucideIcon } from "lucide-react";
 import { getPlan, listOpenReleases } from "@/lib/contract";
@@ -513,7 +514,7 @@ function WatchCard({ account, watches, max, busy, onSave }: { account: string; w
   return (
     <Card className="flex flex-col gap-4">
       <SectionTitle icon={Eye} title="Plans to follow" sub={`${chosen.size} of ${max} chosen`} />
-      <p className="text-[15px] leading-relaxed text-muted">Your own plan is always followed. Guardians and heirs: pick the plans you&apos;re part of to hear when their owner hasn&apos;t checked in, before any release is proposed. Every open release reaches you anyway.</p>
+      <Explain label="Which plans are followed" className="text-[15px] leading-relaxed">Your own plan is always followed. Guardians and heirs: pick the plans you&apos;re part of to hear when their owner hasn&apos;t checked in, before any release is proposed. Every open release reaches you anyway.</Explain>
       {candidates === null ? (
         <div className="flex flex-col gap-2" aria-busy="true" aria-label="Looking for plans that name you">
           <Skeleton className="h-14 w-full rounded-row" />

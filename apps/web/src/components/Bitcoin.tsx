@@ -2,6 +2,7 @@
 // Bitcoin testnet vault (contract D20): the owner sets it up, funds it and
 // names heirs' Bitcoin addresses; guardians include its coins in a proposal
 // and rebase if the vault moved; heirs see their payout like any other.
+import { Explain } from "./more";
 import { ArrowUpFromLine, Pencil, Plus, RefreshCw, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { BTC_EXPLORER } from "@/lib/config";
@@ -101,9 +102,9 @@ export function BtcOwnerCard({ view, btc, locked }: { view: PlanView; btc: BtcSt
             </span>
           </div>
           <Address value={btc.vault.address} href={`${BTC_EXPLORER}/address/${btc.vault.address}`} className="text-muted" label="Bitcoin vault address" />
-          <p className="text-[13px] leading-relaxed text-muted">
+          <Explain label="How the vault works" className="text-[13px] leading-relaxed">
             Send testnet4 BTC here to include it. Only confirmed coins count; a release pays from the {MAX_BTC_INPUTS} largest, so send one larger amount rather than many small ones.
-          </p>
+          </Explain>
           <div className="flex flex-col gap-2 border-t border-line pt-3">
             <span className="flex items-center gap-2 text-sm font-semibold">
               <Users aria-hidden className="size-4 text-muted" />

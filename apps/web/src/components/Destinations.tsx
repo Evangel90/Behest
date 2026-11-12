@@ -2,6 +2,7 @@
 // D30 proof of control of a destination and D31 destination requests while
 // the owner is active; owner account-recovery guidance. Proofs are evidence:
 // they never block a release.
+import { Explain } from "./more";
 import { BadgeCheck, CircleAlert, Inbox, KeyRound, LifeBuoy, PenLine, Send, Undo2, Wallet } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { isMissingMethod, view } from "@/lib/contract";
@@ -201,7 +202,7 @@ export function MyDestinationsCard({ planView, me, dest }: { planView: PlanView;
           </Button>
         </div>
       ) : (
-        <p className="text-sm text-muted">New addresses can only be requested while {shortName(owner)} is active. If a registered address no longer works, the plan&apos;s alternates or fallback decide where that share goes.</p>
+        <Explain label="When requests are possible">New addresses can only be requested while {shortName(owner)} is active. If a registered address no longer works, the plan&apos;s alternates or fallback decide where that share goes.</Explain>
       )}
     </Card>
   );
@@ -293,7 +294,8 @@ export function AccountRecoveryCard({ owner, kind, notice }: { owner: string; ki
   return (
     <Card className="flex flex-col gap-3">
       <SectionTitle icon={LifeBuoy} title="If you lose access to your account" sub="Your plan follows your account. Behest can't hand it to anyone else, so keep a way back in." />
-      <ul className="flex list-disc flex-col gap-2 pl-5 text-sm">
+      <Explain label="What to do">
+        <ul className="flex list-disc flex-col gap-2 pl-5 text-sm text-ink">
         {evm ? (
           <>
             <li>Your plan is controlled by an Ethereum wallet. It can&apos;t have a second key, so keep its recovery phrase written down somewhere safe and separate.</li>
@@ -310,7 +312,8 @@ export function AccountRecoveryCard({ owner, kind, notice }: { owner: string; ki
         <li>Add a check-in delegate under Plan and fees: someone who can check in for you if you&apos;re locked out for a while. They can&apos;t edit or withdraw.</li>
         <li>{notice ? "Your edit notice is on: if someone else gets your key and changes heirs or destinations, guardians and heirs are told and you have time to cancel." : "Turn on an edit notice above: if someone else gets your key and changes heirs or destinations, guardians and heirs are told and you have time to cancel."}</li>
         <li>If you can&apos;t get back in, the plan does what it says: after the missed check-ins and the waiting period, guardians can start the release to your heirs.</li>
-      </ul>
+        </ul>
+      </Explain>
       {!notice && (
         <p className="flex items-center gap-2 text-sm text-muted">
           <CircleAlert className="size-4" aria-hidden /> The edit notice is the strongest protection against a stolen key.

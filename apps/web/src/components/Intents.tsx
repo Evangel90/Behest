@@ -5,6 +5,7 @@
 // mainnet swap it to almost any asset on almost any chain through 1Click
 // (depositType INTENTS, signed NEP-413 or ERC-191, no app fee). On testnet
 // the verifier is a mock: balances and withdrawals work, swaps don't exist.
+import { Explain } from "./more";
 import { ArrowDownToLine, ArrowLeftRight, Link2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useConfig } from "@/lib/fees";
@@ -145,7 +146,7 @@ export function HeirIntentsCard({ owner, holding }: { owner: string; holding: Re
           </Button>
         </div>
       )}
-      {mine && !intentsAvailable && <p className="text-[13px] text-muted">Swaps go through NEAR Intents&apos; 1Click on mainnet; there is no testnet for it.{evm && " An Ethereum wallet withdraws with a signed intent, which also needs mainnet."}</p>}
+      {mine && !intentsAvailable && <Explain label="About swaps" className="text-[13px]">Swaps go through NEAR Intents&apos; 1Click on mainnet; there is no testnet for it.{evm && " An Ethereum wallet withdraws with a signed intent, which also needs mainnet."}</Explain>}
       {dlg === "withdraw" && <WithdrawDialog cfg={intents} me={target} held={held} onClose={() => setDlg(null)} done={reload} />}
       {dlg === "swap" && <SwapDialog cfg={intents} me={target} held={held} onClose={() => setDlg(null)} done={reload} />}
     </Card>
@@ -344,7 +345,7 @@ export function IntentsBridgeAddress({ account, chain, onUse }: { account: strin
           <Link2 aria-hidden className="size-3.5" />
           Receive {label} into NEAR Intents?
         </button>
-        {open && <p className="text-[13px] text-muted">On mainnet, Behest can fill in a NEAR Intents bridge deposit address for {account || "this heir"}: {label} sent there lands in their Intents account. Testnet has no Intents bridge, so this isn&apos;t available here.</p>}
+        {open && <Explain label="About bridge addresses" className="text-[13px]">On mainnet, Behest can fill in a NEAR Intents bridge deposit address for {account || "this heir"}: {label} sent there lands in their Intents account. Testnet has no Intents bridge, so this isn&apos;t available here.</Explain>}
       </div>
     );
   }

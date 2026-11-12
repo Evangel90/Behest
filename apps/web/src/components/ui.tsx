@@ -2,6 +2,7 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import { ArrowUpRight, CircleAlert, CircleCheck, Info, LoaderCircle, TriangleAlert, type LucideIcon } from "lucide-react";
+import { MoreText } from "./more";
 import { STATUS_STYLE, TRANSFER_STYLE, type Actions, type ChipStyle } from "@/lib/plan";
 import type { PlanStatus, TransferState } from "@/lib/types";
 
@@ -114,7 +115,7 @@ export function SectionTitle({ icon: I, title, aside, sub, as: H = "h2" }: { ico
         )}
         <div className="flex min-w-0 flex-col gap-0.5">
           <H className="text-[17px] font-semibold leading-tight tracking-[-0.01em]">{title}</H>
-          {sub && <span className="text-sm text-muted">{sub}</span>}
+          {sub && <span className="text-sm text-muted">{typeof sub === "string" ? <MoreText text={sub} /> : sub}</span>}
         </div>
       </div>
       {aside && <div className="flex shrink-0 items-center gap-2">{aside}</div>}

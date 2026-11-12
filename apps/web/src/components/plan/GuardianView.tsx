@@ -22,7 +22,7 @@ const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ b
 function PlainWords({ ctx }: { ctx: PlanCtx }) {
   return (
     <Card className="flex flex-col gap-5">
-      <SectionTitle icon={ScrollText} title="The plan in plain words" />
+      <SectionTitle icon={ScrollText} title="How this plan works" />
       <p className="text-lg leading-snug tracking-[-0.01em]">{describePlan(ctx.view.plan.policy, shortName(ctx.view.plan.owner))}</p>
       <Timeline view={ctx.view} now={ctx.now} />
     </Card>

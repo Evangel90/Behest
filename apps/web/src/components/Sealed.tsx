@@ -1,6 +1,7 @@
 "use client";
 // D33 private (sealed) heirs on the plan page: reveal progress and the
 // "Reveal my share" card, the owner's records, backup and rules.
+import { Explain } from "./more";
 import { CloudDownload, CloudOff, CloudUpload, Download, EyeOff, FileUp, KeyRound, LockKeyhole, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isMissingMethod, view } from "@/lib/contract";
@@ -274,7 +275,7 @@ export function SealedOwnerCard({ planView, sealed, rules, editable, onChanged }
       </div>
       <div className="flex flex-col gap-2 border-t border-line pt-4">
         <span className="text-sm font-semibold">Behest backup</span>
-        <p className="text-sm text-muted">Optional. Behest stores the records encrypted and gives each heir theirs only once you&apos;re overdue, so a lost record isn&apos;t a lost share. Behest itself could read them.</p>
+        <Explain label="How the backup works">Optional. Behest stores the records encrypted and gives each heir theirs only once you&apos;re overdue, so a lost record isn&apos;t a lost share. Behest itself could read them.</Explain>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" icon={CloudUpload} disabled={mine.length < n || !!busy} onClick={() => void backup()}>
             Back up to Behest
