@@ -97,6 +97,14 @@ export interface GuardianStatus {
   pending: GuardianChange[];
 }
 
+/** D30/D31: `get_destinations` / `get_destination_requests` rows. */
+export interface DestinationRow {
+  account_id: string;
+  chain: "Near" | "Eth" | "Btc" | "Intents";
+  destination: string;
+  proven_at_ms: number | null;
+}
+
 /** Everything the notifier read about one plan in one poll. */
 export interface Snapshot {
   view: PlanView;
@@ -111,6 +119,9 @@ export interface Snapshot {
   pending?: PendingChange[];
   /** D29 guardian availability, standbys and seat changes. */
   guardians?: GuardianStatus | null;
+  /** D30 current destinations with proof status, D31 open requests. */
+  destinations?: DestinationRow[];
+  destinationRequests?: DestinationRow[];
 }
 
 export const KINDS = [
@@ -134,6 +145,7 @@ export const KINDS = [
   "edit_pending",
   "guardians",
   "availability",
+  "destination",
   "security",
 ] as const;
 export type Kind = (typeof KINDS)[number];
@@ -160,6 +172,7 @@ export const KIND_INFO: Record<Kind, { label: string; who: string }> = {
   edit_pending: { label: "Plan changes waiting to take effect", who: "everyone on the plan" },
   guardians: { label: "Guardian seat changes and lost quorum", who: "owners, guardians, standbys, heirs" },
   availability: { label: "Confirm you're still available", who: "guardians, standbys" },
+  destination: { label: "Requests to change where someone receives", who: "owners, the heir who asked" },
   security: { label: "Changes to your notification channels", who: "you (always on)" },
 };
 
@@ -633,6 +646,37 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
         });
       }
     });
+  }
+
+  // ---- D31: a recipient asks for a new destination; the owner answers
+  const CHAIN: Record<string, string> = { Near: "NEAR", Eth: "Ethereum", Btc: "Bitcoin", Intents: "NEAR Intents" };
+  for (const q of cur.destinationRequests ?? []) {
+    add({
+      key: `${o}:dreq:${q.account_id}:${q.chain}:${q.destination}`,
+      kind: "destination",
+      to: ["owner"],
+      subject: `${name(q.account_id)} asked to receive at a new ${CHAIN[q.chain]} address`,
+      text: `${name(q.account_id)} asked to receive their share of your plan at ${q.destination} on ${CHAIN[q.chain]}${q.proven_at_ms ? ", and proved they control it" : " (not yet proven)"}. Nothing changes unless you approve it in Behest. If you didn't expect this, check with them first.`,
+    });
+  }
+  if (prev?.destinationRequests && cur.destinationRequests) {
+    for (const q of prev.destinationRequests) {
+      if (cur.destinationRequests.some((x) => x.account_id === q.account_id && x.chain === q.chain && x.destination === q.destination)) continue;
+      const now = (cur.destinations ?? []).some((d) => d.account_id === q.account_id && d.chain === q.chain && d.destination === q.destination);
+      const queued = (cur.pending ?? []).some((c) => JSON.stringify(c.change).includes(`"${q.destination}"`));
+      add({
+        key: `${o}:dreq_done:${q.account_id}:${q.chain}:${q.destination}`,
+        kind: "destination",
+        to: [],
+        accounts: [q.account_id],
+        subject: now || queued ? `${who} approved your new ${CHAIN[q.chain]} address` : `Your ${CHAIN[q.chain]} address request was closed`,
+        text: now
+          ? `${who}'s plan now pays you at ${q.destination} on ${CHAIN[q.chain]}.`
+          : queued
+            ? `${who} approved ${q.destination}; it takes effect when ${who}'s edit notice ends.`
+            : `Your request to receive at ${q.destination} was withdrawn or not approved. Your registered address is unchanged.`,
+      });
+    }
   }
 
   // ---- the owner's own vault withdrawal (D7, D20)

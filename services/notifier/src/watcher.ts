@@ -4,7 +4,7 @@
 // plans subscribers asked to watch, and plans seen before until their
 // release is resolved.
 import type { Store } from "./db.js";
-import { members, notices, recipients, type Ctx, type ExtensionState, type GuardianStatus, type Options, type PendingChange, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
+import { members, notices, recipients, type Ctx, type ExtensionState, type GuardianStatus, type DestinationRow, type Options, type PendingChange, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
 import { withCouncils, type CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 
@@ -64,7 +64,7 @@ export class Watcher {
     const s: Snapshot = { view };
     const p = view.plan.proposal;
     const prevP = prev?.view.plan.proposal;
-    const [options, extension, history, withdrawal, pending, guardians] = await Promise.all([
+    const [options, extension, history, withdrawal, pending, guardians, destinations, destinationRequests] = await Promise.all([
       p ? this.view<Options | null>("get_release_options", { owner }) : Promise.resolve(undefined),
       p?.waiting_ends_at_ms ? this.view<ExtensionState | null>("get_extension", { owner }) : Promise.resolve(undefined),
       // needed to tell settled from cancelled, and to spot follow-up rounds
@@ -73,6 +73,9 @@ export class Watcher {
       // D28/D29; undefined on a contract without them
       this.view<PendingChange[]>("get_pending_changes", { owner }).catch(() => undefined),
       this.view<GuardianStatus>("get_guardian_status", { owner }).catch(() => undefined),
+      // D30/D31
+      this.view<DestinationRow[]>("get_destinations", { owner }).catch(() => undefined),
+      this.view<DestinationRow[]>("get_destination_requests", { owner }).catch(() => undefined),
     ]);
     if (options !== undefined) s.options = options;
     if (extension !== undefined) s.extension = extension;
@@ -80,6 +83,8 @@ export class Watcher {
     s.withdrawal = withdrawal;
     if (pending !== undefined) s.pending = pending;
     if (guardians !== undefined) s.guardians = guardians;
+    if (destinations !== undefined) s.destinations = destinations;
+    if (destinationRequests !== undefined) s.destinationRequests = destinationRequests;
     return s;
   }
 

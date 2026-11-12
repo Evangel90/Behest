@@ -280,3 +280,19 @@ describe("D28 edit notice and D29 guardian recovery", () => {
     expect(notices(prev, with_(after, { guardians: status() })).map((x) => x.key)).toContain("kemi.testnet:seat_done:chidi.testnet:sade.testnet");
   });
 });
+
+describe("D31 destination requests", () => {
+  const q = { account_id: "tobi.testnet", chain: "Eth" as const, destination: "0xabc", proven_at_ms: 5 };
+  it("tells the owner about a request and the requester about the answer", () => {
+    const cur: Snapshot = { ...s("Active"), destinationRequests: [q], destinations: [] };
+    const n = notices(null, cur).find((x) => x.kind === "destination")!;
+    expect(n.to).toEqual(["owner"]);
+    expect(n.text).toContain("proved they control it");
+    const approved: Snapshot = { ...s("Active"), destinationRequests: [], destinations: [{ ...q }] };
+    const done = notices(cur, approved).find((x) => x.key.includes("dreq_done"))!;
+    expect(recipients(approved, done)).toEqual(["tobi.testnet"]);
+    expect(done.subject).toContain("approved");
+    const closed = notices(cur, { ...s("Active"), destinationRequests: [], destinations: [] }).find((x) => x.key.includes("dreq_done"))!;
+    expect(closed.text).toContain("unchanged");
+  });
+});
