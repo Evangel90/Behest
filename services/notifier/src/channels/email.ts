@@ -7,24 +7,26 @@ import { PermanentError, RejectedError, TransientError, type Outgoing, type Send
 
 export class EmailSender implements Sender {
   private t: Transporter;
+  /** STARTTLS on 587 and implicit TLS on 465 for host/port configs: some networks hold up one of them. */
+  private alt: Transporter | null;
   constructor(
     private cfg: NonNullable<Config["smtp"]>,
     transport?: Transporter,
   ) {
-    this.t =
-      transport ??
-      (cfg.url
-        ? nodemailer.createTransport(cfg.url)
-        : nodemailer.createTransport({
-            host: cfg.host,
-            port: cfg.port,
-            secure: cfg.secure,
-            ignoreTLS: cfg.ignoreTls,
-            auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? "" } : undefined,
-            connectionTimeout: 15_000,
-            greetingTimeout: 15_000,
-            socketTimeout: 30_000,
-          }));
+    // Generous timeouts: some providers (Gmail on slow links) take >15 s to greet.
+    const make = (port: number | undefined, secure: boolean | undefined) =>
+      nodemailer.createTransport({
+        host: cfg.host,
+        port,
+        secure,
+        ignoreTLS: cfg.ignoreTls,
+        auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? "" } : undefined,
+        connectionTimeout: 30_000,
+        greetingTimeout: 45_000,
+        socketTimeout: 60_000,
+      });
+    this.t = transport ?? (cfg.url ? nodemailer.createTransport(cfg.url) : make(cfg.port, cfg.secure));
+    this.alt = transport || cfg.url || cfg.ignoreTls ? null : cfg.port === 587 ? make(465, true) : cfg.port === 465 ? make(587, false) : null;
   }
 
   async send(m: Outgoing) {
@@ -52,7 +54,15 @@ export class EmailSender implements Sender {
     try {
       await this.t.sendMail({ from: this.cfg.from, ...msg });
     } catch (e) {
-      throw classifySmtp(e);
+      // A connection that never got going (timeout, refused) is retried once on the other port.
+      const code = (e as { code?: string }).code;
+      if (!this.alt || !["ETIMEDOUT", "ECONNECTION", "ESOCKET", "ECONNREFUSED"].includes(code ?? "")) throw classifySmtp(e);
+      try {
+        await this.alt.sendMail({ from: this.cfg.from, ...msg });
+        [this.t, this.alt] = [this.alt, this.t];
+      } catch (e2) {
+        throw classifySmtp(e2);
+      }
     }
   }
 }
