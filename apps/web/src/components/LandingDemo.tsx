@@ -2,7 +2,7 @@
 // Landing-page demo: an example plan in the dashboard frame. Tabs and the
 // check-in button work locally; nothing touches the chain.
 import { useRef, useState, type KeyboardEvent } from "react";
-import { Ban, Check, Coins, Gift, HeartPulse, History, LayoutGrid, ShieldCheck, Split, type LucideIcon } from "lucide-react";
+import { Ban, BadgeCheck, Check, Coins, EyeOff, Gift, HeartPulse, History, Hourglass, LayoutGrid, ShieldCheck, Sparkles, Split, type LucideIcon } from "lucide-react";
 import { Mark } from "./chrome";
 import { motion, Swap } from "./motion";
 import { cx } from "./ui";
@@ -201,12 +201,17 @@ function DemoHead({ k, t }: { k: string; t: string }) {
   );
 }
 
-const FEATURES: { t: string; b: string; p: "split" | "quorum" | "checkin"; icon: LucideIcon }[] = [
-  { t: "Split across your heirs", b: "Give each person a share and a fixed address on the chain they use: NEAR, Ethereum or Bitcoin. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split", icon: Split },
-  { t: "Protected by guardians", b: "People you trust approve a release together. None of them can act alone, and none of them can change where funds go.", p: "quorum", icon: ShieldCheck },
-  { t: "Check in with one tap", b: "Prove you're here every few months. Behest pays the gas, so a check-in costs you nothing.", p: "checkin", icon: HeartPulse },
+type Panel = "split" | "quorum" | "checkin" | "private" | "notice" | "proof" | "preset";
+const FEATURES: { t: string; b: string; p: Panel; icon: LucideIcon }[] = [
+  { t: "Start from a preset", b: "Careful, Balanced or Quick fill in sensible timers, guardians and safety settings, and explain every one. Change anything. Before you save, the whole plan is read back to you in plain words, with warnings for risky choices.", p: "preset", icon: Sparkles },
+  { t: "Split across your heirs", b: "Give each person a share and a fixed address on the chain they use: NEAR, Ethereum or Bitcoin, or their NEAR Intents account. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split", icon: Split },
+  { t: "Keep your heirs private", b: "Choose private and the chain holds only a fingerprint of each heir. Who inherits, how much and where stay hidden until you stop checking in. Each heir then reveals their own recovery record, from their printed packet or, if you allow it, from Behest's encrypted copy.", p: "private", icon: EyeOff },
+  { t: "Protected by guardians", b: "People you trust approve a release together. None of them can act alone or change where funds go. Availability checks catch a guardian who has gone quiet, and a standby can take their seat.", p: "quorum", icon: ShieldCheck },
+  { t: "Check in with one tap", b: "Prove you're here every few months. Behest pays the gas, so a check-in costs you nothing. A delegate or your DAO can check in for you too.", p: "checkin", icon: HeartPulse },
+  { t: "Big edits give notice", b: "Changes to heirs, addresses, shares or guardians can wait a notice period before they take effect, and everyone on the plan is told. If someone gets your key, you have time to cancel.", p: "notice", icon: Hourglass },
+  { t: "Addresses heirs have proven", b: "Heirs prove they control each address with a signature, and can ask you for a new one while you're around. Only you approve it.", p: "proof", icon: BadgeCheck },
   { t: "Cancel until the last moment", b: "Even after a release is proposed and approved, one tap stops it until the waiting period ends. Delay signers can extend that wait.", p: "quorum", icon: Ban },
-  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their wallet. Or have transfers start automatically.", p: "split", icon: Coins },
+  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their wallet. Or have transfers start automatically. Money added later goes out in a follow-up round.", p: "split", icon: Coins },
 ];
 
 /** Feature accordion with the matching panel on the blue gradient. */
@@ -292,6 +297,82 @@ export function FeatureExplorer() {
                 </div>
               </div>
             </>
+          )}
+          {panel === "preset" && (
+            <>
+              <div className="flex flex-col gap-2 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                {[
+                  ["Careful", "Slow to start, hard to rush"],
+                  ["Balanced", "A sensible middle"],
+                  ["Quick", "Heirs receive sooner"],
+                ].map(([n, d], i) => (
+                  <div key={n} className={cx("flex items-center justify-between rounded-lg px-3 py-2.5", i === 1 ? "bg-[#2F6BFF]" : "bg-white/[0.04]")}>
+                    <span className="text-[15px]">{n}</span>
+                    <span className={cx("text-xs", i === 1 ? "text-white/80" : "text-[#A1A1A1]")}>{d}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-1 rounded-tile border border-white/5 bg-[#1F1F1F] p-5 text-sm">
+                <span className="text-[#A1A1A1]">In plain words</span>
+                <span>If you don&apos;t check in for 90 days, any 2 of 3 guardians may propose a release…</span>
+              </div>
+            </>
+          )}
+          {panel === "private" && (
+            <>
+              <div className="flex flex-col gap-3 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                <span className="text-sm text-[#A1A1A1]">On-chain · 2 private heirs</span>
+                {["9f3c…e41a", "27b0…c9d5"].map((h) => (
+                  <div key={h} className="flex items-center justify-between">
+                    <span className="flex items-center gap-3">
+                      <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-[#525252] text-[#A1A1A1]">
+                        <EyeOff className="size-3.5" />
+                      </span>
+                      <span className="font-mono text-sm">{h}</span>
+                    </span>
+                    <span className="text-[#A1A1A1]">hidden</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between rounded-tile border border-white/5 bg-[#1F1F1F] p-5 text-sm">
+                <span className="text-[#A1A1A1]">Revealed</span>
+                <span>only once you&apos;re overdue</span>
+              </div>
+            </>
+          )}
+          {panel === "notice" && (
+            <>
+              <div className="flex flex-col gap-2 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                <span className="text-sm text-[#A1A1A1]">Waiting change</span>
+                <span className="text-[20px] tracking-[-0.015em]">Tobi&apos;s Ethereum address</span>
+                <span className="font-mono text-sm text-[#A1A1A1]">takes effect in 6d 23h</span>
+              </div>
+              <div className="flex items-center justify-between rounded-tile border border-white/5 bg-[#1F1F1F] p-5 text-sm">
+                <span className="text-[#A1A1A1]">Guardians and heirs</span>
+                <span>notified</span>
+              </div>
+            </>
+          )}
+          {panel === "proof" && (
+            <div className="flex flex-col gap-3 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+              <span className="text-sm text-[#A1A1A1]">Amara&apos;s addresses</span>
+              {[
+                ["NEAR", "amara.near"],
+                ["Ethereum", "0x8a1f…92c0"],
+                ["Bitcoin", "bc1q…7h2k"],
+              ].map(([c, a]) => (
+                <div key={c} className="flex items-center justify-between">
+                  <span className="flex flex-col">
+                    <span className="text-[15px]">{c}</span>
+                    <span className="font-mono text-xs text-[#A1A1A1]">{a}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-sm text-[#7DD3A8]">
+                    <Check aria-hidden className="size-4" />
+                    proven
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
           {panel === "checkin" && (
             <>

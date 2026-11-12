@@ -36,7 +36,7 @@ export default function Inspect() {
           Public inspector
         </span>
         <h1 className="text-[clamp(40px,6vw,72px)] font-medium leading-[0.92] tracking-[-0.045em]">Every rule is public.</h1>
-        <p className="max-w-[680px] text-lg leading-relaxed text-muted">Look up any plan by its owner&apos;s account to see its rules, guardians, heirs, open release and every transfer, read straight from the chain.</p>
+        <p className="max-w-[680px] text-lg leading-relaxed text-muted">Look up any plan by its owner&apos;s account to see its rules, guardians, heirs, open release and every transfer, read straight from the chain. A plan with private heirs shows how many there are and who has been revealed.</p>
       </div>
       <InspectForm recent />
       <section aria-labelledby="open-now" className="flex flex-col gap-3">

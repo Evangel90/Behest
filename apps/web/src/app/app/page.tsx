@@ -98,7 +98,7 @@ export default function Home() {
         </h2>
         {mine === undefined && <MyPlanSkeleton />}
         {mine === null && (
-          <EmptyState icon={CirclePlus} title="You don't have a plan yet" body="Choose guardians and heirs, set how often you'll check in, and put something aside. It takes a few minutes.">
+          <EmptyState icon={CirclePlus} title="You don't have a plan yet" body="Start from a preset, choose guardians and heirs (publicly or privately), and put something aside. It takes a few minutes.">
             <ButtonLink href="/setup" variant="primary" iconRight={ArrowRight}>
               Create a plan
             </ButtonLink>
@@ -118,7 +118,7 @@ export default function Home() {
             <Skeleton className="h-[76px] w-full rounded-row" />
           </div>
         ) : others.length === 0 ? (
-          <EmptyState icon={Inbox} title="Nothing here yet" body="When someone names you as a guardian or heir, open the link they send you. Their plan shows up here after that.">
+          <EmptyState icon={Inbox} title="Nothing here yet" body="When someone names you as a guardian or heir, open the link they send you. Their plan shows up here after that. A private heir appears once they've revealed their recovery record.">
             <ButtonLink href="/inspect" variant="outline" icon={Search}>
               Look up a plan
             </ButtonLink>

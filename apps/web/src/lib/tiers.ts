@@ -64,6 +64,7 @@ export interface TreasuryView {
 export function tierPerks(s: TierSpec): string[] {
   const out = [`${s.max_heirs === 1 ? "1 heir" : `Up to ${s.max_heirs} heirs`}`, `Up to ${s.max_guardians} guardians`];
   out.push(s.external_assets ? "NEAR, tokens, ETH and Bitcoin; heirs can receive through NEAR Intents" : "NEAR only");
+  if (s.external_assets) out.push("Private heirs, hidden until you're overdue");
   if (s.release_rules) out.push("Fixed amounts, alternates and a fallback");
   if (delegatesAllowed(s)) out.push("Check-in delegates (for DAOs and busy owners)");
   if (s.advanced_release) out.push("Automatic or hybrid release, per-heir modes, delay signers");

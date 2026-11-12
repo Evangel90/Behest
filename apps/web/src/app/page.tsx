@@ -3,7 +3,7 @@ import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Pricing } from "@/components/Tiers";
 import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
-import { ArrowRight, Eye, FileText, FlaskConical, Lock, Plus, RotateCcw } from "lucide-react";
+import { ArrowRight, Eye, FlaskConical, Hourglass, Lock, Plus, RotateCcw } from "lucide-react";
 import { Reveal } from "@/components/motion";
 import { ButtonLink } from "@/components/ui";
 
@@ -16,16 +16,16 @@ const lede = "text-lg leading-7";
 
 const SAFETY = [
   { t: "You keep control", b: "Funds sit in plan escrow and in vault addresses only your plan's contract can sign for. Behest never holds keys.", icon: Lock },
-  { t: "Rules are public", b: "Anyone can read a plan's rules in plain words and in code, before and after a release.", icon: Eye },
+  { t: "Rules are public", b: "Anyone can read a plan's rules in plain words and in code. Heirs can be kept private until they're needed; everything else stays checkable.", icon: Eye },
+  { t: "Edits give notice", b: "Changes to heirs, addresses and guardians can wait a notice period, and everyone on the plan is told. A stolen key can't quietly rewrite your plan.", icon: Hourglass },
   { t: "Failures are visible", b: "If a transfer fails you see why, that the funds are safe, and who can retry. A retry never pays twice.", icon: RotateCcw },
-  { t: "Not a will", b: "Behest follows your instructions. Pair it with legal estate planning that refers to it.", icon: FileText },
 ];
 
 const TECH = [
   { t: "NEAR Protocol", c: "#2F6BFF", b: "Where your plan's rules live and are enforced: check-ins, guardians, waiting periods, every amount." },
   { t: "Chain Signatures", c: "#FB7A1E", b: "Lets the plan control its own Ethereum and Bitcoin addresses. The contract builds each transaction, so the MPC network can only sign what your plan allows." },
-  { t: "Sponsored gas", c: "#3B82F6", b: "Meta-transactions so check-ins, approvals and claims need no NEAR. Network fees on other chains come from the plan." },
-  { t: "Replaceable executors", c: "#A78BFA", b: "Signed transactions are public. Anyone can broadcast them; the contract records what landed." },
+  { t: "NEAR Intents", c: "#22C55E", b: "Heirs can receive into their Intents account and swap to almost any asset. On mainnet, plan fees can be paid with almost any asset too." },
+  { t: "Any wallet, no gas", c: "#3B82F6", b: "Sign in with a NEAR wallet, MetaMask or another Ethereum wallet. Behest pays NEAR gas and plan storage; executors that broadcast signed transfers are replaceable." },
 ];
 
 const STATS = [
@@ -39,29 +39,50 @@ const COLS = ["Owner", "Guardians", "Heirs", "Executors", "Gas relayer"];
 const ROWS: [string, string][] = [
   ["Set heirs, amounts, destinations", "ynnnn"],
   ["Check in, or cancel before the cutoff", "ynnnn"],
+  ["Approve a heir's new address", "ynnnn"],
   ["Propose and approve a release", "nynnn"],
+  ["Prove an address, or ask for a new one", "nnynn"],
+  ["Reveal a private heir once the owner is overdue", "nnynn"],
   ["Receive after the waiting period", "nnynn"],
   ["Broadcast a signed transfer", "nnyyn"],
   ["Pay NEAR gas for others", "nnnny"],
-  ["Change where funds go", "nnnnn"],
+  ["Change where funds go once a release is open", "nnnnn"],
 ];
 
 const LIMITS = [
   { t: "Not a will", b: "Pair it with legal estate planning that refers to it." },
   { t: "Doesn't determine death", b: "It only knows check-ins stopped. Guardians decide whether to propose." },
-  { t: "Public by default", b: "Rules and heir addresses are on-chain. A private mode is planned." },
-  { t: "Testnet today", b: "Unaudited. NEAR, Sepolia ETH and WETH, wNEAR and Bitcoin testnet4 only." },
+  { t: "Private, not secret forever", b: "Private heirs stay hidden until you're overdue. Once revealed, and once paid, they're on the public record." },
+  { t: "Testnet today", b: "Unaudited. NEAR, Sepolia ETH and WETH, wNEAR and Bitcoin testnet4. NEAR Intents payments are mainnet only." },
 ];
 
 const FAQ = [
   { q: "What is Behest?", a: "A non-custodial way to pass on crypto. You set heirs, guardians and timing; a public contract on NEAR carries it out across NEAR, Ethereum and Bitcoin." },
   { q: "What if I forget to check in?", a: "Nothing can start until you're overdue and the grace period has passed. Even after guardians propose, you can cancel or check in until the waiting period ends." },
   { q: "Could guardians team up and take the funds?", a: "No. They can only approve releasing the plan exactly as written, to your heirs' fixed addresses." },
+  {
+    q: "Can I keep my heirs private?",
+    a: "Yes. Choose Private when you set up the plan. The chain then holds only a fingerprint per heir, so nobody can read who inherits, how much or where. Each heir gets a recovery record (it's in their printed packet, with a QR code). Once you've stopped checking in, they reveal it; if you check in again, the plan is hidden again. You decide whether Behest keeps an encrypted copy of the records, which it hands each heir only once you're overdue. A share nobody reveals in time goes to the other heirs or to your fallback. Standard tier.",
+  },
+  {
+    q: "What if a guardian disappears?",
+    a: "Turn on availability checks and guardians confirm now and then that they're still around. Name standbys, and one can take a quiet guardian's seat after a delay you set. Guardians can also hand their seat to a new account or step down. The number of approvals needed never goes down on its own.",
+  },
+  {
+    q: "What if someone gets my key?",
+    a: "Set an edit notice. Changes to heirs, addresses, shares and guardians then wait that long before they take effect, everyone on the plan is told, and you can cancel. Add a second key to your account or a check-in delegate as a way back in.",
+  },
+  {
+    q: "How do I know my heirs' addresses are right?",
+    a: "Heirs prove they control each address: a NEAR account by signing in, an Ethereum address with a signature, a Bitcoin address with a signed message. Your plan shows which are proven. While you're around, a heir can ask you to change an address; only you can approve it.",
+  },
   { q: "Do heirs need crypto experience?", a: "They need the wallet address you recorded. Heir pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas. In automatic mode they don't even need to claim." },
-  { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it." },
+  { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it. Each heir's printed recovery packet explains how to claim with any NEAR tool, without Behest's website." },
+  { q: "Can a DAO or a company use it?", a: "Yes. A Sputnik DAO can own a plan, be a guardian or be a heir; its members vote on each action. Owners can also name check-in delegates." },
+  { q: "How will I know when something happens?", a: "Turn on notifications by email, Telegram or webhook. Owners get check-in reminders; guardians and heirs hear when a release is proposed, approved or ready, when a private heir is revealed, and when the plan changes." },
   {
     q: "What does it cost?",
-    a: "A plan with one heir and NEAR is free. More heirs, Ethereum and Bitcoin, and release rules are Standard; automatic release and delay signers are Complete. Each is a one-time USDC fee that anyone can pay for you, and upgrading costs only the difference. Behest pays plan storage and NEAR gas. Ethereum and Bitcoin network fees come out of the plan's own vault and are shown before anything is signed. On testnet, payments use free test USDC.",
+    a: "A plan with one heir and NEAR is free. More heirs, Ethereum and Bitcoin, NEAR Intents delivery, private heirs, release rules and check-in delegates are Standard; automatic release and delay signers are Complete. Each is a one-time USDC fee that anyone can pay for you, and upgrading costs only the difference. Behest pays plan storage and NEAR gas. Ethereum and Bitcoin network fees come out of the plan's own vault and are shown before anything is signed. On testnet, payments use free test USDC.",
   },
 ];
 
@@ -69,7 +90,7 @@ export default function Landing() {
   return (
     <div className="bg-paper text-ink">
       <TestnetBar />
-      <SiteHeader links={[["#features", "How it works"], ["#safety", "Safety"], ["#faq", "FAQ"], ["/inspect", "Inspect"]]} />
+      <SiteHeader links={[["#features", "How it works"], ["#safety", "Safety"], ["#pricing", "Pricing"], ["#faq", "FAQ"], ["/inspect", "Inspect"]]} />
 
       <a href="#main" className="sr-only z-50 rounded-tile bg-ink px-4 py-3 text-ink-contrast focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
         Skip to content
@@ -84,7 +105,7 @@ export default function Landing() {
                 passed on exactly as you wish.
               </h1>
               <p className={`max-w-[640px] text-muted ${lede}`}>
-                Bitcoin, Ethereum and NEAR in one plan. Choose who receives what, check in now and then, and stay in control until the very last moment.
+                Bitcoin, Ethereum and NEAR in one plan. Choose who receives what, publicly or privately, check in now and then, and stay in control until the very last moment.
               </p>
               <div className="flex flex-wrap items-center gap-5">
                 <ButtonLink href="/setup" variant="ink" size="lg" iconRight={ArrowRight}>
@@ -184,7 +205,7 @@ export default function Landing() {
           <div className={`${frame} ${air}`}>
             <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
               <h2 className={h2}>Everyone has a job. Nobody can redirect.</h2>
-              <p className={`max-w-[760px] text-muted ${lede}`}>Only the owner sets destinations, and only while no release is open.</p>
+              <p className={`max-w-[760px] text-muted ${lede}`}>Only the owner sets destinations, only while no release is open, and big edits can wait a notice period. A delegate or DAO can check in for the owner; a standby can take a quiet guardian&apos;s seat.</p>
             </Reveal>
             <div className="px-4 pb-16 sm:px-8">
               <ul className="flex flex-col gap-2 md:hidden">
@@ -292,7 +313,7 @@ export default function Landing() {
         <section className="bg-gradient-to-b from-[#A9CCFF] via-[#6E9BFF] to-[#2F6BFF]">
           <div className="mx-auto flex max-w-[1280px] flex-col items-start gap-4 border-x border-black/[0.11] px-4 py-[clamp(96px,10vw,128px)] sm:px-8">
             <h2 className={`${h2} text-black`}>Your plan is minutes away.</h2>
-            <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, add your heirs, and you&apos;re set.</p>
+            <p className={`text-black/70 ${lede}`}>Sign in with a NEAR or Ethereum wallet, pick a preset, add your heirs, and you&apos;re set.</p>
             <ButtonLink href="/setup" size="lg" iconRight={ArrowRight} variant="night" className="mt-2">
               Create a plan
             </ButtonLink>

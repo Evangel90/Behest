@@ -9,7 +9,7 @@ const mono = Geist_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: 
 
 export const metadata: Metadata = {
   title: "Behest — inheritance on NEAR",
-  description: "Decide who receives your NEAR, Ethereum and Bitcoin. If you stop checking in, guardians can start a release that only pays the addresses you chose.",
+  description: "Decide who receives your NEAR, Ethereum and Bitcoin, publicly or privately. If you stop checking in, guardians can start a release that only pays the addresses you chose.",
 };
 
 export const viewport: Viewport = {

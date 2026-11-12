@@ -246,6 +246,28 @@ function SandboxView({ sandbox, onReset }: { sandbox: Sandbox; onReset: () => vo
         </Stagger>
       </section>
 
+      <Disclosure icon={Sparkles} title="More to try" sub="Everything else a plan can do, with these personas">
+        <ul className="flex list-disc flex-col gap-2 pl-5 text-sm leading-relaxed">
+          <li>
+            <strong>Private heirs.</strong> As Kemi, open <em>Create a plan</em> and choose Private on the Heirs step (a 2-minute reveal window is quickest). Download the records, let the plan go overdue, then act as Amara and paste hers into &ldquo;Reveal my share&rdquo;.
+          </li>
+          <li>
+            <strong>Presets and plain words.</strong> A new plan starts from Careful, Balanced or Quick; every plan view has &ldquo;The plan in plain words&rdquo;.
+          </li>
+          <li>
+            <strong>Edit notice.</strong> As Kemi, set an edit notice under Safety, then change a heir: the change waits, and everyone can see it.
+          </li>
+          <li>
+            <strong>Standby guardians.</strong> Under Safety → Guardian health, add Tobi as a standby and turn on availability checks; when a guardian stops confirming, a standby can take the seat.
+          </li>
+          <li>
+            <strong>Address proofs and requests.</strong> As Amara, prove her addresses or ask Kemi for a new one; as Kemi, approve or reject it.
+          </li>
+          <li>
+            <strong>Notifications.</strong> Under Notifications, add a webhook or email to hear about reminders, proposals and reveals.
+          </li>
+        </ul>
+      </Disclosure>
       <Disclosure icon={Wallet} title="Optional: the Ethereum leg" sub="Release Sepolia ETH too">
         <p className="text-sm leading-relaxed">
           Send a little Sepolia ETH (≥ 0.006) to Kemi&apos;s vault <strong>before</strong> a guardian proposes, and keep the executor running (<code className="font-mono">pnpm --filter @behest/executor start</code>). The executor broadcasts the transactions the contract had signed by the MPC network.

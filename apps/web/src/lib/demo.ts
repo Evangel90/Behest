@@ -26,8 +26,8 @@ export const PERSONA_INFO: Record<PersonaRole, { label: string; blurb: string }>
   g1: { label: "Dayo · guardian", blurb: "Proposes a release once Kemi is unreachable." },
   g2: { label: "Funmi · guardian", blurb: "Approves or rejects the exact proposal." },
   g3: { label: "Chidi · guardian", blurb: "A third vote; quorum is 2 of 3." },
-  amara: { label: "Amara · heir", blurb: "60%. Receives NEAR and Sepolia ETH." },
-  tobi: { label: "Tobi · heir", blurb: "40%. Receives NEAR and Sepolia ETH." },
+  amara: { label: "Amara · heir", blurb: "60%. Receives NEAR and Sepolia ETH. Can prove her addresses." },
+  tobi: { label: "Tobi · heir", blurb: "40%. Receives NEAR and Sepolia ETH. Can ask for a new address." },
 };
 
 const KEY = "behest.sandbox";
