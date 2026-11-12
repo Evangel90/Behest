@@ -99,6 +99,16 @@ pnpm --filter @behest/testnet e2e-recovery   # live: queued, cancelled and appli
 - **Presets.** A new plan starts from Careful, Balanced or Quick, or from scratch. Each fills in the timers, 2-of-3 guardians, an edit notice and availability checks, and explains every default. Nothing is locked: the wizard shows which values you changed, and everything stays editable on the plan page. Presets stay on the Free tier.
 - **In plain words.** Every plan view has a module-by-module summary (Check-ins, Activation, Guardians, Waiting period, Heirs and allocations, Claims, Recovery) with what each rule means and warnings for risky combinations. It's part of the review step and opens by itself while a release is under way.
 
+### Private heirs (D33)
+
+- **Sealed plans.** An owner can keep heirs private. On-chain there's only a SHA-256 fingerprint of each heir's recovery record (account, share, NEAR, Ethereum and Bitcoin destinations, a random salt). Fingerprints are computed in the browser; nothing about the heirs is sent to an RPC node. Standard tier or above.
+- **Reveal before release.** Once the owner is overdue, each heir (or anyone holding their record) reveals it. A release starts once every heir is revealed or the owner's reveal window has passed. A share nobody revealed is split among the revealed heirs, or goes to the fallback. If the owner checks in or cancels, the plan is sealed again. What was revealed stays in the public record, and so do payments once made.
+- **Records.** The owner downloads one record per heir. Each heir's printed packet includes it as text and a QR code. Optionally, Behest keeps an encrypted copy (AES-256-GCM, row ids are keyed hashes) and hands each heir its own record only once the plan is overdue. Behest itself could read the copy, so it's the owner's choice.
+
+```sh
+pnpm --filter @behest/testnet e2e-private   # live: sealed heirs, refused reveals, reseal on check-in, unrevealed share redistributed
+```
+
 ### Destination proofs and requests (D30, D31)
 
 - **Proof of control.** A heir, alternate or fallback proves it controls each registered address: a NEAR account by calling from it, an Ethereum address with a `personal_sign` signature, a Bitcoin `tb1q…` address with a signed message (Electrum, Sparrow, Bitcoin Core). The signed text names the contract, owner, recipient, chain and address. A proof only counts for that exact address, and it never blocks a release. Taproot (`tb1p…`) proofs aren't supported yet.
@@ -265,6 +275,10 @@ On 2026-11-08 the main contract was upgraded in place (no migration; existing pl
 
 `e2e-destinations`, 2026-11-12, after upgrading `behest-ekkr6.testnet` in place (wasm `892bd62b…`, demo timers). A fresh owner paid Standard and gave Amara a NEAR wallet account, a fresh Ethereum key and a fresh `tb1q` address. Amara's own account couldn't prove the wallet (`E_DESTINATION_PROOF`); the wallet proved itself. A guardian submitted Amara's EIP-191 and BIP-137 signatures, which were accepted; a signature from another key and an unregistered address were refused. A guardian couldn't ask for a change (`E_NOT_RECIPIENT`). Amara asked for a new, proven Ethereum address, and the owner rejected it: nothing changed. With a 1-minute edit notice on, Amara asked for a second NEAR wallet, which proved itself; the owner approved; the change was queued, applying it early failed (`E_CHANGE_NOT_DUE`), and a guardian applied it after the notice, with the proof carried over. In the app (headless Chrome, personas), Amara saw three proven addresses and asked for a new one; the owner saw "3 of 3 proven", the request marked as not proven, and the recovery guidance, and rejected it.
 
+### Private heirs (D33)
+
+`e2e-private`, 2026-11-12, after upgrading `behest-ekkr6.testnet` in place (wasm `204ac2cd…`, demo timers). A fresh owner paid Standard and saved a private plan: Amara 60% (paid to a fresh wallet account) and Tobi 40%, sealed as two fingerprints computed off-chain, which matched `get_heir_commitment`. `get_plan` listed no heirs and nothing about Amara or her wallet. A reveal while the owner was active failed (`E_REVEAL_NOT_OPEN`). Once overdue, a guardian revealed Amara's record. A record with another salt or another share was refused (`E_UNKNOWN_COMMITMENT`), as were a second reveal (`E_ALREADY_REVEALED`) and a release before Tobi was revealed (`E_REVEALS_PENDING`). The owner checked in, which cleared the reveals. Overdue again, Amara revealed herself and Tobi didn't. After the 2-minute reveal window, a guardian proposed the release with Amara at 100%. Once approved and the waiting period was over, Amara claimed, and her wallet received exactly the 0.2 NEAR escrow. In the app (headless Chrome, personas), the owner chose Private with a 2-minute reveal window in the wizard, saved, and downloaded the records. Owner, guardian and public views showed "2 private heirs". A browser without the records was offered restore and couldn't print packets. Once overdue, Amara pasted her record and saw "1 of 2 revealed".
+
 ### Clean reproduction (Stage 1 exit gate)
 
 On 2026-11-08 a second deployment was built from scratch with no faucet: `bootstrap r1`, a source rebuild (same wasm sha256 `0e2c65ea…` as the main deployment), then `deploy-contract r1 --parent` (`deployments/r1.json`). Every NEAR scenario passed on it. So did `e2e-eth`: [Tobi, nonce 0](https://sepolia.etherscan.io/tx/0x5f1abb07f7b96c33cbc22676dc0b0cf959fba10519beff9d1875def09035de21) and [Amara, nonce 1](https://sepolia.etherscan.io/tx/0x020eccf530488d8991f0e8db5d91d23ba7176c1ae9230497fca055d46f743e85), each with its exact share. The run surfaced two tooling issues, both fixed: scenario owners were never reclaimed, and an error check crashed on BigInt fields.
@@ -316,7 +330,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Heir proof-of-control for registered destinations: NEAR by calling, EIP-191, BIP-137 for `tb1q`; bound to the exact address; evidence only (D30, threats 17, 56; live `e2e-destinations`)
 - [x] Destination updates while the owner is active: recipient requests, owner approval under the edit notice; owner account-recovery guidance in the app (D31, threats 57–59; live `e2e-destinations`)
 - [x] Guided presets (Careful, Balanced, Quick, or from scratch) that fill in timers, guardians, the edit notice and availability checks, all editable; a plain-language summary with consequences and warnings, before saving, on every plan view and during a release (D32)
-- [ ] Commitment-based private heir details (public mode stays)
+- [x] Commitment-based private heir details: sealed fingerprints, reveal once overdue, resealed on check-in, unrevealed shares redistributed or to the fallback; records in each heir's packet, optional encrypted Behest backup; public mode stays (D33, threats 60–65; live `e2e-private`)
 - [ ] Property/state-machine tests and fuzzing; upgrade and long-timer tests
 - [ ] A second independent executor
 - [ ] RPC failover, durable job queues, alerts, runbooks, status page
