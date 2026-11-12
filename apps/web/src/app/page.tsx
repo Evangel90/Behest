@@ -3,9 +3,10 @@ import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Pricing } from "@/components/Tiers";
 import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
-import { ArrowRight, Eye, FlaskConical, Hourglass, Lock, Plus, RotateCcw } from "lucide-react";
+import { ArrowRight, Eye, Hourglass, Lock, Plus, RotateCcw } from "lucide-react";
 import { Reveal } from "@/components/motion";
 import { ButtonLink } from "@/components/ui";
+import { HeroActions } from "@/components/HeroActions";
 
 // Hairline-framed 1280px column used by every section.
 const frame = "mx-auto max-w-[1280px] border-x border-hairline";
@@ -107,15 +108,7 @@ export default function Landing() {
               <p className={`max-w-[640px] text-muted ${lede}`}>
                 Bitcoin, Ethereum and NEAR in one plan. Choose who receives what, publicly or privately, check in now and then, and stay in control until the very last moment.
               </p>
-              <div className="flex flex-wrap items-center gap-5">
-                <ButtonLink href="/setup" variant="ink" size="lg" iconRight={ArrowRight}>
-                  Create a plan
-                </ButtonLink>
-                <ButtonLink href="/try" variant="subtle" size="lg" icon={FlaskConical}>
-                  Try it as a guardian or heir
-                </ButtonLink>
-              </div>
-              <span className="text-base text-muted">No custody. No middlemen. Ready in minutes on testnet.</span>
+              <HeroActions />
             </div>
             <figure className="flex flex-col px-2 pb-24 sm:px-8">
               <figcaption className="flex items-center justify-center gap-2 px-4 pb-6 pt-2 text-base text-muted">

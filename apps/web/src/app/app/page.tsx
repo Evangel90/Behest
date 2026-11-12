@@ -1,5 +1,6 @@
 "use client";
 // Home: what needs you, your own plan, and the plans you're part of.
+import { useSealed } from "@/components/Sealed";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, BellRing, ChevronRight, CirclePlus, FlaskConical, HeartPulse, Inbox, Search, UserRound } from "lucide-react";
@@ -159,7 +160,9 @@ function MyPlan({ view, onChange }: { view: PlanView; onChange: () => Promise<vo
   const open = s === "Proposed" || s === "Waiting";
   const canCheckIn = s === "Active" || s === "Overdue" || open;
   const step = nextStep(view, "owner", { now, me: p.owner });
-  const facts = [`${p.policy.heirs.length} heir${p.policy.heirs.length === 1 ? "" : "s"}`, `${p.policy.quorum} of ${p.policy.guardians.length} guardians`, `${formatNear(p.escrow)} NEAR held`, `version ${p.version}`];
+  const sealed = useSealed(p.owner, `${p.version}:${s}`).view;
+  const heirCount = p.policy.heirs.length || sealed?.commitments.length || 0;
+  const facts = [`${heirCount}${!p.policy.heirs.length && sealed ? " private" : ""} heir${heirCount === 1 ? "" : "s"}`, `${p.policy.quorum} of ${p.policy.guardians.length} guardians`, `${formatNear(p.escrow)} NEAR held`, `version ${p.version}`];
   return (
     <Card className={cx("flex flex-col gap-4", step.tone === "urgent" && "ring-2 ring-warn/50")}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -181,7 +184,7 @@ function MyPlan({ view, onChange }: { view: PlanView; onChange: () => Promise<vo
       <div className="flex flex-wrap gap-2">
         {canCheckIn && (
           <Button
-            variant={s === "Active" ? "outline" : "primary"}
+            variant="primary"
             icon={HeartPulse}
             loading={!!busy}
             onClick={() => act(open ? "Check in (cancels the release)" : "Check in", "check_in", {}, { done: open ? "You're here. The release is cancelled." : "Checked in. The clock has restarted." })}
@@ -189,7 +192,7 @@ function MyPlan({ view, onChange }: { view: PlanView; onChange: () => Promise<vo
             {open ? "I'm here, check in and cancel" : "Check in now"}
           </Button>
         )}
-        <ButtonLink href={`/plan/${encodeURIComponent(p.owner)}`} variant={canCheckIn && s !== "Active" ? "outline" : "ink"} iconRight={ArrowRight}>
+        <ButtonLink href={`/plan/${encodeURIComponent(p.owner)}`} variant="ink" iconRight={ArrowRight}>
           Open plan
         </ButtonLink>
       </div>
