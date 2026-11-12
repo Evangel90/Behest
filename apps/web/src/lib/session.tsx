@@ -67,6 +67,10 @@ interface Ctx {
   /** Connects an Ethereum wallet by id (EIP-6963 rdns or "walletconnect"). WalletConnect reports its pairing link through onUri. */
   connectEvm(walletId: string, opts?: { onUri?: (uri: string) => void }): Promise<void>;
   actAsPersona(p: Persona): void;
+  /** The Ethereum wallet set aside by switching to a test persona, if any. */
+  lastEvm: { wallet: string; name: string; address: string } | null;
+  /** Back to that wallet: reconnects silently when the wallet still allows this site, else asks it. */
+  backToEvm(): Promise<void>;
   /** D26: act as a DAO the signed-in NEAR account can propose to. */
   actAsDao(dao: string): Promise<void>;
   /** Back to the member's own account. */
@@ -251,6 +255,7 @@ const PERSONA_KEY = "behest.persona";
 const DAO_KEY = "behest.dao";
 /** The Ethereum wallet last connected: { wallet: id, address }. Reconnected silently on load. */
 const EVM_KEY = "behest.evm";
+const LAST_EVM_KEY = "behest.evm.last";
 const evm = () => import("./evm/wallets");
 const evmSessionOf = async (c: EvmConnection) => (await import("./evm/session")).evmSession(c);
 
@@ -280,6 +285,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const connector = useRef<NearConnector | null>(null);
   const evmConn = useRef<EvmConnection | null>(null);
+  const [lastEvm, setLastEvm] = useState<{ wallet: string; name: string; address: string } | null>(null);
+  useEffect(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(LAST_EVM_KEY) ?? "null") as { wallet?: unknown; name?: unknown; address?: unknown } | null;
+      if (v && typeof v.wallet === "string" && typeof v.address === "string") setLastEvm({ wallet: v.wallet, name: typeof v.name === "string" ? v.name : "Ethereum wallet", address: v.address });
+    } catch {}
+  }, []);
   const unwatch = useRef<(() => void) | null>(null);
 
   /** Forgets the Ethereum wallet; `revoke` also asks the wallet to drop the site. */
@@ -411,19 +423,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       actAsPersona(p) {
         try {
           localStorage.setItem(PERSONA_KEY, p.accountId);
+          // Remember the Ethereum wallet so the menu can offer to go back to it.
+          const c = evmConn.current;
+          if (c) {
+            const last = { wallet: c.wallet.id, name: c.wallet.name, address: c.address };
+            localStorage.setItem(LAST_EVM_KEY, JSON.stringify(last));
+            setLastEvm(last);
+          }
         } catch {}
         dropEvm(false);
         setSession(personaSession(p));
       },
+      lastEvm,
+      async backToEvm() {
+        if (!lastEvm) return;
+        const c = (await (await evm()).restore({ wallet: lastEvm.wallet, address: lastEvm.address }).catch(() => null)) ?? (await (await evm()).connect(lastEvm.wallet));
+        forget(PERSONA_KEY);
+        forget(LAST_EVM_KEY);
+        setLastEvm(null);
+        await adoptEvm(c);
+      },
       async signOut() {
         forget(PERSONA_KEY);
+        forget(LAST_EVM_KEY);
+        setLastEvm(null);
         forget(DAO_KEY);
         if (session?.kind === "wallet") await (await getConnector()).disconnect().catch(() => {});
         if (session?.kind === "evm") dropEvm(true);
         setSession(null);
       },
     }),
-    [session, dao, ready, getConnector, adoptEvm, dropEvm],
+    [session, dao, ready, getConnector, adoptEvm, dropEvm, lastEvm],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

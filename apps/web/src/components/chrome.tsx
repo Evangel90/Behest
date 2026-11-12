@@ -2,12 +2,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Search, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Repeat, Search, Sun, UserRound, Wallet, type LucideIcon } from "lucide-react";
 import { loadSandbox, PERSONA_ROLES, type Sandbox } from "@/lib/demo";
-import { shortName } from "@/lib/plan";
+import { humanError } from "@/lib/hooks";
+import { shortAddr, shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { DaoPicker } from "./Dao";
+import { useToast } from "./feedback";
 import { CopyButton, Dialog, Segmented } from "./interactive";
 import { PICK_DAO, SignInDialog } from "./SignIn";
 import { useTheme, type Theme } from "./theme";
@@ -105,7 +107,8 @@ function initials(label: string) {
 
 /** Signed in: an account chip that opens a menu (copy id, switch persona, theme, sign out). Signed out: a sign-in button. */
 export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: boolean; compact?: boolean }) {
-  const { session, ready, signOut, actAsPersona, leaveDao } = useSession();
+  const { session, ready, signOut, actAsPersona, leaveDao, lastEvm, backToEvm } = useSession();
+  const toast = useToast();
   const router = useRouter();
   const [signIn, setSignIn] = useState(false);
   const [daoPick, setDaoPick] = useState(false);
@@ -198,6 +201,31 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
               {session.dao ? "Act as another DAO" : "Act as a DAO"}
             </MenuLink>
           )}
+          {session.kind === "persona" && lastEvm && (
+            <MenuLink
+              icon={Wallet}
+              onClick={async () => {
+                setOpen(false);
+                try {
+                  await backToEvm();
+                  router.push("/app");
+                } catch (e) {
+                  toast.show({ tone: "error", title: `Couldn't reconnect ${lastEvm.name}`, body: humanError(e) });
+                }
+              }}
+            >
+              Back to {lastEvm.name} ({shortAddr(lastEvm.address)})
+            </MenuLink>
+          )}
+          <MenuLink
+            icon={Repeat}
+            onClick={() => {
+              setOpen(false);
+              setSignIn(true);
+            }}
+          >
+            Use another account
+          </MenuLink>
           {session.dao && (
             <MenuLink
               icon={UserRound}
@@ -254,6 +282,7 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
           Sign out
         </Button>
       </Dialog>
+      <SignInDialog open={signIn} onClose={() => setSignIn(false)} />
       <DaoPicker open={daoPick} onClose={() => setDaoPick(false)} onDone={(dao) => router.push(`/plan/${encodeURIComponent(dao)}`)} />
     </>
   );
