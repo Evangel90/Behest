@@ -13,8 +13,8 @@
     "behest-ekkr6-tobi.testnet"
   ],
   "usdc": "behest-ekkr6-usdc.testnet",
-  "wasmSha256": "204ac2cd770644e9e3103a9fd6b993112e686dda42de21c64e36399b4b4a9f16",
-  "deployedAt": "2026-11-12T15:06:26.039Z",
+  "wasmSha256": "22768ca590e60885a31c5981c4cf769fb07d132ca0190db9db181ac1bb552721",
+  "deployedAt": "2026-11-12T17:39:25.938Z",
   "daos": {
     "guardian": "bg-ekkr6.sputnikv2.testnet",
     "heir": "bh-ekkr6.sputnikv2.testnet"
