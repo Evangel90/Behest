@@ -5,6 +5,7 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Download, FileQuestion, Printer, RotateCcw, WifiOff } from "lucide-react";
+import { BehestWatermark } from "@/components/BehestLoader";
 import { Mark } from "@/components/chrome";
 import { QrCode } from "@/components/QrCode";
 import { Button, ButtonLink, EmptyState, Skeleton, cx } from "@/components/ui";
@@ -109,6 +110,8 @@ function PacketScreen() {
           </div>
         </div>
       </header>
+      {/* A faint brand mark in the corner of the page (and of every printed sheet). */}
+      <BehestWatermark className="fixed bottom-[-80px] right-[-80px] -z-10 w-[420px] [&_.p]:animate-none print:bottom-[-40px] print:right-[-40px] print:opacity-[0.04]" />
       <main id="main" className="mx-auto flex max-w-[860px] flex-col gap-8 px-4 py-8 sm:px-8 print:max-w-none print:px-0 print:py-0">
         {data === undefined && !error && (
           <div aria-busy="true" aria-label="Loading the packet" className="flex flex-col gap-4">
