@@ -13,6 +13,7 @@ import { getBtcDestinations, getBtcVault, getPlan, vaultAddress, view } from "@/
 import { buildPacket, cliCommands, isEthImplicit, timelineWords, type Packet, type PacketHeir } from "@/lib/packet";
 import { duration, shortName, when } from "@/lib/plan";
 import type { PlanView, ReleaseOptions, ReleaseRules } from "@/lib/types";
+import { localRecords, matching, recordFile, type HeirRecord, type PrivateView } from "@/lib/sealed";
 
 export default function PacketPage() {
   return (
@@ -25,6 +26,8 @@ export default function PacketPage() {
 interface Loaded {
   view: PlanView;
   packet: Packet;
+  /** D33: a sealed plan: its records found in this browser (by heir), and how many heirs it has. */
+  sealed: { count: number; records: Record<string, HeirRecord> } | null;
 }
 
 function PacketScreen() {
@@ -41,22 +44,27 @@ function PacketScreen() {
         setError(null);
         const v = await getPlan(owner);
         if (!v) return !off && setData(null);
-        const [rules, options, dests, btc, eth] = await Promise.all([
+        const [rules, options, dests, btc, eth, pv] = await Promise.all([
           view<ReleaseRules | null>("get_release_rules", { owner }).catch(() => null),
           view<ReleaseOptions | null>("get_release_options", { owner }).catch(() => null),
           getBtcDestinations(owner).catch(() => []),
           getBtcVault(owner).catch(() => null),
           vaultAddress(owner).catch(() => null),
+          view<PrivateView | null>("get_private_heirs", { owner }).catch(() => null),
         ]);
+        // D33: a sealed plan's heirs come from this browser's records (the owner's device).
+        const recs = pv ? await matching(owner, localRecords(owner), pv.commitments) : [];
+        const policy = pv && recs.length ? { ...v.plan.policy, heirs: recs.map((r) => ({ account_id: r.account_id, share_bps: r.share_bps, near_destination: r.near_destination, eth_destination: r.eth_destination })) } : v.plan.policy;
+        const btcDests = pv ? recs.filter((r) => r.btc_destination).map((r) => ({ account_id: r.account_id, address: r.btc_destination! })) : dests;
         const packet = buildPacket(
           {
             contract: CONTRACT_ID,
             owner,
             version: v.plan.version,
-            policy: v.plan.policy,
+            policy,
             rules,
             options,
-            btcDestinations: dests,
+            btcDestinations: btcDests,
             ethVault: eth,
             btcVault: btc?.address ?? null,
             appUrl: window.location.origin,
@@ -64,7 +72,7 @@ function PacketScreen() {
           },
           heir,
         );
-        if (!off) setData({ view: v, packet });
+        if (!off) setData({ view: v, packet, sealed: pv ? { count: pv.commitments.length, records: Object.fromEntries(recs.map((r) => [r.account_id, r])) } : null });
       } catch (e) {
         if (!off) setError(e instanceof Error ? e.message : String(e));
       }
@@ -117,9 +125,29 @@ function PacketScreen() {
           </EmptyState>
         )}
         {data === null && <EmptyState icon={FileQuestion} title={`No plan for ${owner}`} body="A recovery packet can only be made for a plan that exists." />}
-        {data && data.packet.heirs.length === 0 && <EmptyState icon={FileQuestion} title={`${heir} isn't a heir of this plan`} body="Open the packet without a heir to see every heir." />}
-        {data && data.packet.heirs.length > 0 && <PacketBody packet={data.packet} />}
+        {data?.sealed && Object.keys(data.sealed.records).length < data.sealed.count && (
+          <EmptyState icon={FileQuestion} title="This plan keeps its heirs private" body={`Packets for private heirs are made on the device where the plan was saved (this browser has ${Object.keys(data.sealed.records).length} of ${data.sealed.count} records). Restore the records on the plan page, then come back.`} />
+        )}
+        {data && !data.sealed && data.packet.heirs.length === 0 && <EmptyState icon={FileQuestion} title={`${heir} isn't a heir of this plan`} body="Open the packet without a heir to see every heir." />}
+        {data && data.packet.heirs.length > 0 && <PacketBody packet={data.packet} records={data.sealed?.records} />}
       </main>
+    </div>
+  );
+}
+
+/** D33: the heir's private recovery record, to keep secret until it's needed. */
+function RecordBlock({ pk, name, record }: { pk: Packet; name: string; record: HeirRecord }) {
+  const text = JSON.stringify(recordFile(pk.owner, record, pk.contract));
+  return (
+    <div className="flex flex-col gap-3 rounded-tile border-2 border-dashed border-line-strong p-4 print:break-inside-avoid">
+      <span className="text-sm font-semibold">{name}&apos;s private recovery record</span>
+      <p className="text-[15px] leading-relaxed">
+        This plan keeps its heirs private. Nobody can see that {name} is a heir until this record is revealed. Keep it somewhere safe and private. Once {pk.owner} has stopped checking in, open the plan in Behest and choose &ldquo;Reveal my share&rdquo; (scan the code below or paste the text). Without it, this share may go to the other heirs.
+      </p>
+      <div className="flex flex-wrap items-start gap-4">
+        <QrCode value={text} label={`QR code holding ${name}'s recovery record`} className="size-40 text-ink print:text-black" />
+        <code className="block min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded-tile bg-subtle p-3 font-mono text-[11px] leading-relaxed print:bg-white print:p-0">{text}</code>
+      </div>
     </div>
   );
 }
@@ -128,7 +156,7 @@ const ethAddr = (a: string) => `${ETH_EXPLORER}/address/${a}`;
 const btcAddr = (a: string) => `${BTC_EXPLORER}/address/${a}`;
 const nearAcct = (a: string) => `${NEAR_EXPLORER}/address/${a}`;
 
-function PacketBody({ packet: pk }: { packet: Packet }) {
+function PacketBody({ packet: pk, records }: { packet: Packet; records?: Record<string, HeirRecord> }) {
   const who = shortName(pk.owner);
   const words = useMemo(() => timelineWords(pk), [pk]);
   return (
@@ -194,7 +222,7 @@ function PacketBody({ packet: pk }: { packet: Packet }) {
       </Section>
 
       {pk.heirs.map((h) => (
-        <HeirSection key={h.account_id} pk={pk} h={h} />
+        <HeirSection key={h.account_id} pk={pk} h={h} record={records?.[h.account_id]} />
       ))}
 
       <Section title="Keeping your destinations safe">
@@ -219,7 +247,7 @@ function PacketBody({ packet: pk }: { packet: Packet }) {
   );
 }
 
-function HeirSection({ pk, h }: { pk: Packet; h: PacketHeir }) {
+function HeirSection({ pk, h, record }: { pk: Packet; h: PacketHeir; record?: HeirRecord }) {
   const name = shortName(h.account_id);
   const evm = isEthImplicit(h.account_id);
   const cmds = cliCommands(pk, h.account_id);
@@ -241,6 +269,8 @@ function HeirSection({ pk, h }: { pk: Packet; h: PacketHeir }) {
           <span className="max-w-[160px] text-xs leading-snug text-muted">Scan to open the plan in the Behest app</span>
         </div>
       </div>
+
+      {record && <RecordBlock pk={pk} name={name} record={record} />}
 
       <div className="flex flex-col gap-1">
         <span className="text-[24px] font-medium tracking-[-0.02em]">{h.share} of the plan</span>

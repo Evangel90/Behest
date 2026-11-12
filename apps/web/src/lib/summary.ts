@@ -6,7 +6,7 @@
 import { duration, listNames, shortName } from "./plan";
 import type { GuardianSettings, PlanInput, ReleaseOptions, ReleaseRules } from "./types";
 
-export type SummaryModule = "checkins" | "activation" | "guardians" | "waiting" | "heirs" | "claims" | "recovery";
+export type SummaryModule = "checkins" | "activation" | "guardians" | "waiting" | "heirs" | "privacy" | "claims" | "recovery";
 
 export const MODULE_LABEL: Record<SummaryModule, string> = {
   checkins: "Check-ins",
@@ -14,6 +14,7 @@ export const MODULE_LABEL: Record<SummaryModule, string> = {
   guardians: "Guardians",
   waiting: "Waiting period",
   heirs: "Heirs and allocations",
+  privacy: "Privacy",
   claims: "Claims",
   recovery: "Recovery and safety",
 };
@@ -44,6 +45,8 @@ export interface SummaryInput {
   delegates?: number;
   /** D30: how many registered destinations are proven, of how many. */
   proofs?: { proven: number; total: number };
+  /** D33: a private (sealed) plan. `backup`: Behest keeps an encrypted copy of the records. */
+  sealed?: { count: number; reveal_window_ms: number; unrevealed: "Redistribute" | "Fallback"; revealed?: number; backup?: boolean } | null;
   /** Demo builds use minute-scale timers: skip day-based advice. */
   demo?: boolean;
 }
@@ -104,16 +107,25 @@ export function planSummary(i: SummaryInput, ownerLabel = "you"): { sections: Su
   const r = i.rules;
   const fixed = r?.fixed.length ? ` Fixed amounts come out first (${r.fixed.length}); the rest is split by share${r.remainder_to ? `, any remainder to ${shortName(r.remainder_to)}` : ""}.` : "";
   const shares = p.heirs.map((h) => `${shortName(h.account_id)} ${h.share_bps / 100}%`).join(", ");
+  const sl = i.sealed;
+  if (sl) {
+    sections.push({
+      module: "privacy",
+      rule: `${sl.count} heir${sl.count === 1 ? " is" : "s are"} kept private: on-chain there's only a fingerprint of each heir's record. Once ${you ? "you're" : `${ownerLabel} is`} overdue, heirs reveal their records; a release waits up to ${duration(sl.reveal_window_ms)} for all of them.${sl.revealed !== undefined ? ` ${sl.revealed} of ${sl.count} revealed so far.` : ""}`,
+      consequence: `A share nobody reveals in time ${sl.unrevealed === "Fallback" ? "goes to the fallback recipient" : "is split among the heirs who did"}. ${you ? "If you check in" : `If ${ownerLabel} checks in`}, everything is hidden again, but what was revealed stays in the public record.`,
+    });
+    if (!sl.backup) warn("privacy", "Only you and your heirs hold the recovery records. Make sure each heir has theirs; a lost record can't be recovered.", "info");
+  }
   sections.push({
     module: "heirs",
-    rule: p.heirs.length ? `${shares}.${fixed}` : "No heirs yet.",
+    rule: p.heirs.length ? `${shares}.${fixed}` : sl ? "Hidden until revealed." : "No heirs yet.",
     consequence: `Shares are worked out when a release is proposed, from what's in ${your} plan then. Funds go only to the addresses ${you ? "you" : ownerLabel} registered.`,
   });
   const someEth = p.heirs.some((h) => h.eth_destination);
   const noEth = p.heirs.filter((h) => !h.eth_destination);
   if (someEth && noEth.length) warn("heirs", `${listNames(noEth.map((h) => shortName(h.account_id)))} ${noEth.length === 1 ? "has" : "have"} no Ethereum address, so their ETH share stays in the vault for ${you ? "you" : ownerLabel} to withdraw.`, "info");
   const alternates = r?.alternates.length ?? 0;
-  if (p.heirs.length && !alternates && !r?.fallback) warn("heirs", "No alternate or fallback: if an heir can't receive, their share waits for them.", "info");
+  if (p.heirs.length && !sl && !alternates && !r?.fallback) warn("heirs", "No alternate or fallback: if an heir can't receive, their share waits for them.", "info");
   if (i.proofs && i.proofs.total > i.proofs.proven) warn("heirs", `${i.proofs.total - i.proofs.proven} of ${i.proofs.total} heir address${i.proofs.total === 1 ? "" : "es"} ${i.proofs.total - i.proofs.proven === 1 ? "isn't" : "aren't"} proven yet. Ask heirs to prove them from their plan page.`, "info");
 
   // Claims

@@ -22,6 +22,10 @@ export interface HeirDraft {
   intents?: boolean;
   /** D27: that Intents account, when not their NEAR destination (e.g. a 0x address). */
   intentsAccount?: string;
+  /** D33 (private plans): a Bitcoin address inside the sealed record. */
+  btc?: string;
+  /** D33: the record's salt, kept while editing so unchanged heirs keep their commitment. */
+  salt?: string;
 }
 /** Field key → message. Keys: checkIn, grace, waiting, guardian.<i>, guardians, quorum, heir.<i>.<field>, shares, deposit. */
 export type FieldErrors = Record<string, string>;
@@ -100,6 +104,7 @@ export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[
     if (h.near.trim() && !looksLikeNearAccount(h.near)) e[`heir.${i}.near`] = "That doesn't look like a NEAR account.";
     if (h.eth.trim() && !looksLikeEthAddress(h.eth)) e[`heir.${i}.eth`] = "An Ethereum address is 0x followed by 40 characters.";
     if (h.intents && h.intentsAccount?.trim() && !looksLikeNearAccount(h.intentsAccount)) e[`heir.${i}.intents`] = "A NEAR account or a 0x address.";
+    if (h.btc?.trim() && !/^tb1[02-9ac-hj-np-z]{8,87}$/.test(h.btc.trim())) e[`heir.${i}.btc`] = "A testnet Bitcoin address starts with tb1.";
   });
   if (heirs.length === 0) e.shares = "Add at least one heir.";
   else {

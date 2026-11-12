@@ -13,7 +13,7 @@ export const SIGNED_ACTION_HEADER = "Behest signed action";
 export const DEADLINE_MS = 10 * 60_000;
 
 /** Methods whose attached deposit only pays for storage: an Ethereum wallet sends them with none, and Behest's sponsor pool pays (D24). */
-export const STORAGE_METHODS = new Set(["set_plan", "set_release_rules", "set_release_options", "set_btc_destinations", "set_intents_delivery", "set_edit_notice", "set_guardian_settings", "respond_destination_change"]);
+export const STORAGE_METHODS = new Set(["set_plan", "set_release_rules", "set_release_options", "set_btc_destinations", "set_intents_delivery", "set_edit_notice", "set_guardian_settings", "respond_destination_change", "set_private_plan"]);
 
 /** testnet or mainnet, from the contract's account suffix (as the contract derives it). */
 export const networkOf = (contractId: string): "mainnet" | "testnet" => (contractId.endsWith(".near") ? "mainnet" : "testnet");
@@ -150,6 +150,11 @@ export function describeAction(method: string, args: Record<string, unknown>, ac
       return `Withdraw your address request on ${plan}`;
     case "respond_destination_change":
       return `${args.approve ? "Approve" : "Reject"} ${String(args.account_id)}'s new ${String(args.chain)} address`;
+    // D33
+    case "set_private_plan":
+      return "Save your private inheritance plan";
+    case "reveal_heir":
+      return `Reveal ${String((args.record as { account_id?: string } | undefined)?.account_id ?? "a heir")} as a heir of ${plan}`;
     default:
       return `Call ${method} on Behest`;
   }

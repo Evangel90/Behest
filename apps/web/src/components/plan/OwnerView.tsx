@@ -15,7 +15,7 @@ import { useVault, type Vault } from "@/lib/vault";
 import { BtcOwnerCard, useBtc } from "../Bitcoin";
 import { useConfirm } from "../feedback";
 import { Address, Dialog, Field, Term } from "../interactive";
-import { GuardianList, HeirList, Timeline, receiptUrl } from "../PlanParts";
+import { GuardianList, Timeline, receiptUrl } from "../PlanParts";
 import { Pulse } from "../Pulse";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
@@ -25,6 +25,7 @@ import { DelegatesCard } from "../Dao";
 import { EditNoticeCard, GuardianHealthCard } from "../Recovery";
 import { AccountRecoveryCard, DestinationsOwnerCard } from "../Destinations";
 import { PlanSummaryCard } from "../Summary";
+import { Heirs, SealedOwnerCard } from "../Sealed";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -117,10 +118,11 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
 
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} />}
       <PlanSummaryCard ctx={ctx} role="owner" />
+      {ctx.sealed.view && <SealedOwnerCard planView={view} sealed={ctx.sealed} rules={rules.rules} editable={!view.plan.proposal} onChanged={refresh} />}
 
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
-          <HeirList view={view} />
+          <Heirs view={view} sealed={ctx.sealed} />
           <GuardianList view={view} />
         </div>
       </Group>

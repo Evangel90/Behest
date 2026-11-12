@@ -2,6 +2,7 @@
 // One plan, seen through the signed-in person's role: owner, guardian, heir,
 // delay signer, or the public inspector. Each view leads with what that
 // person needs to do now.
+import { useSealed } from "@/components/Sealed";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo } from "react";
 import { CirclePlus, FileQuestion, RotateCcw, Search, WifiOff } from "lucide-react";
@@ -46,6 +47,7 @@ function PlanScreen() {
   const rules = useRules(owner);
   const history = useHistory(owner, view ? `${view.status}:${prop?.id}` : undefined);
   const recovery = useRecovery(owner, view ? `${view.plan.version}:${view.status}:${view.plan.policy.guardians.join()}:${prop?.approvals.join()}` : undefined);
+  const sealed = useSealed(owner, view ? `${view.plan.version}:${view.status}:${view.plan.last_check_in_ms}:${view.now_ms >= view.overdue_at_ms}` : undefined);
   const destinations = useDestinations(owner, view ? `${view.plan.version}:${view.status}:${recovery.pending.length}` : undefined);
 
   const roles = useMemo<UiRole[]>(() => {
@@ -69,7 +71,7 @@ function PlanScreen() {
   }, [view, owner]);
 
   const ctx: PlanCtx | null = view
-    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options, recovery, destinations }
+    ? { view, now: chainNow, me, refresh, rules, history, followUp: followUpOpen(view, lastSettledAt(history)), options, recovery, destinations, sealed }
     : null;
 
   return (

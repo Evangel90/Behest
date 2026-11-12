@@ -6,12 +6,13 @@ import { nextStep } from "@/lib/guide";
 import { describePlan, shortName } from "@/lib/plan";
 import { BtcRebase, useBtc } from "../Bitcoin";
 import { GetNotified } from "../Notifications";
-import { GuardianList, HeirList, Timeline } from "../PlanParts";
+import { GuardianList, Timeline } from "../PlanParts";
 import { ExtensionControls, OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
 import { GuardianHealthCard, MySeatCard } from "../Recovery";
 import { PlanSummaryCard } from "../Summary";
+import { Heirs, RevealCard } from "../Sealed";
 import { useTx } from "../tx";
 import { Button, Card, SectionTitle } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -52,6 +53,7 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
           </Button>
         )}
       </NowCard>
+      {ctx.sealed.view && <RevealCard planView={view} sealed={ctx.sealed} me={me} onRevealed={refresh} />}
       {canPropose && <ProposeCard view={view} act={act} busy={!!busy} followUp={followUp} />}
       {p && <ProposalPanel view={view} now={now} me={me} act={act} busy={!!busy} vote />}
       <BtcRebase view={view} btc={btc} />
@@ -61,7 +63,7 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <GuardianList view={view} me={me} />
-          <HeirList view={view} />
+          <Heirs view={view} sealed={ctx.sealed} />
         </div>
         <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
         <PlanSummaryCard ctx={ctx} role="guardian" />
@@ -101,7 +103,7 @@ export function DelayView({ ctx }: { ctx: PlanCtx }) {
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <GuardianList view={view} me={me} />
-          <HeirList view={view} />
+          <Heirs view={view} sealed={ctx.sealed} />
         </div>
       </Group>
     </>

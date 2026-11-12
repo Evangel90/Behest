@@ -1,6 +1,7 @@
 "use client";
 // Shared pieces of the plan screen: the context every role view gets, the
 // header with the role switch, the "what to do now" card and the proposal panel.
+import type { Sealed } from "../Sealed";
 import Link from "next/link";
 import { ChevronLeft, CircleCheck, Eye, Gift, Hourglass, KeyRound, Link2, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp, TriangleAlert, Vote, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -32,6 +33,8 @@ export interface PlanCtx {
   recovery: Recovery;
   /** D30/D31: destinations with proof status, and requests. */
   destinations: Destinations;
+  /** D33: a sealed plan's commitments and reveals (null: public plan). */
+  sealed: Sealed;
 }
 
 export const ROLE_ICON: Record<UiRole, LucideIcon> = { owner: KeyRound, guardian: ShieldCheck, heir: Gift, delay: Hourglass, public: Eye };

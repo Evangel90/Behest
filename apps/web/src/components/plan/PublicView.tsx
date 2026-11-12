@@ -6,13 +6,14 @@ import { nextStep } from "@/lib/guide";
 import { actionsFor, describePlan, duration, formatEth, formatNear, formatToken, relative, shortName, when } from "@/lib/plan";
 import { useVault } from "@/lib/vault";
 import { Address, CopyButton, Disclosure, Term } from "../interactive";
-import { GuardianList, HeirList, Row, Timeline } from "../PlanParts";
+import { GuardianList, Row, Timeline } from "../PlanParts";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
 import { GuardianHealthCard } from "../Recovery";
 import { MyDestinationsCard, ProveAsDestinationCard } from "../Destinations";
 import { PlanSummaryCard } from "../Summary";
+import { Heirs, RevealCard } from "../Sealed";
 import { useTx } from "../tx";
 import { CanAct, Card, SectionTitle, Skeleton } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -57,10 +58,11 @@ export function PublicView({ ctx }: { ctx: PlanCtx }) {
           </div>
         </Card>
         <div className="flex flex-col gap-3">
-          <HeirList view={view} me={me} />
+          <Heirs view={view} sealed={ctx.sealed} me={me} />
           <GuardianList view={view} me={me} />
         </div>
       </div>
+      {ctx.sealed.view && <RevealCard planView={view} sealed={ctx.sealed} me={me} onRevealed={refresh} />}
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} technical />}
       {me && ctx.destinations.current.some((d) => d.account_id === me) && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
       <PlanSummaryCard ctx={ctx} role="public" />

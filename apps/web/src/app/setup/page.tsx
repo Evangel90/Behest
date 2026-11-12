@@ -14,6 +14,8 @@ import { DaoBanner, DaoSetupNotes } from "@/components/Dao";
 import { SummaryList } from "@/components/Summary";
 import { PRESETS, applyPreset, editedFrom, presetValues, type PresetId } from "@/lib/presets";
 import { planSummary } from "@/lib/summary";
+import { commitment, downloadJson, localRecords, matching, recordFile, saveLocalRecords, type HeirRecord, type PrivateView, type Unrevealed } from "@/lib/sealed";
+import { backupRecords } from "@/lib/notify";
 import { IntentsBridgeAddress } from "@/components/Intents";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
 import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
@@ -68,6 +70,12 @@ interface Draft {
   notice: number;
   availability: number;
   swapDelay: number;
+  /** D33: heirs kept private (sealed commitments on-chain, records off-chain). */
+  privacy: "public" | "private";
+  revealWindow: number;
+  unrevealed: Unrevealed;
+  /** Let Behest keep an encrypted copy of the records. */
+  backup: boolean;
 }
 const DEMO_DRAFT: Draft = {
   checkIn: { n: "5", unit: "minutes" },
@@ -81,6 +89,10 @@ const DEMO_DRAFT: Draft = {
   notice: 0,
   availability: 0,
   swapDelay: 2 * 60_000,
+  privacy: "public",
+  revealWindow: 5 * 60_000,
+  unrevealed: "Redistribute",
+  backup: false,
 };
 
 export default function SetupPage() {
@@ -110,6 +122,11 @@ function Setup() {
   // D28: the owner's edit notice; with one, big edits wait it out instead of applying.
   const [editNotice, setEditNotice] = useState(0);
   const [queuedNote, setQueuedNote] = useState<string | null>(null);
+  /** D33: the saved plan is sealed; how many of its records this browser has. */
+  const [sealedInfo, setSealedInfo] = useState<{ count: number; known: number } | null>(null);
+  /** D33: records made on save, to download before leaving. */
+  const [madeRecords, setMadeRecords] = useState<HeirRecord[] | null>(null);
+  const [backupNote, setBackupNote] = useState<string | null>(null);
   /** D26: acting as a DAO, saving is a proposal; this is its id. */
   const [proposed, setProposed] = useState<number | null | undefined>(undefined);
   // D25: what the saved plan already has beside the policy (rules, options,
@@ -159,7 +176,26 @@ function Setup() {
             notice: 0,
             availability: 0,
             swapDelay: 0,
+            privacy: "public",
+            revealWindow: 5 * 60_000,
+            unrevealed: "Redistribute",
+            backup: false,
           });
+          // D33: a sealed plan's heirs come from this browser's records, when they match.
+          void viewCall<PrivateView | null>("get_private_heirs", { owner: v.plan.owner })
+            .then(async (pv) => {
+              if (!live || !pv) return;
+              const recs = await matching(v.plan.owner, localRecords(v.plan.owner), pv.commitments);
+              setSealedInfo({ count: pv.commitments.length, known: recs.length });
+              setD((x) => ({
+                ...x,
+                privacy: "private",
+                revealWindow: pv.reveal_window_ms,
+                unrevealed: pv.unrevealed,
+                heirs: recs.length === pv.commitments.length ? recs.map((r) => ({ account: r.account_id, pct: String(r.share_bps / 100), near: r.near_destination === r.account_id ? "" : (r.near_destination ?? ""), eth: r.eth_destination ?? "", btc: r.btc_destination ?? "", salt: r.salt })) : [{ account: "", pct: "100", near: "", eth: "" }],
+              }));
+            })
+            .catch(() => {});
           setStep((s) => (s === "start" ? "timing" : s));
         } else {
           try {
@@ -258,6 +294,7 @@ function Setup() {
     btcDestinations: extras.btc,
     intents: intentsDeliveries(d.heirs).length,
     delegates: extras.delegates,
+    sealed: d.privacy === "private" ? { count: plan.heirs.length, reveal_window_ms: d.revealWindow, unrevealed: d.unrevealed, backup: d.backup } : null,
     demo,
   };
   const show = (s: WizardStep) => (tried[s] ? errs[s] : {});
@@ -265,9 +302,11 @@ function Setup() {
   const finalErrors = session ? validateDraft(plan, session.accountId) : [];
   // D25: the tier this draft needs, and whether the owner has it (or already uses it).
   const tiersOn = !!tierCfg?.fee_token;
-  const deliveries = intentsDeliveries(d.heirs);
+  const priv = d.privacy === "private";
+  const deliveries = priv ? [] : intentsDeliveries(d.heirs);
   const baseFeatures = features(plan, extras.rules, extras.options, extras.btc, extras.tokens, extras.delegates, deliveries.length > 0);
-  const draftFeatures = { ...baseFeatures, guardians: baseFeatures.guardians + extras.standbys };
+  // D33: a sealed plan's hidden destinations may be external.
+  const draftFeatures = { ...baseFeatures, guardians: baseFeatures.guardians + extras.standbys, external_assets: baseFeatures.external_assets || priv };
   const needTier = tierCfg && tiersOn ? requiredTier(tierCfg, draftFeatures) : 0;
   const allowance = tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0;
   const tierBlocked = tiersOn && (!tier || needTier > allowance);
@@ -310,8 +349,22 @@ function Setup() {
     try {
       setPhase("plan");
       // D26: a DAO saves the plan and its first deposit in one proposal (one vote), paying its own storage.
+      // D33: records (salts kept for unchanged heirs) and their commitments, computed here.
+      const records: HeirRecord[] = priv
+        ? plan.heirs.map((h, i) => ({ account_id: h.account_id, share_bps: h.share_bps, near_destination: h.near_destination, eth_destination: h.eth_destination, btc_destination: d.heirs[i]?.btc?.trim() || null, salt: d.heirs[i]?.salt || crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "") }))
+        : [];
+      const sealed = priv ? { commitments: await Promise.all(records.map((r) => commitment(owner, r))), reveal_window_ms: d.revealWindow, unrevealed: d.unrevealed } : null;
+      const saveMethod = priv ? "set_private_plan" : "set_plan";
+      const saveArgs: Record<string, unknown> = priv ? { plan: { ...plan, heirs: [] }, sealed } : { plan };
+      if (priv) {
+        saveLocalRecords(owner, records);
+        setMadeRecords(records);
+        // A sealed plan can't keep heir-specific Bitcoin destinations or Intents delivery.
+        if (extras.btc > 0) await storageCall("set_btc_destinations", { destinations: [] }, "Clear Bitcoin destinations (they move into private records)");
+        if (savedIntents.length) await storageCall("set_intents_delivery", { deliveries: [] }, "Stop NEAR Intents delivery (not available for private heirs)");
+      }
       if (session.propose) {
-        const calls: DaoCall[] = [{ method: "set_plan", args: { plan }, deposit: 100_000_000_000_000_000_000_000n }];
+        const calls: DaoCall[] = [{ method: saveMethod, args: saveArgs, deposit: 100_000_000_000_000_000_000_000n }];
         if (!editing) for (const c of safetyCalls) calls.push({ method: c.method, args: c.args, deposit: INTENTS_DEPOSIT });
         if (deliveries.length || savedIntents.length) calls.push({ method: "set_intents_delivery", args: { deliveries }, deposit: INTENTS_DEPOSIT });
         if (!editing && depositYocto && depositYocto > 0n) calls.push({ method: "deposit", args: { owner: session.accountId }, deposit: depositYocto });
@@ -328,7 +381,7 @@ function Setup() {
       // or the pool says no, a NEAR account pays as before (nothing changed yet).
       if (sponsored || evm) {
         try {
-          await session.call("set_plan", { plan }, { sponsor: true, summary: editing ? "Update your inheritance plan" : "Create your inheritance plan" });
+          await session.call(saveMethod, saveArgs, { sponsor: true, summary: priv ? (editing ? "Update your private inheritance plan" : "Create a private inheritance plan") : editing ? "Update your inheritance plan" : "Create your inheritance plan" });
           saved = true;
           setPaidBy("behest");
         } catch (e) {
@@ -337,12 +390,21 @@ function Setup() {
       }
       // Storage deposit; the contract refunds whatever it doesn't use.
       if (!saved) {
-        await session.call("set_plan", { plan }, { deposit: 100_000_000_000_000_000_000_000n });
+        await session.call(saveMethod, saveArgs, { deposit: 100_000_000_000_000_000_000_000n });
         setPaidBy("you");
       }
       // D28: big edits are queued. Say so; the plan screen shows them with a countdown.
       const queued = editing && editNotice > 0 ? await viewCall<{ effective_at_ms: number }[]>("get_pending_changes", { owner: session.accountId }).catch(() => []) : [];
       if (queued.length) setQueuedNote(`Your changes to heirs, guardians or quorum take effect when your edit notice ends (${duration(editNotice)}). Your guardians and heirs have been told, and you can cancel from the plan screen until then.`);
+      // D33: Behest's encrypted copy, if the owner chose it (checked against the plan on-chain, so not while queued).
+      if (priv && d.backup) {
+        if (queued.length) setBackupNote("Back up the records from your plan page once the change has taken effect.");
+        else
+          await backupRecords(session, records).then(
+            () => setBackupNote("Behest keeps an encrypted copy. Each heir can get theirs once you're overdue."),
+            (e) => setBackupNote(`The backup didn't go through (${humanError(e)}). Try again from your plan page.`),
+          );
+      }
       // Preset safety settings (new plans): D28 edit notice, D29 availability checks.
       if (!editing) for (const c of safetyCalls) await storageCall(c.method, c.args, c.summary);
       // D27: who receives through NEAR Intents (after set_plan: only the plan's recipients may opt in).
@@ -373,7 +435,7 @@ function Setup() {
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch {}
-      if (!queued.length) setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
+      if (!queued.length && !priv) setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
     } catch (e) {
       setError(humanError(e));
       setPhase("idle");
@@ -433,9 +495,10 @@ function Setup() {
             </p>
           ) : (
             <p role="status" className="max-w-[420px] text-lg text-muted">
-              {queuedNote ?? <>Taking you to it now. {paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.</>}
+              {queuedNote ?? <>{madeRecords ? "Save the records below before you leave. " : "Taking you to it now. "}{paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.</>}
             </p>
           )}
+          {madeRecords && <RecordsDownload owner={owner} records={madeRecords} note={backupNote} />}
           <ButtonLink href={`/plan/${encodeURIComponent(owner)}`} variant="primary" iconRight={ArrowRight}>
             {proposed !== undefined ? "Go to the proposals" : "Open your plan"}
           </ButtonLink>
@@ -467,7 +530,7 @@ function Setup() {
             {step === "start" && <StartStep d={d} setD={setD} demo={demo} error={show("start").preset} />}
             {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} editing={editing} />}
             {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} demo={demo} editing={editing} />}
-            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg} />}
+            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg && !priv} demo={demo} fallback={!!extras.rules?.fallback} sealedInfo={sealedInfo} />}
             {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
               <ReviewStep summaryInput={summaryInput} plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
@@ -524,6 +587,97 @@ function Setup() {
         </aside>
       </div>
     </AppShell>
+  );
+}
+
+// ------------------------------------------------------------------ privacy (D33)
+
+function revealChoices(demo: boolean, cur: number) {
+  return [...new Set([...(demo ? [2 * MIN_MS, 5 * MIN_MS, 30 * MIN_MS] : []), 7 * DAY_MS, 30 * DAY_MS, 90 * DAY_MS, cur])].sort((a, b) => a - b);
+}
+
+function PrivacyCard({ d, set, demo, fallback, sealedInfo }: { d: Draft; set: SetFn; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null }) {
+  const priv = d.privacy === "private";
+  return (
+    <Card className="flex flex-col gap-4">
+      <SectionTitle title="Who can see your heirs?" sub="Private keeps who inherits, how much and where off the public record until you're overdue. Each heir then reveals their own recovery record." />
+      <Segmented
+        label="Privacy"
+        value={d.privacy}
+        onChange={(v) => set("privacy", v)}
+        options={[
+          { value: "public", label: "Public" },
+          { value: "private", label: "Private" },
+        ]}
+      />
+      {sealedInfo && sealedInfo.known < sealedInfo.count && (
+        <Notice tone="warn" title={`This browser has ${sealedInfo.known} of your ${sealedInfo.count} heir records`}>
+          Enter your heirs again to save a new private plan: their old records will stop working, so hand out the new ones. Or restore the records on your plan page first.
+        </Notice>
+      )}
+      {priv ? (
+        <>
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm leading-relaxed">
+            <li>On-chain there&apos;s only a fingerprint per heir. Nobody can read who or how much.</li>
+            <li>You&apos;ll download one recovery record per heir. Give each heir theirs (it&apos;s also in their printed packet).</li>
+            <li>Once you&apos;re overdue, heirs reveal their records; if you check in again, everything is hidden again.</li>
+            <li>Payments themselves are public on every chain once they happen. Standard plan or above.</li>
+          </ul>
+          <Field label="Reveal window" hint="After you become overdue, how long a release waits for every heir to reveal.">
+            {() => <Segmented label="Reveal window" value={String(d.revealWindow)} onChange={(v) => set("revealWindow", Number(v))} options={revealChoices(demo, d.revealWindow).map((ms) => ({ value: String(ms), label: duration(ms) }))} />}
+          </Field>
+          <Field label="If a heir never reveals" hint={fallback ? "Choose where their share goes. Nothing happens by default." : "Add a fallback recipient on your plan page to send unrevealed shares there instead."}>
+            {() => (
+              <Segmented
+                label="If a heir never reveals"
+                value={d.unrevealed}
+                onChange={(v) => set("unrevealed", v)}
+                options={[{ value: "Redistribute", label: "Split among the others" }, ...(fallback ? [{ value: "Fallback" as const, label: "To your fallback" }] : [])]}
+              />
+            )}
+          </Field>
+          <Field label="Backup" hint={d.backup ? "Behest stores the records encrypted and gives each heir theirs only once you're overdue. Behest itself could read them." : "Only you and your heirs hold the records. If one is lost, that share follows the rule above."}>
+            {() => (
+              <Segmented
+                label="Backup"
+                value={d.backup ? "behest" : "self"}
+                onChange={(v) => set("backup", v === "behest")}
+                options={[
+                  { value: "self", label: "Only me and my heirs" },
+                  { value: "behest", label: "Behest keeps a copy" },
+                ]}
+              />
+            )}
+          </Field>
+        </>
+      ) : (
+        <p className="text-sm text-muted">Anyone can read your heirs, shares and addresses on-chain. Easiest to check, least private.</p>
+      )}
+    </Card>
+  );
+}
+
+function RecordsDownload({ owner, records, note }: { owner: string; records: HeirRecord[]; note: string | null }) {
+  return (
+    <Card className="flex w-full max-w-[560px] flex-col gap-3 text-left">
+      <SectionTitle title="Save your heirs' recovery records now" sub="Without its record, a heir can't be revealed. Give each heir theirs; their printed packet has it too." />
+      <ul className="flex flex-col gap-2">
+        {records.map((r) => (
+          <li key={r.account_id} className="flex items-center justify-between gap-2 rounded-row bg-subtle px-3 py-2">
+            <span className="text-sm">
+              {shortName(r.account_id)} · {r.share_bps / 100}%
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={() => downloadJson(`behest-record-${r.account_id}.json`, recordFile(owner, r))}>
+              Download
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <Button type="button" variant="ink" className="self-start" onClick={() => downloadJson(`behest-records-${owner}.json`, records.map((r) => recordFile(owner, r)))}>
+        Download all
+      </Button>
+      <p className="text-sm text-muted">This browser keeps a copy too. {note}</p>
+    </Card>
   );
 }
 
@@ -805,11 +959,13 @@ function GuardianStep({ d, set, errors, demo, editing }: { d: Draft; set: SetFn;
   );
 }
 
-function HeirStep({ d, set, errors, intents }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean }) {
+function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null }) {
   const total = sharesTotal(d.heirs);
   const upd = (i: number, x: Partial<HeirDraft>) => set("heirs", d.heirs.map((h, j) => (j === i ? { ...h, ...x } : h)));
+  const priv = d.privacy === "private";
   return (
     <>
+      <PrivacyCard d={d} set={set} demo={demo} fallback={fallback} sealedInfo={sealedInfo} />
       <Card className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className={cx("text-sm font-semibold", total === 10_000 ? "text-ok" : "text-warn")}>{total === 10_000 ? "100% allocated" : total < 10_000 ? `${percent(total)} allocated · ${percent(10_000 - total)} left` : `${percent(total)} allocated · ${percent(total - 10_000)} too much`}</span>
@@ -856,6 +1012,11 @@ function HeirStep({ d, set, errors, intents }: { d: Draft; set: SetFn; errors: F
                   <IntentsBridgeAddress account={(h.intentsAccount || h.near || h.account).trim().toLowerCase()} chain="eth:1" onUse={(eth) => upd(i, { eth })} />
                 </div>
               </div>
+              {priv && (
+                <Field label="Bitcoin address" optional error={errors[`heir.${i}.btc`]} hint="Kept inside their private record. Testnet tb1q… or tb1p….">
+                  {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" value={h.btc ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { btc: e.target.value })} />}
+                </Field>
+              )}
               {intents && (
                 <div className="flex flex-col gap-3 rounded-row border border-line p-4">
                   <label className="flex cursor-pointer items-start gap-3 text-[15px]">
@@ -879,7 +1040,7 @@ function HeirStep({ d, set, errors, intents }: { d: Draft; set: SetFn; errors: F
       <Button type="button" variant="outline" icon={Plus} className="self-start" onClick={() => set("heirs", [...d.heirs, { account: "", pct: "0", near: "", eth: "" }])}>
         Add heir
       </Button>
-      <p className="text-sm text-muted">Bitcoin addresses are added on your plan page once the Bitcoin vault is set up.</p>
+      {!priv && <p className="text-sm text-muted">Bitcoin addresses are added on your plan page once the Bitcoin vault is set up.</p>}
     </>
   );
 }
@@ -1016,7 +1177,7 @@ function ReviewStep({
       </Card>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between px-1">
-          <span className="text-sm font-semibold text-muted">Heirs</span>
+          <span className="text-sm font-semibold text-muted">Heirs{d.privacy === "private" ? " · private: only you see this list" : ""}</span>
           {edit("heirs")}
         </div>
         {intentsDeliveries(d.heirs).length > 0 && (
@@ -1037,7 +1198,7 @@ function ReviewStep({
       )}
       <StorageNote evm={evm} sponsored={sponsored} spons={spons} />
       <Disclosure icon={ScrollText} title="Exact contract call" sub={evm ? "set_plan, inside the message your wallet signs" : "set_plan, as it will be signed"}>
-        <pre className="overflow-auto rounded-tile bg-void p-4 font-mono text-xs leading-relaxed text-white">{JSON.stringify({ method: "set_plan", args: { plan } }, null, 2)}</pre>
+        <pre className="overflow-auto rounded-tile bg-void p-4 font-mono text-xs leading-relaxed text-white">{JSON.stringify(d.privacy === "private" ? { method: "set_private_plan", args: { plan: { ...plan, heirs: [] }, sealed: { commitments: plan.heirs.map(() => "<fingerprint of the heir's record>"), reveal_window_ms: d.revealWindow, unrevealed: d.unrevealed } } } : { method: "set_plan", args: { plan } }, null, 2)}</pre>
       </Disclosure>
       {finalErrors.length > 0 && (
         <Notice tone="error" title="Fix these first">

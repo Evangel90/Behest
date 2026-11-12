@@ -63,6 +63,7 @@ export function PlanSummaryCard({ ctx, role }: { ctx: PlanCtx; role: "owner" | "
     btcDestinations: extra.btc,
     delegates: extra.delegates,
     proofs,
+    sealed: ctx.sealed.view ? { count: ctx.sealed.view.commitments.length, reveal_window_ms: ctx.sealed.view.reveal_window_ms, unrevealed: ctx.sealed.view.unrevealed, revealed: ctx.sealed.view.revealed.length, backup: true } : null,
     demo,
   };
   const proposed = !!view.plan.proposal && view.status !== "Settled";

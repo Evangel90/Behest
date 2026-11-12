@@ -6,6 +6,7 @@
 //  - wallet sessions ask the wallet (NEAR Connect `signMessage`);
 //  - Ethereum-wallet sessions sign the same text with personal_sign (EIP-191).
 // Reading your settings uses a short session token from one signature.
+import type { HeirRecord } from "./sealed";
 import { KeyPairSigner, type KeyPairString } from "near-api-js";
 import { CONTRACT_ID } from "./config";
 import { NOTIFIER_URL, NOTIFY_RECIPIENT } from "./config";
@@ -220,3 +221,13 @@ export async function setCouncil(session: Session, dao: string, enabled: boolean
 
 export const resendConfirmation = (token: string, id: number) => request<{ ok: true }>("POST", `/v1/contacts/${id}/resend`, undefined, token);
 export const testContact = (token: string, id: number) => request<{ ok: boolean; error?: string }>("POST", `/v1/contacts/${id}/test`, undefined, token);
+
+// ---- D33 recovery record backup (optional, owner's choice)
+export async function backupRecords(session: Session, records: HeirRecord[]) {
+  return request<{ owner: string; accounts: string[] }>("PUT", "/v1/records", await signAction(session, `let Behest keep an encrypted copy of ${records.length} heir record${records.length === 1 ? "" : "s"}`, "records.set", { records }));
+}
+export async function clearRecordBackup(session: Session) {
+  return request<{ owner: string; accounts: string[] }>("DELETE", "/v1/records", await signAction(session, "delete Behest's copy of your heir records", "records.clear"));
+}
+export const fetchRecords = (token: string, owner: string) => request<{ owner: string; records: (HeirRecord & { backed_up_ms: number })[] }>("GET", `/v1/records?owner=${encodeURIComponent(owner)}`, undefined, token);
+
