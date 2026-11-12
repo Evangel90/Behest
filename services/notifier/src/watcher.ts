@@ -4,7 +4,7 @@
 // plans subscribers asked to watch, and plans seen before until their
 // release is resolved.
 import type { Store } from "./db.js";
-import { members, notices, recipients, type Ctx, type ExtensionState, type Options, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
+import { members, notices, recipients, type Ctx, type ExtensionState, type GuardianStatus, type Options, type PendingChange, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
 import { withCouncils, type CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 
@@ -64,17 +64,22 @@ export class Watcher {
     const s: Snapshot = { view };
     const p = view.plan.proposal;
     const prevP = prev?.view.plan.proposal;
-    const [options, extension, history, withdrawal] = await Promise.all([
+    const [options, extension, history, withdrawal, pending, guardians] = await Promise.all([
       p ? this.view<Options | null>("get_release_options", { owner }) : Promise.resolve(undefined),
       p?.waiting_ends_at_ms ? this.view<ExtensionState | null>("get_extension", { owner }) : Promise.resolve(undefined),
       // needed to tell settled from cancelled, and to spot follow-up rounds
       p || prevP ? this.view<Proposal[]>("get_release_history", { owner }) : Promise.resolve(undefined),
       this.view<Transfer | null>("get_vault_withdrawal", { owner }),
+      // D28/D29; undefined on a contract without them
+      this.view<PendingChange[]>("get_pending_changes", { owner }).catch(() => undefined),
+      this.view<GuardianStatus>("get_guardian_status", { owner }).catch(() => undefined),
     ]);
     if (options !== undefined) s.options = options;
     if (extension !== undefined) s.extension = extension;
     if (history !== undefined) s.history = history.map((h) => ({ id: h.id, created_at_ms: h.created_at_ms ?? 0 }));
     s.withdrawal = withdrawal;
+    if (pending !== undefined) s.pending = pending;
+    if (guardians !== undefined) s.guardians = guardians;
     return s;
   }
 

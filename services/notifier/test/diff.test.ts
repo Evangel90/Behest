@@ -221,3 +221,62 @@ describe("wording and helpers", () => {
     expect(n!.links).toEqual([{ label: "Open the plan in Behest", url: "https://behest.example/plan/kemi.testnet" }]);
   });
 });
+
+describe("D28 edit notice and D29 guardian recovery", () => {
+  const DAY = 86_400_000;
+  const pend = (k: string, at = 1 * MIN, eff = 2 * DAY) => ({ change: { [k]: {} }, queued_at_ms: at, effective_at_ms: eff });
+  const status = (o: Partial<import("../src/diff.js").GuardianStatus> = {}) => ({
+    tracking: true,
+    availability_ms: 40 * DAY,
+    swap_delay_ms: 3 * DAY,
+    quorum: 2,
+    available: 3,
+    quorum_reachable: true,
+    guardians: ["dayo.testnet", "funmi.testnet", "chidi.testnet"].map((a) => ({ account_id: a, last_seen_ms: 0, available: true, resigned: false, replaceable: false })),
+    standbys: [{ account_id: "sade.testnet", last_seen_ms: 0, available: true, resigned: false, replaceable: false }],
+    pending: [],
+    ...o,
+  });
+  const with_ = (base: Snapshot, x: Partial<Snapshot>): Snapshot => ({ ...base, ...x });
+
+  it("tells everyone on the plan about a queued edit, then the owner when it is due", () => {
+    const cur = with_(s("Active", { now: 2 * MIN }), { pending: [pend("Plan")] });
+    const n = find(notices(null, cur), "edit_pending");
+    expect(n.to).toEqual(["owner", "guardians", "heirs"]);
+    expect(n.text).toContain("heirs, destinations");
+    const due = notices(null, with_(s("Active", { now: 3 * DAY }), { pending: [pend("Plan")] })).filter((x) => x.kind === "edit_pending");
+    expect(due.map((x) => x.key)).toEqual(["kemi.testnet:edit:Plan:60000", "kemi.testnet:edit_due:Plan:60000"]);
+  });
+
+  it("reports an edit called off before its notice ended", () => {
+    const prev = with_(s("Active", { now: 2 * MIN }), { pending: [pend("Rules")] });
+    const cur = with_(s("Active", { now: 3 * MIN }), { pending: [] });
+    expect(notices(prev, cur).map((x) => x.key)).toContain("kemi.testnet:edit_cancelled:Rules:60000");
+  });
+
+  it("warns when the quorum can't be reached and never suggests lowering it", () => {
+    const gs = status({ available: 1, quorum_reachable: false });
+    gs.guardians[1]!.available = false;
+    gs.guardians[2]!.available = false;
+    const n = find(notices(null, with_(s("Active", { now: MIN }), { guardians: gs })), "guardians");
+    expect(n.text).toContain("never lowers");
+    expect(recipients(with_(s("Active"), { guardians: gs }), n)).toContain("amara.testnet");
+  });
+
+  it("asks a quiet guardian or standby to confirm before the window ends", () => {
+    const ns = notices(null, with_(s("Active", { now: 31 * DAY }), { guardians: status() })).filter((x) => x.kind === "availability");
+    expect(ns.map((x) => x.accounts)).toEqual([["dayo.testnet"], ["funmi.testnet"], ["chidi.testnet"], ["sade.testnet"]]);
+    expect(ns[3]!.text).toContain("standby");
+  });
+
+  it("announces a pending seat change to the people involved and the finished swap", () => {
+    const change = { kind: "Standby" as const, out: "chidi.testnet", into: "sade.testnet", requested_by: "amara.testnet", requested_at_ms: MIN, effective_at_ms: 3 * DAY };
+    const cur = with_(s("Active", { now: 2 * MIN }), { guardians: status({ pending: [change] }) });
+    const n = find(notices(null, cur), "guardians");
+    expect(recipients(cur, n).sort()).toEqual(["chidi.testnet", "dayo.testnet", "funmi.testnet", "kemi.testnet", "sade.testnet"]);
+    const prev = with_(s("Active"), { guardians: status() });
+    const after = s("Active", { now: 4 * DAY });
+    after.view.plan.policy.guardians = ["dayo.testnet", "funmi.testnet", "sade.testnet"];
+    expect(notices(prev, with_(after, { guardians: status() })).map((x) => x.key)).toContain("kemi.testnet:seat_done:chidi.testnet:sade.testnet");
+  });
+});

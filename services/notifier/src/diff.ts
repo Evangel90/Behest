@@ -7,7 +7,7 @@
 // text says or implies that anyone died. "Unreachable", "hasn't checked in".
 
 export type Status = "Active" | "Overdue" | "Proposed" | "Waiting" | "Eligible" | "Executing" | "Settled";
-export type Audience = "owner" | "guardians" | "heirs" | "delay_signers";
+export type Audience = "owner" | "guardians" | "heirs" | "delay_signers" | "standbys";
 export type TransferState = "Pending" | "Sending" | "Signing" | "Signed" | "Broadcast" | "Confirmed" | "Failed";
 export type Asset = "Near" | "Eth" | "Btc" | { Erc20: string } | { Nep141: string };
 
@@ -62,6 +62,41 @@ export interface Options {
   delay_quorum: number;
 }
 
+/** D28: `get_pending_changes`. The change body isn't needed, only its kind. */
+export interface PendingChange {
+  change: Record<string, unknown>;
+  queued_at_ms: number;
+  effective_at_ms: number;
+}
+
+/** D29: `get_guardian_status`. */
+export interface GuardianSeat {
+  account_id: string;
+  last_seen_ms: number | null;
+  available: boolean;
+  resigned: boolean;
+  replaceable: boolean;
+}
+export interface GuardianChange {
+  kind: "Standby" | "Rotation";
+  out: string;
+  into: string;
+  requested_by: string;
+  requested_at_ms: number;
+  effective_at_ms: number;
+}
+export interface GuardianStatus {
+  tracking: boolean;
+  availability_ms: number;
+  swap_delay_ms: number;
+  quorum: number;
+  available: number;
+  quorum_reachable: boolean;
+  guardians: GuardianSeat[];
+  standbys: GuardianSeat[];
+  pending: GuardianChange[];
+}
+
 /** Everything the notifier read about one plan in one poll. */
 export interface Snapshot {
   view: PlanView;
@@ -72,6 +107,10 @@ export interface Snapshot {
   withdrawal?: Transfer | null;
   /** Archived (settled) releases, `get_release_history`. Required to tell a settled release from a cancelled one. */
   history?: { id: number; created_at_ms: number }[];
+  /** D28 queued owner edits (absent from contracts before D28). */
+  pending?: PendingChange[];
+  /** D29 guardian availability, standbys and seat changes. */
+  guardians?: GuardianStatus | null;
 }
 
 export const KINDS = [
@@ -92,6 +131,9 @@ export const KINDS = [
   "settled",
   "withdrawal_confirmed",
   "withdrawal_failed",
+  "edit_pending",
+  "guardians",
+  "availability",
   "security",
 ] as const;
 export type Kind = (typeof KINDS)[number];
@@ -115,11 +157,29 @@ export const KIND_INFO: Record<Kind, { label: string; who: string }> = {
   settled: { label: "Release complete", who: "everyone on the plan" },
   withdrawal_confirmed: { label: "Vault withdrawal sent", who: "owners" },
   withdrawal_failed: { label: "Vault withdrawal problem", who: "owners" },
+  edit_pending: { label: "Plan changes waiting to take effect", who: "everyone on the plan" },
+  guardians: { label: "Guardian seat changes and lost quorum", who: "owners, guardians, standbys, heirs" },
+  availability: { label: "Confirm you're still available", who: "guardians, standbys" },
   security: { label: "Changes to your notification channels", who: "you (always on)" },
 };
 
-/** Kinds a person can't switch off. */
-export const ALWAYS_ON: readonly Kind[] = ["security"];
+/** Kinds a person can't switch off. A queued edit is the warning a stolen owner key can't suppress (D28). */
+export const ALWAYS_ON: readonly Kind[] = ["security", "edit_pending"];
+
+/** What a D28 change kind touches, in words. */
+export const CHANGE_LABEL: Record<string, string> = {
+  Plan: "heirs, destinations, shares, guardians or quorum",
+  Guardians: "standby guardians and availability checks",
+  Rules: "release rules (fixed amounts, alternates, fallback)",
+  Options: "how and when heirs receive (release mode, delay signers)",
+  Btc: "Bitcoin destinations",
+  Intents: "NEAR Intents delivery",
+  Notice: "the edit notice itself (shorter or off)",
+};
+const changeKind = (c: PendingChange) => Object.keys(c.change)[0] ?? "Plan";
+
+/** Remind a guardian to confirm once this much of the availability window has passed. */
+export const CONFIRM_AT = 0.75;
 
 export interface Link {
   label: string;
@@ -474,6 +534,107 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
     }
   }
 
+  // ---- D28: owner edits waiting out the edit notice
+  const prevPending = prev?.pending ?? [];
+  for (const c of cur.pending ?? []) {
+    const k = changeKind(c);
+    const what = CHANGE_LABEL[k] ?? k;
+    add({
+      key: `${o}:edit:${k}:${c.queued_at_ms}`,
+      kind: "edit_pending",
+      to: ["owner", "guardians", "heirs"],
+      subject: `A change to ${who}'s plan takes effect ${when(c.effective_at_ms)}`,
+      text: `${who}'s plan has a change waiting: ${what}. It takes effect after ${when(c.effective_at_ms)}. If ${who} didn't make it (for example, someone else got into the account), ${who} can cancel it in Behest until then; heirs and guardians, please make sure ${who} knows.`,
+    });
+    if (v.now_ms >= c.effective_at_ms) {
+      add({
+        key: `${o}:edit_due:${k}:${c.queued_at_ms}`,
+        kind: "edit_pending",
+        to: ["owner"],
+        subject: `Your change to ${what} can now be applied`,
+        text: `The notice on your change to ${what} has passed. Open Behest to apply it (anyone on the plan can).`,
+      });
+    }
+  }
+  for (const c of prevPending) {
+    const k = changeKind(c);
+    const still = (cur.pending ?? []).some((x) => changeKind(x) === k && x.queued_at_ms === c.queued_at_ms);
+    if (!still && cur.pending && v.now_ms < c.effective_at_ms) {
+      add({
+        key: `${o}:edit_cancelled:${k}:${c.queued_at_ms}`,
+        kind: "edit_pending",
+        to: ["owner", "guardians", "heirs"],
+        subject: `A pending change to ${who}'s plan was called off`,
+        text: `The waiting change to ${CHANGE_LABEL[k] ?? k} on ${who}'s plan was cancelled or replaced. Nothing changed.`,
+      });
+    }
+  }
+
+  // ---- D29: guardian seats, availability and quorum
+  const gs = cur.guardians;
+  if (gs) {
+    if (!gs.quorum_reachable) {
+      const up = gs.guardians.filter((g) => g.available).map((g) => g.account_id);
+      add({
+        key: `${o}:quorum_lost:${up.join(",")}:${gs.guardians.map((g) => g.account_id).join(",")}`,
+        kind: "guardians",
+        to: ["owner", "guardians", "heirs"],
+        subject: `${who}'s plan is short of guardians`,
+        text: `Only ${gs.available} of ${gs.guardians.length} guardians on ${who}'s plan are available, and ${gs.quorum} approvals are needed. Behest never lowers that number: a release waits until a standby takes a seat, a guardian confirms, or ${who} names new guardians.`,
+      });
+    }
+    if (gs.tracking) {
+      for (const seat of [...gs.guardians, ...gs.standbys]) {
+        if (!seat.available || seat.last_seen_ms === null) continue;
+        const due = seat.last_seen_ms + gs.availability_ms;
+        if (v.now_ms >= seat.last_seen_ms + gs.availability_ms * CONFIRM_AT) {
+          const standby = gs.standbys.some((x) => x.account_id === seat.account_id);
+          add({
+            key: `${o}:confirm:${seat.account_id}:${seat.last_seen_ms}`,
+            kind: "availability",
+            to: [],
+            accounts: [seat.account_id],
+            subject: `Please confirm you're still available for ${who}'s plan`,
+            text: standby
+              ? `You're a standby guardian for ${who}'s plan. Please confirm in Behest before ${when(due)} so you can be called on if a guardian steps away.`
+              : `You're a guardian for ${who}'s plan. Please confirm in Behest before ${when(due)}; after that a standby can be asked to take your seat.`,
+          });
+        }
+      }
+    }
+    for (const c of gs.pending) {
+      add({
+        key: `${o}:seat:${c.out}:${c.requested_at_ms}`,
+        kind: "guardians",
+        to: ["owner", "guardians", "standbys"],
+        accounts: [c.out, c.into],
+        except: [c.requested_by],
+        subject: c.kind === "Rotation" ? `${name(c.out)} is moving their guardian seat` : `A standby may take ${name(c.out)}'s guardian seat`,
+        text:
+          c.kind === "Rotation"
+            ? `${name(c.out)} asked to move their guardian seat on ${who}'s plan to ${c.into} after ${when(c.effective_at_ms)}. If ${name(c.out)} didn't ask for this, ${who} or ${name(c.out)} can cancel it in Behest until then.`
+            : `${name(c.out)} hasn't confirmed as a guardian on ${who}'s plan, so standby ${name(c.into)} will take the seat after ${when(c.effective_at_ms)}. ${name(c.out)} can stop this by confirming in Behest; ${who} can cancel it.`,
+      });
+    }
+  }
+  const pg = prev?.view.plan.policy.guardians;
+  const cg = v.plan.policy.guardians;
+  if (pg && pg.length === cg.length && prev?.guardians) {
+    pg.forEach((g, i) => {
+      const now = cg[i];
+      if (now && now !== g && !pg.includes(now)) {
+        add({
+          key: `${o}:seat_done:${g}:${now}`,
+          kind: "guardians",
+          to: ["owner", "guardians"],
+          accounts: [g],
+          subject: `${name(now)} is now a guardian on ${who}'s plan`,
+          text: `${name(now)} took ${name(g)}'s guardian seat on ${who}'s plan. ${v.plan.policy.quorum} approvals are still needed for a release.`,
+        });
+      }
+    });
+  }
+
   // ---- the owner's own vault withdrawal (D7, D20)
   // Only a change since the last look is news (an old withdrawal on first sight isn't).
   const pw = prev?.withdrawal;
@@ -516,6 +677,7 @@ export function recipients(s: Snapshot, n: Pick<Notice, "to" | "accounts" | "exc
   if (n.to.includes("guardians")) v.plan.policy.guardians.forEach((g) => r.add(g));
   if (n.to.includes("heirs")) v.plan.policy.heirs.forEach((h) => r.add(h.account_id));
   if (n.to.includes("delay_signers")) (s.options?.delay_signers ?? []).forEach((d) => r.add(d));
+  if (n.to.includes("standbys")) (s.guardians?.standbys ?? []).forEach((d) => r.add(d.account_id));
   (n.accounts ?? []).forEach((a) => r.add(a));
   (n.except ?? []).forEach((a) => r.delete(a));
   return [...r];
@@ -523,5 +685,5 @@ export function recipients(s: Snapshot, n: Pick<Notice, "to" | "accounts" | "exc
 
 /** Every account with a role in the plan (used to decide whose watch requests to honour). */
 export function members(s: Snapshot): Set<string> {
-  return new Set(recipients(s, { to: ["owner", "guardians", "heirs", "delay_signers"], accounts: s.view.plan.proposal?.transfers.map((t) => t.heir) ?? [] }));
+  return new Set(recipients(s, { to: ["owner", "guardians", "heirs", "delay_signers", "standbys"], accounts: s.view.plan.proposal?.transfers.map((t) => t.heir) ?? [] }));
 }
