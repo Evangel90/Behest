@@ -133,6 +133,11 @@ describe("holdsRole", () => {
     expect(holdsRole({ ...plan, standbys: ["sade.testnet"] }, intent("sade.testnet", "participant_or_standby" as never))).toBe(true);
     expect(holdsRole(plan, intent("sade.testnet", "participant_or_standby" as never))).toBe(false);
     expect(holdsRole(plan, intent("kemi.testnet", "owner_or_guardian" as never))).toBe(true);
+    // D30/D31: alternates may request; a registered NEAR destination may prove itself.
+    expect(holdsRole({ ...plan, recipients: ["alt.testnet"] }, intent("alt.testnet", "recipient" as never))).toBe(true);
+    expect(holdsRole(plan, intent("alt.testnet", "recipient" as never))).toBe(false);
+    expect(holdsRole({ ...plan, destinations: ["wallet.testnet"] }, intent("wallet.testnet", "participant_or_destination" as never))).toBe(true);
+    expect(holdsRole(plan, intent("wallet.testnet", "participant_or_destination" as never))).toBe(false);
   });
 });
 

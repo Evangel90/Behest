@@ -38,6 +38,12 @@ export const SPONSORED_METHODS = {
   resign_guardian: "guardian",
   finalize_guardian_change: "participant_or_standby",
   cancel_guardian_change: "owner_or_guardian",
+  // D30: a plan member submits a signed proof, or a NEAR destination proves itself
+  prove_destination: "participant_or_destination",
+  // D31: heirs, named alternates and the fallback ask; the owner answers
+  request_destination_change: "recipient",
+  cancel_destination_change: "recipient",
+  respond_destination_change: "owner",
 } as const;
 export type SponsoredMethod = keyof typeof SPONSORED_METHODS;
 

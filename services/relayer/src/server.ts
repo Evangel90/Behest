@@ -74,6 +74,17 @@ async function authorize(intent: CallIntent) {
     const g = await view<{ standbys?: string[] } | null>("get_guardian_settings", { owner: intent.owner }).catch(() => null);
     plan.standbys = g?.standbys ?? [];
   }
+  if (plan && (intent.role === "recipient" || intent.role === "participant_or_destination")) {
+    const r = await view<{ alternates: { recipient: { account_id: string } }[]; fallback: { account_id: string } | null } | null>("get_release_rules", { owner: intent.owner }).catch(() => null);
+    plan.recipients = [...(r?.alternates ?? []).map((a) => a.recipient.account_id), ...(r?.fallback ? [r.fallback.account_id] : [])];
+  }
+  if (plan && intent.role === "participant_or_destination") {
+    const [cur, req] = await Promise.all([
+      view<{ destination: string }[]>("get_destinations", { owner: intent.owner }).catch(() => []),
+      view<{ destination: string }[]>("get_destination_requests", { owner: intent.owner }).catch(() => []),
+    ]);
+    plan.destinations = [...cur, ...req].map((d) => d.destination);
+  }
   if (!holdsRole(plan as never, intent)) throw new PolicyError("NO_ROLE", `${intent.sender} is not the ${intent.role} of ${intent.owner}`);
 }
 

@@ -134,6 +134,10 @@ interface PlanRoles {
   checkin_delegates?: string[];
   /** D29: from `get_guardian_settings`, fetched only for methods standbys may call. */
   standbys?: string[];
+  /** D17/D31: named alternates and the fallback (`get_release_rules`). */
+  recipients?: string[];
+  /** D30: every registered and requested destination (`get_destinations`, `get_destination_requests`). */
+  destinations?: string[];
 }
 
 /** The sender must actually hold the role in that plan; strangers aren't sponsored. */
@@ -162,6 +166,10 @@ export function holdsRole(plan: PlanRoles | null, intent: CallIntent): boolean {
       return plan.plan.policy.guardians.includes(intent.sender) || (plan.standbys ?? []).includes(intent.sender);
     case "participant_or_standby":
       return holdsRole(plan, { ...intent, role: "participant" }) || (plan.standbys ?? []).includes(intent.sender);
+    case "recipient":
+      return plan.plan.policy.heirs.some((h) => h.account_id === intent.sender) || (plan.recipients ?? []).includes(intent.sender);
+    case "participant_or_destination":
+      return holdsRole(plan, { ...intent, role: "participant" }) || (plan.recipients ?? []).includes(intent.sender) || (plan.destinations ?? []).includes(intent.sender);
     case "owner_or_guardian":
       return plan.plan.owner === intent.sender || plan.plan.policy.guardians.includes(intent.sender);
   }
