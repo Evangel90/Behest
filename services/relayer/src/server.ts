@@ -24,7 +24,8 @@ const rpcUrls = [env("NEAR_RPC_URL", "https://test.rpc.fastnear.com"), ...(proce
 const provider = new FailoverRpcProvider(rpcUrls.map((url) => new JsonRpcProvider({ url })));
 // Policy reads (plans, roles, nonces) may use another RPC than transactions, so
 // a per-IP rate limit on one doesn't block the other.
-const viewProvider = process.env.NEAR_VIEW_RPC_URL ? new JsonRpcProvider({ url: process.env.NEAR_VIEW_RPC_URL }) : provider;
+// Reads try NEAR_VIEW_RPC_URL first, then every transaction RPC in turn.
+const viewProviders = [...new Set([process.env.NEAR_VIEW_RPC_URL, ...rpcUrls].filter((u): u is string => !!u))].map((url) => new JsonRpcProvider({ url }));
 const relayer = new Account(env("RELAYER_ACCOUNT_ID"), provider, env("RELAYER_PRIVATE_KEY") as KeyPairString);
 const limiter = new Limiter(Number(env("RELAYER_PER_SENDER_PER_HOUR", "30")), Number(env("RELAYER_GLOBAL_PER_DAY", "2000")));
 const origin = env("RELAYER_ALLOWED_ORIGIN", "*");
@@ -53,15 +54,24 @@ async function readBody(req: IncomingMessage, limit = 16_384): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Contract view with a short backoff on RPC rate limits. */
+/**
+ * Contract view. A rate-limited, deprecated or unreachable RPC moves on to the
+ * next one; after a full round, back off briefly and go round again.
+ */
 async function view<T>(method: string, args: Record<string, unknown>): Promise<T> {
-  for (let i = 0; ; i++) {
-    try {
-      return (await viewProvider.callFunction({ contractId, method, args })) as T;
-    } catch (e) {
-      if (i >= 3 || !/429|rate limit/i.test(String(e))) throw e;
-      await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+  const infra = (e: unknown) => /429|rate limit|deprecated|fetch failed|ECONN|ETIMEDOUT|timeout|5\d\d|Bad Gateway|Service Unavailable/i.test(String(e));
+  for (let round = 0; ; round++) {
+    let last: unknown;
+    for (const p of viewProviders) {
+      try {
+        return (await p.callFunction({ contractId, method, args })) as T;
+      } catch (e) {
+        if (!infra(e)) throw e;
+        last = e;
+      }
     }
+    if (round >= 2) throw last;
+    await new Promise((r) => setTimeout(r, 1_000 * 2 ** round));
   }
 }
 
