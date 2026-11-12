@@ -3,7 +3,7 @@
 // validateDraft in plan.ts) remain the final gate on the review step.
 import { percent } from "./plan";
 
-export const WIZARD_STEPS = ["timing", "guardians", "heirs", "funding", "review"] as const;
+export const WIZARD_STEPS = ["start", "timing", "guardians", "heirs", "funding", "review"] as const;
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
 export type Unit = "minutes" | "hours" | "days";
@@ -123,6 +123,7 @@ export function stepOf(key: string): WizardStep {
   if (key.startsWith("guardian") || key === "quorum") return "guardians";
   if (key.startsWith("heir") || key === "shares") return "heirs";
   if (key === "deposit") return "funding";
+  if (key === "preset") return "start";
   return "review";
 }
 

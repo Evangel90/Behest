@@ -94,6 +94,11 @@ pnpm --filter @behest/testnet e2e-intents   # live: failing, half-refunding and 
 pnpm --filter @behest/testnet e2e-recovery   # live: queued, cancelled and applied edits; standby swap, rotation, resignation
 ```
 
+### Presets and the plan in plain words (D32)
+
+- **Presets.** A new plan starts from Careful, Balanced or Quick, or from scratch. Each fills in the timers, 2-of-3 guardians, an edit notice and availability checks, and explains every default. Nothing is locked: the wizard shows which values you changed, and everything stays editable on the plan page. Presets stay on the Free tier.
+- **In plain words.** Every plan view has a module-by-module summary (Check-ins, Activation, Guardians, Waiting period, Heirs and allocations, Claims, Recovery) with what each rule means and warnings for risky combinations. It's part of the review step and opens by itself while a release is under way.
+
 ### Destination proofs and requests (D30, D31)
 
 - **Proof of control.** A heir, alternate or fallback proves it controls each registered address: a NEAR account by calling from it, an Ethereum address with a `personal_sign` signature, a Bitcoin `tb1q…` address with a signed message (Electrum, Sparrow, Bitcoin Core). The signed text names the contract, owner, recipient, chain and address. A proof only counts for that exact address, and it never blocks a release. Taproot (`tb1p…`) proofs aren't supported yet.
@@ -310,7 +315,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Guardian recovery without lowering the quorum: standby guardians, availability confirmations (votes count), standby swaps after a notice that the guardian cancels by confirming, key rotation, resignation, "quorum unreachable" status and alerts (D29, threats 3, 52–53, 55; live `e2e-recovery`)
 - [x] Heir proof-of-control for registered destinations: NEAR by calling, EIP-191, BIP-137 for `tb1q`; bound to the exact address; evidence only (D30, threats 17, 56; live `e2e-destinations`)
 - [x] Destination updates while the owner is active: recipient requests, owner approval under the edit notice; owner account-recovery guidance in the app (D31, threats 57–59; live `e2e-destinations`)
-- [ ] Guided presets with a plain-language consequence summary
+- [x] Guided presets (Careful, Balanced, Quick, or from scratch) that fill in timers, guardians, the edit notice and availability checks, all editable; a plain-language summary with consequences and warnings, before saving, on every plan view and during a release (D32)
 - [ ] Commitment-based private heir details (public mode stays)
 - [ ] Property/state-machine tests and fuzzing; upgrade and long-timer tests
 - [ ] A second independent executor

@@ -3,7 +3,7 @@
 // funding, then a plain-language review before anything is signed.
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Divide, Gift, LoaderCircle, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, LoaderCircle, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
@@ -11,6 +11,9 @@ import { Swap } from "@/components/motion";
 import { SignInDialog } from "@/components/SignIn";
 import { TierNeeded } from "@/components/Tiers";
 import { DaoBanner, DaoSetupNotes } from "@/components/Dao";
+import { SummaryList } from "@/components/Summary";
+import { PRESETS, applyPreset, editedFrom, presetValues, type PresetId } from "@/lib/presets";
+import { planSummary } from "@/lib/summary";
 import { IntentsBridgeAddress } from "@/components/Intents";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
 import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
@@ -42,6 +45,7 @@ import {
 const INTENTS_DEPOSIT = 10_000_000_000_000_000_000_000n;
 
 const STEP_META: Record<WizardStep, { label: string; icon: LucideIcon; title: string; lede: string }> = {
+  start: { label: "Start", icon: Compass, title: "Pick a starting point.", lede: "Each preset fills in every setting with sensible values. You can change any of them in the next steps, and later on your plan page." },
   timing: { label: "Timing", icon: Timer, title: "How often will you check in?", lede: "Miss a check-in and the grace period, and your guardians may start a release. You can cancel until the waiting period ends." },
   guardians: { label: "Guardians", icon: ShieldCheck, title: "Who watches over the plan?", lede: "People you trust to notice you're unreachable. They can only release the plan exactly as written, never change where funds go." },
   heirs: { label: "Heirs", icon: Gift, title: "Who receives what?", lede: "Give each person a share and the addresses where it should arrive. Nobody else can change these." },
@@ -58,6 +62,12 @@ interface Draft {
   quorum: string;
   heirs: HeirDraft[];
   deposit: string;
+  /** Guided preset the draft started from (null: not chosen yet). */
+  preset: PresetId | "custom" | null;
+  /** D28 edit notice and D29 availability checks, saved after the plan (new plans). */
+  notice: number;
+  availability: number;
+  swapDelay: number;
 }
 const DEMO_DRAFT: Draft = {
   checkIn: { n: "5", unit: "minutes" },
@@ -67,6 +77,10 @@ const DEMO_DRAFT: Draft = {
   quorum: "2",
   heirs: [{ account: "", pct: "100", near: "", eth: "" }],
   deposit: "0.5",
+  preset: null,
+  notice: 0,
+  availability: 0,
+  swapDelay: 2 * 60_000,
 };
 
 export default function SetupPage() {
@@ -84,7 +98,7 @@ function Setup() {
   const [demo, setDemo] = useState(true);
   const [existing, setExisting] = useState<PlanView | null | undefined>(undefined);
   const [d, setD] = useState<Draft>(DEMO_DRAFT);
-  const [step, setStep] = useState<WizardStep>("timing");
+  const [step, setStep] = useState<WizardStep>("start");
   const [dir, setDir] = useState(1);
   const [tried, setTried] = useState<Partial<Record<WizardStep, boolean>>>({});
   const [phase, setPhase] = useState<"idle" | "plan" | "deposit" | "done">("idle");
@@ -114,7 +128,7 @@ function Setup() {
     if (!session?.accountId || !editing) return;
     void viewCall<number>("get_edit_notice", { owner: session.accountId }).then(setEditNotice, () => setEditNotice(0));
   }, [session?.accountId, editing]);
-  const steps = WIZARD_STEPS.filter((s) => !(editing && s === "funding"));
+  const steps = WIZARD_STEPS.filter((s) => !(editing && (s === "funding" || s === "start")));
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
 
   useEffect(() => void getConfig().then((c) => setDemo(c.demo_timers)).catch(() => {}), []);
@@ -141,7 +155,12 @@ function Setup() {
             quorum: String(p.quorum),
             heirs: p.heirs.map((h) => ({ account: h.account_id, pct: String(h.share_bps / 100), near: h.near_destination === h.account_id ? "" : (h.near_destination ?? ""), eth: h.eth_destination ?? "" })),
             deposit: "0",
+            preset: "custom",
+            notice: 0,
+            availability: 0,
+            swapDelay: 0,
           });
+          setStep((s) => (s === "start" ? "timing" : s));
         } else {
           try {
             const saved = sessionStorage.getItem(DRAFT_KEY);
@@ -218,11 +237,28 @@ function Setup() {
   } catch {}
 
   const errs: Record<WizardStep, FieldErrors> = {
+    start: d.preset ? {} : { preset: "Pick a starting point, or start from scratch." },
     timing: timingErrors(d, demo),
     guardians: guardianErrors(d.guardians, d.quorum, owner),
     heirs: heirErrors(d.heirs, owner, d.guardians),
     funding: depositYocto === null ? { deposit: "Not a valid NEAR amount." } : {},
     review: {},
+  };
+  const safetyCalls: { method: string; args: Record<string, unknown>; summary: string }[] = [
+    // Guardian settings first: once the edit notice is on, they'd wait it out.
+    ...(d.availability > 0 ? [{ method: "set_guardian_settings", args: { settings: { standbys: [], availability_ms: d.availability, swap_delay_ms: d.swapDelay } }, summary: "Turn on guardian availability checks" }] : []),
+    ...(d.notice > 0 ? [{ method: "set_edit_notice", args: { notice_ms: d.notice }, summary: `Set a ${duration(d.notice)} edit notice` }] : []),
+  ];
+  const summaryInput = {
+    plan,
+    rules: extras.rules,
+    options: extras.options,
+    notice: editing ? editNotice : d.notice,
+    guardianSettings: editing ? null : d.availability > 0 ? { standbys: [], availability_ms: d.availability, swap_delay_ms: d.swapDelay } : null,
+    btcDestinations: extras.btc,
+    intents: intentsDeliveries(d.heirs).length,
+    delegates: extras.delegates,
+    demo,
   };
   const show = (s: WizardStep) => (tried[s] ? errs[s] : {});
   const stepOk = (s: WizardStep) => Object.keys(errs[s]).length === 0;
@@ -254,6 +290,20 @@ function Setup() {
   };
   const reachable = (s: WizardStep) => steps.slice(0, steps.indexOf(s)).every(stepOk);
 
+  /** Calls whose deposit only pays storage: sponsored when possible, else the owner pays (refunded beyond use). */
+  async function storageCall(method: string, args: Record<string, unknown>, summary: string) {
+    if (!session) return;
+    if (sponsored || evm) {
+      try {
+        await session.call(method, args, { sponsor: true, summary });
+        return;
+      } catch (e) {
+        if (evm || !(e instanceof SponsorRefused)) throw e;
+      }
+    }
+    await session.call(method, args, { deposit: INTENTS_DEPOSIT, summary });
+  }
+
   async function submit() {
     if (!session) return;
     setError(null);
@@ -262,6 +312,7 @@ function Setup() {
       // D26: a DAO saves the plan and its first deposit in one proposal (one vote), paying its own storage.
       if (session.propose) {
         const calls: DaoCall[] = [{ method: "set_plan", args: { plan }, deposit: 100_000_000_000_000_000_000_000n }];
+        if (!editing) for (const c of safetyCalls) calls.push({ method: c.method, args: c.args, deposit: INTENTS_DEPOSIT });
         if (deliveries.length || savedIntents.length) calls.push({ method: "set_intents_delivery", args: { deliveries }, deposit: INTENTS_DEPOSIT });
         if (!editing && depositYocto && depositYocto > 0n) calls.push({ method: "deposit", args: { owner: session.accountId }, deposit: depositYocto });
         const r = await session.propose(calls);
@@ -292,6 +343,8 @@ function Setup() {
       // D28: big edits are queued. Say so; the plan screen shows them with a countdown.
       const queued = editing && editNotice > 0 ? await viewCall<{ effective_at_ms: number }[]>("get_pending_changes", { owner: session.accountId }).catch(() => []) : [];
       if (queued.length) setQueuedNote(`Your changes to heirs, guardians or quorum take effect when your edit notice ends (${duration(editNotice)}). Your guardians and heirs have been told, and you can cancel from the plan screen until then.`);
+      // Preset safety settings (new plans): D28 edit notice, D29 availability checks.
+      if (!editing) for (const c of safetyCalls) await storageCall(c.method, c.args, c.summary);
       // D27: who receives through NEAR Intents (after set_plan: only the plan's recipients may opt in).
       try {
         if (deliveries.length || savedIntents.length) {
@@ -411,12 +464,13 @@ function Setup() {
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <form onSubmit={step === "review" ? (e) => e.preventDefault() : next} noValidate className="flex min-w-0 flex-col gap-4">
           <Swap id={step} dir={dir} className="flex flex-col gap-4">
-            {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} />}
-            {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} />}
+            {step === "start" && <StartStep d={d} setD={setD} demo={demo} error={show("start").preset} />}
+            {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} editing={editing} />}
+            {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} demo={demo} editing={editing} />}
             {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg} />}
             {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
-              <ReviewStep plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
+              <ReviewStep summaryInput={summaryInput} plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
             )}
           </Swap>
 
@@ -454,6 +508,8 @@ function Setup() {
             <span className="text-sm font-semibold text-muted">Your plan so far</span>
             <p className="text-[15px] leading-relaxed">{session ? describePlan(plan) : ""}</p>
             <Consequences plan={plan} />
+            {d.preset && d.preset !== "custom" && !editing && <PresetBadge d={d} demo={demo} />}
+            <AsideWarnings input={summaryInput} />
             {tiersOn && tierCfg && (
               <span className="flex items-center justify-between gap-2 rounded-row bg-subtle px-3 py-2 text-sm">
                 <span>
@@ -468,6 +524,127 @@ function Setup() {
         </aside>
       </div>
     </AppShell>
+  );
+}
+
+// ------------------------------------------------------------------ presets
+
+const MIN_MS = 60_000;
+const DAY_MS = 86_400_000;
+function noticeChoices(demo: boolean, cur: number) {
+  const days = [1, 3, 7, 14, 30].map((n) => n * DAY_MS);
+  return [...new Set([0, ...(demo ? [MIN_MS, 2 * MIN_MS, 10 * MIN_MS] : []), ...days, cur])].sort((a, b) => a - b);
+}
+function availabilityChoices(demo: boolean, cur: number) {
+  return [...new Set([0, ...(demo ? [10 * MIN_MS, 30 * MIN_MS] : []), 30 * DAY_MS, 90 * DAY_MS, 180 * DAY_MS, cur])].sort((a, b) => a - b);
+}
+
+const PRESET_ROWS: { k: "checkIn" | "grace" | "waiting" | "quorum" | "notice" | "availability"; label: string; value: (v: ReturnType<typeof presetValues>) => string; means: (v: ReturnType<typeof presetValues>) => string }[] = [
+  { k: "checkIn", label: "Check in every", value: (v) => duration(v.checkIn), means: (v) => `Miss it and, after the grace period, the plan is overdue.` },
+  { k: "grace", label: "Grace", value: (v) => (v.grace ? duration(v.grace) : "none"), means: (v) => (v.grace ? `${duration(v.grace)} extra before guardians can act.` : "Guardians can act the moment a check-in is missed.") },
+  { k: "quorum", label: "Guardians", value: (v) => `${v.quorum} of ${v.guardians}`, means: () => "One guardian can be away or lost without blocking the release." },
+  { k: "waiting", label: "Waiting period", value: (v) => duration(v.waiting), means: (v) => `${duration(v.waiting)} to cancel a release you didn't expect.` },
+  { k: "notice", label: "Edit notice", value: (v) => (v.notice ? duration(v.notice) : "off"), means: (v) => (v.notice ? `A stolen key can't redirect funds for ${duration(v.notice)}; guardians and heirs are told.` : "Edits apply at once.") },
+  { k: "availability", label: "Availability checks", value: (v) => (v.availability ? `every ${duration(v.availability)}` : "off"), means: (v) => (v.availability ? "You're told when a guardian goes quiet." : "Nobody checks guardians are still around.") },
+];
+
+function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) => Draft) => void; demo: boolean; error?: string }) {
+  return (
+    <>
+      <div role="radiogroup" aria-label="Starting point" className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {PRESETS.map((p) => {
+          const v = demo ? p.demo : p.prod;
+          const on = d.preset === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => setD((x) => ({ ...applyPreset(x, p.id, demo), preset: p.id }))}
+              className={cx("flex flex-col gap-3 rounded-card border p-4 text-left transition-colors", on ? "border-signal bg-s-approved/40 ring-2 ring-signal" : "border-line bg-card hover:bg-subtle")}
+            >
+              <span className="flex flex-col gap-0.5">
+                <span className="text-lg font-semibold">{p.name}</span>
+                <span className="text-sm text-muted">{p.tagline}</span>
+              </span>
+              <dl className="flex flex-col gap-1 text-sm">
+                {PRESET_ROWS.map((r) => (
+                  <div key={r.k} className="flex justify-between gap-2">
+                    <dt className="text-muted">{r.label}</dt>
+                    <dd className="tabular text-right font-medium">{r.value(v)}</dd>
+                  </div>
+                ))}
+              </dl>
+              <span className="text-sm leading-relaxed">{p.forWhom}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={d.preset === "custom"}
+        onClick={() => setD((x) => ({ ...x, preset: "custom" }))}
+        className={cx("flex min-h-11 items-center justify-between gap-3 rounded-row border px-4 py-3 text-left text-[15px]", d.preset === "custom" ? "border-signal ring-2 ring-signal" : "border-line bg-card hover:bg-subtle")}
+      >
+        <span>
+          <span className="font-semibold">Start from scratch.</span> <span className="text-muted">Set every value yourself.</span>
+        </span>
+      </button>
+      {error && <span className="text-[13px] font-semibold text-error">{error}</span>}
+      {d.preset && d.preset !== "custom" && (
+        <Card className="flex flex-col gap-3">
+          <SectionTitle title={`What ${PRESETS.find((p) => p.id === d.preset)!.name} means`} sub="Every default and its consequence. Nothing is locked: change any of it in the next steps, or later on your plan page." />
+          <dl className="flex flex-col divide-y divide-line">
+            {PRESET_ROWS.map((r) => {
+              const v = presetValues(d.preset as PresetId, demo);
+              return (
+                <div key={r.k} className="grid gap-1 py-2 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-4">
+                  <dt className="text-sm font-semibold">
+                    {r.label} · {r.value(v)}
+                  </dt>
+                  <dd className="text-sm text-muted">{r.means(v)}</dd>
+                </div>
+              );
+            })}
+            <div className="grid gap-1 py-2 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-4">
+              <dt className="text-sm font-semibold">Heirs claim</dt>
+              <dd className="text-sm text-muted">Each heir claims their own share. Automatic release, alternates, fallback and standby guardians are on your plan page after saving.</dd>
+            </div>
+          </dl>
+        </Card>
+      )}
+    </>
+  );
+}
+
+/** "Based on Balanced · edited: check-in, waiting period". */
+function PresetBadge({ d, demo }: { d: Draft; demo: boolean }) {
+  const id = d.preset as PresetId;
+  const changed = editedFrom(
+    { checkIn: toMs(d.checkIn), grace: toMs(d.grace), waiting: toMs(d.waiting), guardians: d.guardians.length, quorum: Number(d.quorum) || 0, notice: d.notice, availability: d.availability, swapDelay: d.swapDelay },
+    id,
+    demo,
+  );
+  const names: Record<string, string> = { checkIn: "check-in", grace: "grace", waiting: "waiting period", guardians: "guardian count", quorum: "approvals", notice: "edit notice", availability: "availability checks", swapDelay: "swap notice" };
+  return (
+    <span className="rounded-row bg-subtle px-3 py-2 text-sm">
+      Based on <span className="font-semibold">{PRESETS.find((p) => p.id === id)!.name}</span>
+      {changed.length ? <span className="text-muted"> · you changed {changed.map((k) => names[k]).join(", ")}</span> : <span className="text-muted"> · unchanged</span>}
+    </span>
+  );
+}
+
+function AsideWarnings({ input }: { input: Parameters<typeof planSummary>[0] }) {
+  const w = planSummary(input).warnings.filter((x) => x.tone === "warn");
+  if (!w.length) return null;
+  return (
+    <ul className="flex flex-col gap-1.5 text-sm text-[var(--s-overdue-fg)]">
+      {w.map((x) => (
+        <li key={x.text}>· {x.text}</li>
+      ))}
+    </ul>
   );
 }
 
@@ -536,52 +713,33 @@ function TimerField({ label, tip, value, onChange, units, error, hint }: { label
   );
 }
 
-function TimingStep({ d, set, demo, errors }: { d: Draft; set: SetFn; demo: boolean; errors: FieldErrors }) {
+function TimingStep({ d, set, demo, errors, editing }: { d: Draft; set: SetFn; demo: boolean; errors: FieldErrors; editing: boolean }) {
   const units: Unit[] = demo ? ["minutes", "hours", "days"] : ["days"];
-  const presets: { label: string; ci: TimerDraft; gr: TimerDraft; wa: TimerDraft }[] = demo
-    ? [
-        { label: "Quick demo · 2 min", ci: { n: "2", unit: "minutes" }, gr: { n: "0", unit: "minutes" }, wa: { n: "2", unit: "minutes" } },
-        { label: "Relaxed demo · 10 min", ci: { n: "10", unit: "minutes" }, gr: { n: "2", unit: "minutes" }, wa: { n: "5", unit: "minutes" } },
-        { label: "Real-world · 90 days", ci: { n: "90", unit: "days" }, gr: { n: "7", unit: "days" }, wa: { n: "30", unit: "days" } },
-      ]
-    : [
-        { label: "Every 90 days", ci: { n: "90", unit: "days" }, gr: { n: "7", unit: "days" }, wa: { n: "30", unit: "days" } },
-        { label: "Every 6 months", ci: { n: "180", unit: "days" }, gr: { n: "14", unit: "days" }, wa: { n: "30", unit: "days" } },
-        { label: "Once a year", ci: { n: "365", unit: "days" }, gr: { n: "30", unit: "days" }, wa: { n: "60", unit: "days" } },
-      ];
   return (
     <>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
-        {presets.map((p) => {
-          const on = p.ci.n === d.checkIn.n && p.ci.unit === d.checkIn.unit && p.gr.n === d.grace.n && p.wa.n === d.waiting.n && p.wa.unit === d.waiting.unit;
-          return (
-            <button
-              key={p.label}
-              type="button"
-              aria-pressed={on}
-              onClick={() => {
-                set("checkIn", p.ci);
-                set("grace", p.gr);
-                set("waiting", p.wa);
-              }}
-              className={cx("min-h-11 rounded-full border px-4 text-sm transition-colors", on ? "border-signal bg-s-approved font-semibold text-[var(--s-approved-fg)]" : "border-line bg-card hover:bg-subtle")}
-            >
-              {p.label}
-            </button>
-          );
-        })}
-      </div>
       <Card className="flex flex-col gap-6">
         <TimerField label="Check in every" tip="checkIn" value={d.checkIn} onChange={(t) => set("checkIn", t)} units={units} error={errors.checkIn} hint="One tap, gas paid by Behest. Miss it and the grace period starts." />
         <TimerField label="Then allow grace of" tip="grace" value={d.grace} onChange={(t) => set("grace", t)} units={units} error={errors.grace} hint={demo ? "Extra time before guardians can act. Zero is fine for a demo." : "Extra time before guardians can act: 1 to 30 days."} />
         <TimerField label="Waiting period" tip="waiting" value={d.waiting} onChange={(t) => set("waiting", t)} units={units} error={errors.waiting} hint="After guardians approve. You can still cancel during it." />
       </Card>
+      {!editing && (
+        <Card className="flex flex-col gap-3">
+          <SectionTitle icon={Hourglass} title="Edit notice" sub="Make changes to heirs, addresses, shares and guardians wait before they take effect, and tell guardians and heirs. Protects against a stolen key." />
+          <Segmented
+            label="Edit notice"
+            value={String(d.notice)}
+            onChange={(v) => set("notice", Number(v))}
+            options={noticeChoices(demo, d.notice).map((ms) => ({ value: String(ms), label: ms ? duration(ms) : "Off" }))}
+          />
+          <p className="text-sm text-muted">{d.notice ? `Your own edits will also wait ${duration(d.notice)}. Timers and withdrawals stay instant.` : "Edits apply as soon as you save them."}</p>
+        </Card>
+      )}
       {demo && <p className="text-sm text-muted">This is a demo-timer deployment: minutes are allowed so you can watch a release end to end.</p>}
     </>
   );
 }
 
-function GuardianStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldErrors }) {
+function GuardianStep({ d, set, errors, demo, editing }: { d: Draft; set: SetFn; errors: FieldErrors; demo: boolean; editing: boolean }) {
   const filled = d.guardians.filter((g) => g.trim()).length;
   const max = Math.max(1, filled);
   const q = Math.min(Number(d.quorum) || 1, max);
@@ -632,6 +790,17 @@ function GuardianStep({ d, set, errors }: { d: Draft; set: SetFn; errors: FieldE
         </p>
         {errors.quorum && <span className="text-[13px] font-semibold text-error">{errors.quorum}</span>}
       </Card>
+      {!editing && (
+        <Card className="flex flex-col gap-3">
+          <SectionTitle title="Availability checks" sub="Guardians confirm now and then that they're still around (any vote counts). You and your heirs are told when one goes quiet. Add standby guardians later on your plan page." />
+          <Segmented
+            label="Availability checks"
+            value={String(d.availability)}
+            onChange={(v) => set("availability", Number(v))}
+            options={availabilityChoices(demo, d.availability).map((ms) => ({ value: String(ms), label: ms ? duration(ms) : "Off" }))}
+          />
+        </Card>
+      )}
     </>
   );
 }
@@ -788,6 +957,7 @@ function Consequences({ plan }: { plan: PlanInput }) {
 }
 
 function ReviewStep({
+  summaryInput,
   plan,
   d,
   owner,
@@ -801,6 +971,7 @@ function ReviewStep({
   sponsored,
   spons,
 }: {
+  summaryInput: Parameters<typeof planSummary>[0];
   evm: boolean;
   sponsored: boolean;
   spons: Sponsorship | null | undefined;
@@ -824,6 +995,10 @@ function ReviewStep({
       <Card className="flex flex-col gap-4">
         <span className="text-sm font-semibold text-muted">What you&apos;re signing</span>
         <p className="text-[clamp(20px,2.4vw,26px)] leading-snug tracking-[-0.015em]">{describePlan(plan)}</p>
+      </Card>
+      <Card className="flex flex-col gap-4">
+        <SectionTitle title="In plain words" sub="Every part of the plan, what it means, and what to watch out for." />
+        <SummaryList input={summaryInput} />
       </Card>
       <Card className="flex flex-col gap-4">
         <SectionTitle icon={Timer} title="If you stop checking in" aside={edit("timing")} />

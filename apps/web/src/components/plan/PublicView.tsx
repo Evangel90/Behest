@@ -12,6 +12,7 @@ import { RulesCard } from "../ReleaseRules";
 import { HistoryCard } from "../Rounds";
 import { GuardianHealthCard } from "../Recovery";
 import { MyDestinationsCard, ProveAsDestinationCard } from "../Destinations";
+import { PlanSummaryCard } from "../Summary";
 import { useTx } from "../tx";
 import { CanAct, Card, SectionTitle, Skeleton } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -62,6 +63,7 @@ export function PublicView({ ctx }: { ctx: PlanCtx }) {
       </div>
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} technical />}
       {me && ctx.destinations.current.some((d) => d.account_id === me) && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
+      <PlanSummaryCard ctx={ctx} role="public" />
       <ProveAsDestinationCard owner={view.plan.owner} me={me} dest={ctx.destinations} />
       <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
       <Group title="Rules and history">

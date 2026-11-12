@@ -62,12 +62,12 @@ export function percent(bps: number): string {
 /** The whole rule in one paragraph, as the owner and guardians should read it. */
 export function describePlan(p: PlanInput, ownerLabel = "you"): string {
   const you = ownerLabel === "you";
-  const heirs = listNames(p.heirs.map((h) => shortName(h.account_id)));
+  const heirs = p.heirs.some((h) => h.account_id) ? listNames(p.heirs.filter((h) => h.account_id).map((h) => shortName(h.account_id))) : you ? "your heirs" : "the heirs";
   const grace = p.grace_ms > 0 ? ` plus ${duration(p.grace_ms)} of grace` : "";
   return [
-    `If ${you ? "you don't" : `${ownerLabel} doesn't`} check in for ${duration(p.check_in_interval_ms)}${grace}, any ${p.quorum} of ${p.guardians.length} guardians may propose a release.`,
+    `If ${you ? "you don't" : `${ownerLabel} doesn't`} check in for ${duration(p.check_in_interval_ms)}${grace}, ${p.guardians.length ? `any ${p.quorum} of ${p.guardians.length} guardians` : "your guardians"} may propose a release.`,
     `A waiting period of ${duration(p.waiting_period_ms)} follows, during which ${you ? "you" : ownerLabel} can cancel.`,
-    `Then ${heirs} receive${p.heirs.length === 1 ? "s" : ""} their shares at the fixed addresses below. Nobody can change where funds go.`,
+    `Then ${heirs} receive${p.heirs.filter((h) => h.account_id).length === 1 ? "s" : ""} their shares at the fixed addresses below. Nobody can change where funds go.`,
   ].join(" ");
 }
 

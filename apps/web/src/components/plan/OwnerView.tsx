@@ -24,6 +24,7 @@ import { TierCard } from "../Tiers";
 import { DelegatesCard } from "../Dao";
 import { EditNoticeCard, GuardianHealthCard } from "../Recovery";
 import { AccountRecoveryCard, DestinationsOwnerCard } from "../Destinations";
+import { PlanSummaryCard } from "../Summary";
 import { useTx, type Act } from "../tx";
 import { AssetHead, Button, ButtonLink, Card, ExtLink, Notice, SectionTitle, Skeleton, TestnetTag, TransferPill, inputClass } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -115,6 +116,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
       </Group>
 
       {view.plan.proposal && <ProposalPanel view={view} now={now} me={me} />}
+      <PlanSummaryCard ctx={ctx} role="owner" />
 
       <Group title="People">
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">

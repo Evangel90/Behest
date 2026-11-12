@@ -11,6 +11,7 @@ import { ExtensionControls, OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
 import { HistoryCard, ProposeCard } from "../Rounds";
 import { GuardianHealthCard, MySeatCard } from "../Recovery";
+import { PlanSummaryCard } from "../Summary";
 import { useTx } from "../tx";
 import { Button, Card, SectionTitle } from "../ui";
 import { Group, NowCard, ProposalPanel, type PlanCtx } from "./common";
@@ -63,6 +64,7 @@ export function GuardianView({ ctx }: { ctx: PlanCtx }) {
           <HeirList view={view} />
         </div>
         <GuardianHealthCard planView={view} rec={ctx.recovery} me={me} now={now} editable={false} />
+        <PlanSummaryCard ctx={ctx} role="guardian" />
       </Group>
       <Group title="Rules and history">
         <RulesCard view={view} now={now} rules={rules.rules} editable={false} act={act} busy={!!busy} signedIn />
