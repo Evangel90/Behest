@@ -3,7 +3,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, ChevronsUpDown, CirclePlus, FlaskConical, House, Landmark, LogOut, Menu, Monitor, Moon, Repeat, Search, Sun, UserRound, Wallet, type LucideIcon } from "lucide-react";
+import { CONTRACT_ID } from "@/lib/config";
 import { loadSandbox, PERSONA_ROLES, type Sandbox } from "@/lib/demo";
+
+const TESTNET = CONTRACT_ID.endsWith(".testnet");
 import { humanError } from "@/lib/hooks";
 import { shortAddr, shortName } from "@/lib/plan";
 import { useSession } from "@/lib/session";
@@ -39,16 +42,6 @@ const isActive = (path: string, href: string) => path === href || path.startsWit
 
 // -------------------------------------------------------------------- brand
 
-export function TestnetBar({ compact }: { compact?: boolean }) {
-  return (
-    <div role="note" className="flex flex-wrap items-center justify-center gap-x-2 bg-[#0A0A0A] px-4 py-2 text-center text-[13px] text-[#D4D4D4]">
-      <FlaskConical aria-hidden className="size-3.5 text-[#8DB4FF]" />
-      <span className="text-[#8DB4FF]">Testnet</span>
-      <span>{compact ? "No real funds." : "Demo timers run in minutes. No real funds."}</span>
-    </div>
-  );
-}
-
 /** The mark: a dark disc with a blue ring (light variant on dark surfaces). */
 export function Mark({ size = 28, light }: { size?: number; light?: boolean }) {
   return (
@@ -65,6 +58,12 @@ export function Logo({ dark }: { dark?: boolean }) {
     <Link href="/" className={cx("flex min-h-11 items-center gap-2.5 rounded-tile no-underline", dark ? "text-white" : "text-ink")} aria-label="Behest home">
       <Mark light={dark} />
       <span className="text-[21px] font-semibold tracking-[-0.03em]">behest</span>
+      {/* A quiet hint, not a banner: hover or a screen reader gives the details. */}
+      {TESTNET && (
+        <span title="Testnet: demo timers run in minutes, and no real funds are used." className={cx("-ml-1 self-start pt-2 text-[10px] font-medium tracking-wide", dark ? "text-white/40" : "text-muted")}>
+          testnet<span className="sr-only">: demo timers run in minutes, and no real funds are used</span>
+        </span>
+      )}
     </Link>
   );
 }
@@ -417,7 +416,6 @@ export function AppShell({ children, nav, mainClassName, narrow }: { children: R
       <a href="#main" className="sr-only z-[90] rounded-tile bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
         Skip to content
       </a>
-      <TestnetBar />
       <div className="grid flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] lg:min-h-0 lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
         <aside className="sticky top-0 z-30 flex min-w-0 flex-col bg-frame text-[#D4D4D4] lg:static lg:min-h-0 lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 lg:px-6 lg:py-5">

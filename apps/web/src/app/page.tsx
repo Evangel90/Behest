@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mark, SiteHeader, TestnetBar } from "@/components/chrome";
+import { Mark, SiteHeader } from "@/components/chrome";
 import { InspectForm } from "@/components/InspectForm";
 import { Pricing } from "@/components/Tiers";
 import { FeatureExplorer, LandingDemo } from "@/components/LandingDemo";
@@ -90,7 +90,6 @@ const FAQ = [
 export default function Landing() {
   return (
     <div className="bg-paper text-ink">
-      <TestnetBar />
       <SiteHeader links={[["#features", "How it works"], ["#safety", "Safety"], ["#pricing", "Pricing"], ["#faq", "FAQ"], ["/inspect", "Inspect"]]} />
 
       <a href="#main" className="sr-only z-50 rounded-tile bg-ink px-4 py-3 text-ink-contrast focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
