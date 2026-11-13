@@ -48,7 +48,7 @@ import { BehestLoader } from "@/components/BehestLoader";
 const INTENTS_DEPOSIT = 10_000_000_000_000_000_000_000n;
 
 const STEP_META: Record<WizardStep, { label: string; icon: LucideIcon; title: string; lede: string }> = {
-  start: { label: "Start", icon: Compass, title: "Pick a starting point.", lede: "Each preset fills in every setting with sensible values. You can change any of them in the next steps, and later on your plan page." },
+  start: { label: "Start", icon: Compass, title: "Pick a starting point.", lede: "A preset fills in the settings for you. You can change any of them later." },
   timing: { label: "Timing", icon: Timer, title: "How often will you check in?", lede: "Miss a check-in and the grace period, and your guardians may start a release. You can cancel until the waiting period ends." },
   guardians: { label: "Guardians", icon: ShieldCheck, title: "Who watches over the plan?", lede: "People you trust to notice you're unreachable. They can only release the plan exactly as written, never change where funds go." },
   heirs: { label: "Heirs", icon: Gift, title: "Who receives what?", lede: "Give each person a share and the addresses where it should arrive. Nobody else can change these." },
@@ -703,6 +703,9 @@ const PRESET_ROWS: { k: "checkIn" | "grace" | "waiting" | "quorum" | "notice" | 
   { k: "availability", label: "Availability checks", value: (v) => (v.availability ? `every ${duration(v.availability)}` : "off"), means: (v) => (v.availability ? "You're told when a guardian goes quiet." : "Nobody checks guardians are still around.") },
 ];
 
+/** The three timers are what tell the presets apart at a glance; the rest sits in the details. */
+const CARD_ROWS = ["checkIn", "grace", "waiting"];
+
 function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) => Draft) => void; demo: boolean; error?: string }) {
   return (
     <>
@@ -724,14 +727,14 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
                 <span className="text-sm text-muted">{p.tagline}</span>
               </span>
               <dl className="flex flex-col gap-1 text-sm">
-                {PRESET_ROWS.map((r) => (
+                {PRESET_ROWS.filter((r) => CARD_ROWS.includes(r.k)).map((r) => (
                   <div key={r.k} className="flex justify-between gap-2">
                     <dt className="text-muted">{r.label}</dt>
                     <dd className="tabular text-right font-medium">{r.value(v)}</dd>
                   </div>
                 ))}
               </dl>
-              <span className="text-sm leading-relaxed">{p.forWhom}</span>
+              <span className="text-sm text-muted">{p.forWhom}</span>
             </button>
           );
         })}
@@ -749,8 +752,7 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
       </button>
       {error && <span className="text-[13px] font-semibold text-error">{error}</span>}
       {d.preset && d.preset !== "custom" && (
-        <Card className="flex flex-col gap-3">
-          <SectionTitle title={`What ${PRESETS.find((p) => p.id === d.preset)!.name} means`} sub="Every default and its consequence. Nothing is locked: change any of it in the next steps, or later on your plan page." />
+        <Disclosure title={`Everything ${PRESETS.find((p) => p.id === d.preset)!.name} sets`} sub="All of it stays editable.">
           <dl className="flex flex-col divide-y divide-line">
             {PRESET_ROWS.map((r) => {
               const v = presetValues(d.preset as PresetId, demo);
@@ -765,10 +767,10 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
             })}
             <div className="grid gap-1 py-2 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-4">
               <dt className="text-sm font-semibold">Heirs claim</dt>
-              <dd className="text-sm text-muted">Each heir claims their own share. Automatic release, alternates, fallback and standby guardians are on your plan page after saving.</dd>
+              <dd className="text-sm text-muted">Each heir claims their own share. More release options are on your plan page after saving.</dd>
             </div>
           </dl>
-        </Card>
+        </Disclosure>
       )}
     </>
   );
