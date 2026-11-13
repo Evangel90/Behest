@@ -30,10 +30,32 @@ export interface HeirDraft {
   btc?: string;
   /** D33: the record's salt, kept while editing so unchanged heirs keep their commitment. */
   salt?: string;
+  /** How they are named: by email, or by an account they already have (unset: read from what was typed). */
+  by?: PersonKind;
   /** What the owner calls them (private: kept with their email, never on-chain). */
   label?: string;
   /** For a heir named by account: where to write to them about this plan. */
   noticeEmail?: string;
+}
+
+/** How a guardian or heir is named: by an email address they sign in with, or by an account they already have. */
+export type PersonKind = "email" | "account";
+/** The kind a row is in: the owner's choice, else what the entry looks like, else `fallback` for an empty row. */
+export function kindOf(entry: string, chosen: PersonKind | undefined, fallback: PersonKind): PersonKind {
+  if (chosen) return chosen;
+  const e = entry.trim();
+  return e ? (e.includes("@") ? "email" : "account") : fallback;
+}
+const KIND_ERROR = {
+  email: "Enter an email address, like name@example.com.",
+  account: "Enter a NEAR account like amara.testnet, or a 0x address.",
+  emailInAccount: "That's an email address. Choose Email above, or enter their account.",
+};
+/** Why an entry doesn't fit the kind its row is in, or null. */
+function kindError(entry: string, kind: PersonKind): string | null {
+  if (kind === "email") return looksLikeEmail(entry) ? null : KIND_ERROR.email;
+  if (looksLikeNearAccount(entry)) return null;
+  return entry.includes("@") ? KIND_ERROR.emailInAccount : KIND_ERROR.account;
 }
 
 /** What an email address typed for a guardian or heir turned into (the wallets kept for that address). */
@@ -103,7 +125,7 @@ export function timingErrors(t: { checkIn: TimerDraft; grace: TimerDraft; waitin
   return e;
 }
 
-export function guardianErrors(guardians: string[], quorum: string, owner: string, emails: EmailAccounts = {}, noticeEmails: Record<string, string> = {}): FieldErrors {
+export function guardianErrors(guardians: string[], quorum: string, owner: string, emails: EmailAccounts = {}, noticeEmails: Record<string, string> = {}, kinds: (PersonKind | undefined)[] = []): FieldErrors {
   const e: FieldErrors = {};
   const list = guardians.map((g) => g.trim().toLowerCase());
   // An email stands for its account once resolved; until then it is compared as typed.
@@ -111,8 +133,10 @@ export function guardianErrors(guardians: string[], quorum: string, owner: strin
   const filled = list.filter(Boolean);
   list.forEach((g, i) => {
     if (!g) return;
-    const mail = looksLikeEmail(g);
-    if (!mail && !looksLikeNearAccount(g)) e[`guardian.${i}`] = g.includes("@") ? "That doesn't look like an email address." : "Enter their email address, or a NEAR account (e.g. dayo.testnet).";
+    const kind = kindOf(g, kinds[i], "account");
+    const mail = kind === "email";
+    const bad = kindError(g, kind);
+    if (bad) e[`guardian.${i}`] = bad;
     else if (ids[i] === owner) e[`guardian.${i}`] = "You can't guard your own plan.";
     else if (ids.indexOf(ids[i]!) !== i) e[`guardian.${i}`] = "Already listed.";
     const notice = noticeEmails[g]?.trim();
@@ -128,7 +152,7 @@ export function sharesTotal(heirs: HeirDraft[]): number {
   return heirs.reduce((s, h) => s + (Math.round(Number(h.pct) * 100) || 0), 0);
 }
 
-export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[], emails: EmailAccounts = {}): FieldErrors {
+export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[], emails: EmailAccounts = {}, fallback?: PersonKind): FieldErrors {
   const e: FieldErrors = {};
   const key = (x: string) => accountOf(x, emails) || x.trim().toLowerCase();
   const gs = guardians.filter((g) => g.trim()).map(key);
@@ -136,8 +160,10 @@ export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[
   heirs.forEach((h, i) => {
     const id = ids[i]!;
     const typed = h.account.trim().toLowerCase();
-    if (!id) e[`heir.${i}.account`] = "Enter their email address, or a NEAR account.";
-    else if (!looksLikeEmail(typed) && !looksLikeNearAccount(typed)) e[`heir.${i}.account`] = typed.includes("@") ? "That doesn't look like an email address." : "Enter their email address, or a NEAR account.";
+    const chosen = h.by ?? (typed ? undefined : fallback);
+    const kind = kindOf(typed, chosen, "account");
+    if (!id) e[`heir.${i}.account`] = chosen === "email" ? "Enter their email address." : chosen === "account" ? "Enter their NEAR account." : "Enter their email address, or a NEAR account.";
+    else if (kindError(typed, kind)) e[`heir.${i}.account`] = kindError(typed, kind)!;
     else if (id === owner) e[`heir.${i}.account`] = "You can't be your own heir.";
     else if (gs.includes(id)) e[`heir.${i}.account`] = "Someone can't be both an heir and a guardian.";
     else if (ids.indexOf(id) !== i) e[`heir.${i}.account`] = "Already listed.";

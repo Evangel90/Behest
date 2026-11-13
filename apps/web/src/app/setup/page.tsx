@@ -3,7 +3,7 @@
 // funding, then a plain-language review before anything is signed.
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, Mail, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, Mail, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, Wallet, WifiOff, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
@@ -34,6 +34,7 @@ import {
   guardianErrors,
   heirErrors,
   intentsDeliveries,
+  kindOf,
   looksLikeEmail,
   sharesTotal,
   splitEvenly,
@@ -43,6 +44,7 @@ import {
   type EmailAccounts,
   type FieldErrors,
   type HeirDraft,
+  type PersonKind,
   type TimerDraft,
   type Unit,
   UNIT_MS,
@@ -69,6 +71,8 @@ interface Draft {
   grace: TimerDraft;
   waiting: TimerDraft;
   guardians: string[];
+  /** How each guardian row is named (same order as `guardians`; a missing entry is read from what was typed). */
+  guardianBy: (PersonKind | undefined)[];
   quorum: string;
   heirs: HeirDraft[];
   deposit: string;
@@ -98,6 +102,7 @@ const DEMO_DRAFT: Draft = {
   grace: { n: "0", unit: "minutes" },
   waiting: { n: "5", unit: "minutes" },
   guardians: ["", ""],
+  guardianBy: [],
   quorum: "2",
   heirs: [{ account: "", pct: "100", near: "", eth: "" }],
   deposit: "0.5",
@@ -214,12 +219,14 @@ function Setup() {
             grace: fromMs(p.grace_ms),
             waiting: fromMs(p.waiting_period_ms),
             guardians: p.guardians.map((g) => entry(g, "guardian")),
+            guardianBy: p.guardians.map((g) => (person(g, "guardian")?.by_email ? "email" : "account")),
             quorum: String(p.quorum),
             heirs: p.heirs.map((h) => {
               const k = person(h.account_id, "heir");
               const mine = k?.by_email ? k : null;
               return {
                 account: entry(h.account_id, "heir"),
+                by: mine ? ("email" as const) : ("account" as const),
                 pct: String(h.share_bps / 100),
                 near: h.near_destination === h.account_id || (mine && h.near_destination === mine.near) ? "" : (h.near_destination ?? ""),
                 eth: mine && h.eth_destination === h.account_id ? "" : (h.eth_destination ?? ""),
@@ -342,11 +349,14 @@ function Setup() {
     depositYocto = evm ? 0n : parseNear(d.deposit || "0");
   } catch {}
 
+  // An empty row asks for an email where email is on: most people an owner names have an inbox, not a wallet.
+  const defaultKind: PersonKind = emailOn ? "email" : "account";
+  const guardianKinds = d.guardians.map((g, i) => kindOf(g, d.guardianBy?.[i], defaultKind));
   const errs: Record<WizardStep, FieldErrors> = {
     start: d.preset ? {} : { preset: "Pick a starting point, or start from scratch." },
     timing: timingErrors(d, demo),
-    guardians: guardianErrors(d.guardians, d.quorum, owner, d.emails, d.noticeEmails),
-    heirs: heirErrors(d.heirs, owner, d.guardians, d.emails),
+    guardians: guardianErrors(d.guardians, d.quorum, owner, d.emails, d.noticeEmails, guardianKinds),
+    heirs: heirErrors(d.heirs, owner, d.guardians, d.emails, defaultKind),
     funding: depositYocto === null ? { deposit: "Not a valid NEAR amount." } : {},
     review: {},
   };
@@ -434,7 +444,7 @@ function Setup() {
       const emails = await resolveEmails();
       if (!emails) return;
       // An address can turn out to be the owner's own, or someone already listed by account.
-      const after = step === "guardians" ? guardianErrors(d.guardians, d.quorum, owner, emails, d.noticeEmails) : heirErrors(d.heirs, owner, d.guardians, emails);
+      const after = step === "guardians" ? guardianErrors(d.guardians, d.quorum, owner, emails, d.noticeEmails, guardianKinds) : heirErrors(d.heirs, owner, d.guardians, emails, defaultKind);
       if (Object.keys(after).length) return focusInvalid();
     }
     const n = steps[idx + 1];
@@ -1097,48 +1107,85 @@ function emailHint(entry: string, emails: EmailAccounts, role: "guardian" | "hei
   return mail ? `${what} Account ${shortAddr(mail.account)}.` : what;
 }
 
+/** The two ways to name a person. Two choices read faster side by side than behind a menu. */
+const KIND_OPTIONS = [
+  { value: "email" as const, label: "Email", icon: Mail },
+  { value: "account" as const, label: "Wallet account", icon: Wallet },
+];
+
 function GuardianStep({ d, set, errors, demo, editing, emailOn, owner }: { d: Draft; set: SetFn; errors: FieldErrors; demo: boolean; editing: boolean; emailOn: boolean; owner: string }) {
   const filled = d.guardians.filter((g) => g.trim()).length;
   const max = Math.max(1, filled);
   const q = Math.min(Number(d.quorum) || 1, max);
-  const anyEmail = d.guardians.some((g) => looksLikeEmail(g) || d.noticeEmails[g.trim().toLowerCase()]?.trim()) || d.heirs.some((h) => looksLikeEmail(h.account) || h.noticeEmail?.trim());
+  const fallback: PersonKind = emailOn ? "email" : "account";
+  const kinds = d.guardians.map((g, i) => kindOf(g, d.guardianBy?.[i], fallback));
+  const anyEmail = kinds.some((k, i) => k === "email" || d.noticeEmails[d.guardians[i]!.trim().toLowerCase()]?.trim()) || d.heirs.some((h) => kindOf(h.account, h.by, fallback) === "email" || h.noticeEmail?.trim());
+  const setGuardian = (i: number, v: string) => set("guardians", d.guardians.map((x, j) => (j === i ? v : x)));
+  /** Switching how a guardian is named starts that row again: an address is not an account. */
+  const setKind = (i: number, k: PersonKind) => {
+    if (kinds[i] === k) return;
+    set("guardianBy", d.guardians.map((_, j) => (j === i ? k : kinds[j])));
+    setGuardian(i, "");
+  };
+  const remove = (i: number) => {
+    set("guardians", d.guardians.filter((_, j) => j !== i));
+    set("guardianBy", kinds.filter((_, j) => j !== i));
+  };
+  const add = () => {
+    set("guardians", [...d.guardians, ""]);
+    set("guardianBy", [...kinds, fallback]);
+  };
   return (
     <>
       <Card className="flex flex-col gap-4">
         <SectionTitle
           icon={ShieldCheck}
           title={<Term k="guardian">Guardians</Term>}
-          sub={emailOn ? "An email address is enough for each: they sign in with it and need no wallet. Or enter a NEAR account. Two or three people who know you well is typical." : "NEAR accounts. Two or three people who know you well is typical."}
+          sub={emailOn ? "Two or three people who know you well is typical. Name each by their email, or by a wallet account they already use." : "NEAR accounts. Two or three people who know you well is typical."}
         />
-        <ul className="flex flex-col gap-4">
+        <ul className="flex flex-col gap-3">
           {d.guardians.map((g, i) => {
             const typed = g.trim().toLowerCase();
-            const mail = looksLikeEmail(typed);
+            const mail = kinds[i] === "email";
             return (
-              <li key={i} className="flex animate-fade-up flex-col gap-2">
-                <div className="flex items-start gap-2">
-                  <Field label={`Guardian ${i + 1}`} error={errors[`guardian.${i}`]} hint={mail ? emailHint(g, d.emails, "guardian") : undefined} className="flex-1">
-                    {(p) => (
-                      <input
-                        {...p}
-                        className={inputClass}
-                        placeholder={emailOn ? (["dayo@example.com", "funmi@example.com", "chidi@example.com"][i] ?? "name@example.com") : (["dayo.testnet", "funmi.testnet", "chidi.testnet"][i] ?? "guardian.testnet")}
-                        value={g}
-                        autoComplete="off"
-                        spellCheck={false}
-                        autoCapitalize="none"
-                        onChange={(e) => set("guardians", d.guardians.map((x, j) => (j === i ? e.target.value : x)))}
-                      />
+              <li key={i} className="flex animate-fade-up flex-col gap-3 rounded-row border border-line p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold">Guardian {i + 1}</span>
+                  <span className="flex items-center gap-1">
+                    {emailOn && <Segmented size="sm" label={`How guardian ${i + 1} is named`} value={kinds[i]!} onChange={(k) => setKind(i, k)} options={KIND_OPTIONS} />}
+                    {d.guardians.length > 1 && (
+                      <button type="button" aria-label={`Remove guardian ${i + 1}`} onClick={() => remove(i)} className="flex size-11 shrink-0 items-center justify-center rounded-tile text-muted hover:bg-subtle hover:text-ink">
+                        <Trash2 aria-hidden className="size-[18px]" />
+                      </button>
                     )}
-                  </Field>
-                  {d.guardians.length > 1 && (
-                    <button type="button" aria-label={`Remove guardian ${i + 1}`} onClick={() => set("guardians", d.guardians.filter((_, j) => j !== i))} className="mt-[30px] flex size-12 shrink-0 items-center justify-center rounded-tile text-muted hover:bg-subtle hover:text-ink">
-                      <Trash2 aria-hidden className="size-[18px]" />
-                    </button>
-                  )}
+                  </span>
                 </div>
-                {emailOn && typed && !mail && (
-                  <Field label="Their email" optional error={errors[`guardian.${i}.email`]} hint="We'll tell them they're a guardian, and write when they're needed." className={d.guardians.length > 1 ? "mr-14" : undefined}>
+                <Field
+                  label={
+                    <>
+                      {mail ? "Email address" : "NEAR account"} <span className="sr-only">of guardian {i + 1}</span>
+                    </>
+                  }
+                  error={errors[`guardian.${i}`]}
+                  hint={mail ? emailHint(g, d.emails, "guardian") : emailOn ? "Their NEAR account, or the 0x address of their Ethereum wallet. They sign in with that wallet." : undefined}
+                >
+                  {(p) => (
+                    <input
+                      {...p}
+                      type={mail ? "email" : "text"}
+                      inputMode={mail ? "email" : undefined}
+                      className={inputClass}
+                      placeholder={mail ? (["dayo@example.com", "funmi@example.com", "chidi@example.com"][i] ?? "name@example.com") : (["dayo.testnet", "funmi.testnet", "chidi.testnet"][i] ?? "guardian.testnet")}
+                      value={g}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCapitalize="none"
+                      onChange={(e) => setGuardian(i, e.target.value)}
+                    />
+                  )}
+                </Field>
+                {emailOn && !mail && typed && (
+                  <Field label="Their email" optional error={errors[`guardian.${i}.email`]} hint="We'll tell them they're a guardian, and write when they're needed.">
                     {(p) => (
                       <input
                         {...p}
@@ -1158,7 +1205,7 @@ function GuardianStep({ d, set, errors, demo, editing, emailOn, owner }: { d: Dr
             );
           })}
         </ul>
-        <Button type="button" variant="outline" size="sm" icon={Plus} className="self-start" onClick={() => set("guardians", [...d.guardians, ""])}>
+        <Button type="button" variant="outline" size="sm" icon={Plus} className="self-start" onClick={add}>
           Add guardian
         </Button>
         {errors.guardians && <span className="text-[13px] font-semibold text-error">{errors.guardians}</span>}
@@ -1214,8 +1261,12 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn
    * to that account: when the row becomes an email (or stops being one), they are
    * dropped rather than silently kept as where the new person is paid.
    */
-  const rename = (h: HeirDraft, account: string): Partial<HeirDraft> =>
-    looksLikeEmail(account) !== looksLikeEmail(h.account) && h.account.trim() ? { account, near: "", eth: "", btc: "", intents: false, intentsAccount: "", noticeEmail: "" } : { account };
+  const fallbackKind: PersonKind = emailOn ? "email" : "account";
+  const kind = (h: HeirDraft) => kindOf(h.account, h.by, fallbackKind);
+  /** Switching how a heir is named starts the row again: addresses entered for an account aren't where an email's share should go, and the reverse. */
+  const setKind = (i: number, h: HeirDraft, by: PersonKind) => {
+    if (kind(h) !== by) upd(i, { by, account: "", near: "", eth: "", btc: "", intents: false, intentsAccount: "", noticeEmail: "" });
+  };
   const priv = d.privacy === "private";
   return (
     <>
@@ -1231,24 +1282,33 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn
         {errors.shares && <span className="text-[13px] font-semibold text-error">{errors.shares}</span>}
       </Card>
       <ul className="flex flex-col gap-3">
-        {d.heirs.map((h, i) => (
+        {d.heirs.map((h, i) => {
+          const mail = kind(h) === "email";
+          return (
           <li key={i} className="animate-fade-up">
             <Card className="flex flex-col gap-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-semibold">{h.label?.trim() || (looksLikeEmail(h.account) ? h.account.trim() : h.account.trim() ? shortName(h.account.trim()) : `Heir ${i + 1}`)}</span>
-                {d.heirs.length > 1 && (
-                  <Button type="button" variant="ghost" size="sm" icon={Trash2} onClick={() => set("heirs", d.heirs.filter((_, j) => j !== i))} aria-label={`Remove heir ${i + 1}`}>
-                    Remove
-                  </Button>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="truncate text-sm font-semibold">{h.label?.trim() || (h.account.trim() ? (mail ? h.account.trim() : shortName(h.account.trim())) : `Heir ${i + 1}`)}</span>
+                <span className="flex items-center gap-1">
+                  {emailOn && <Segmented size="sm" label={`How heir ${i + 1} is named`} value={kind(h)} onChange={(by) => setKind(i, h, by)} options={KIND_OPTIONS} />}
+                  {d.heirs.length > 1 && (
+                    <button type="button" aria-label={`Remove heir ${i + 1}`} onClick={() => set("heirs", d.heirs.filter((_, j) => j !== i))} className="flex size-11 shrink-0 items-center justify-center rounded-tile text-muted hover:bg-subtle hover:text-ink">
+                      <Trash2 aria-hidden className="size-[18px]" />
+                    </button>
+                  )}
+                </span>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_160px]">
                 <Field
-                  label={emailOn ? "Email or NEAR account" : "NEAR account"}
+                  label={
+                    <>
+                      {mail ? "Email address" : "NEAR account"} <span className="sr-only">of heir {i + 1}</span>
+                    </>
+                  }
                   error={errors[`heir.${i}.account`]}
-                  hint={looksLikeEmail(h.account) ? `${emailHint(h.account, d.emails, "heir")}${extOk || priv ? "" : " On the Free plan that is NEAR; Ethereum and Bitcoin come with Standard."}` : emailOn ? "An email address is enough. With a NEAR account, that is their sign-in and where NEAR goes." : "Their sign-in, and where NEAR goes unless you set another account below."}
+                  hint={mail ? `${emailHint(h.account, d.emails, "heir")}${extOk || priv ? "" : " On the Free plan that is NEAR; Ethereum and Bitcoin come with Standard."}` : "Their sign-in, and where NEAR goes unless you set another account below. An Ethereum wallet's account is its 0x address."}
                 >
-                  {(p) => <input {...p} className={inputClass} placeholder={emailOn ? "amara@example.com" : "amara.testnet"} value={h.account} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, rename(h, e.target.value))} />}
+                  {(p) => <input {...p} type={mail ? "email" : "text"} inputMode={mail ? "email" : undefined} className={inputClass} placeholder={mail ? "amara@example.com" : "amara.testnet"} value={h.account} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { account: e.target.value })} />}
                 </Field>
                 <Field label="Share" error={errors[`heir.${i}.pct`]}>
                   {(p) => (
@@ -1259,68 +1319,93 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn
                   )}
                 </Field>
               </div>
-              {emailOn && (looksLikeEmail(h.account) || (h.account.trim() && !h.account.includes("@"))) && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Their name" optional hint="Only you see this. It replaces the address on your screens.">
-                    {(p) => <input {...p} className={inputClass} placeholder="Amara" maxLength={60} value={h.label ?? ""} autoComplete="off" onChange={(e) => upd(i, { label: e.target.value })} />}
-                  </Field>
-                  {!looksLikeEmail(h.account) && (
-                    <Field label="Their email" optional error={errors[`heir.${i}.email`]} hint="Where to write to them about this plan.">
-                      {(p) => <input {...p} type="email" className={inputClass} placeholder="name@example.com" value={h.noticeEmail ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { noticeEmail: e.target.value })} />}
-                    </Field>
-                  )}
-                </div>
-              )}
               {(() => {
-                const mail = looksLikeEmail(h.account);
-                const fields = (
+                // Everything past "who and how much" is optional. One named field for an email heir; the rest folds away.
+                const name = (
+                  <Field label="Their name" optional hint="Only you see this. It replaces the address on your screens.">
+                    {(p) => <input {...p} className={inputClass} placeholder="What you call them" maxLength={60} value={h.label ?? ""} autoComplete="off" onChange={(e) => upd(i, { label: e.target.value })} />}
+                  </Field>
+                );
+                const addresses = (
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field label="NEAR goes to" optional error={errors[`heir.${i}.near`]} hint={mail ? "Defaults to the NEAR account kept for their email." : h.account.trim() ? `Defaults to ${h.account.trim()}.` : "Defaults to the heir account."}>
                       {(p) => <input {...p} className={inputClass} placeholder={mail ? "their-own.testnet" : h.account || "amara.testnet"} value={h.near} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { near: e.target.value })} />}
                     </Field>
                     <div className="flex flex-col gap-1.5">
-                      <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint={mail ? "Defaults to the Ethereum address kept for their email." : "For Sepolia ETH and tokens. Leave empty for none."}>
+                      <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint={mail ? "Defaults to the Ethereum address kept for their email." : "For Sepolia ETH and tokens. Without one they receive no ETH."}>
                         {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="0x…" value={h.eth} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { eth: e.target.value })} />}
                       </Field>
                       {!mail && <IntentsBridgeAddress account={(h.intentsAccount || h.near || h.account).trim().toLowerCase()} chain="eth:1" onUse={(eth) => upd(i, { eth })} />}
                     </div>
                   </div>
                 );
-                // Named by email, everything already has somewhere to land; other addresses are the exception.
-                return mail ? (
-                  <Disclosure title="Pay to wallets they already have" sub="Only if you know their own addresses. Otherwise leave this closed." defaultOpen={!!(h.near.trim() || h.eth.trim())}>
-                    {fields}
-                  </Disclosure>
-                ) : (
-                  fields
+                const bitcoin = priv && (
+                  <Field label="Bitcoin address" optional error={errors[`heir.${i}.btc`]} hint={mail ? "Kept inside their private record. Defaults to the Bitcoin address kept for their email." : "Kept inside their private record. Testnet tb1q… or tb1p…."}>
+                    {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" value={h.btc ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { btc: e.target.value })} />}
+                  </Field>
+                );
+                // A field with an error must never sit inside a closed section.
+                const wrong = ["near", "eth", "btc", "email", "intents"].some((k) => errors[`heir.${i}.${k}`]);
+                if (mail)
+                  return (
+                    <>
+                      {emailOn && <div className="sm:max-w-[calc(50%-8px)]">{name}</div>}
+                      {/* Named by email, everything already has somewhere to land; other addresses are the exception. */}
+                      <Disclosure key={`mail-${wrong}`} title="Pay to wallets they already have" sub="Only if you know their own addresses. Otherwise leave this closed." defaultOpen={wrong || !!(h.near.trim() || h.eth.trim() || h.btc?.trim())}>
+                        <div className="flex flex-col gap-4">
+                          {addresses}
+                          {bitcoin}
+                        </div>
+                      </Disclosure>
+                    </>
+                  );
+                const filled = [h.eth.trim() && "Ethereum address", h.near.trim() && "another NEAR account", h.label?.trim() && "name", h.noticeEmail?.trim() && "email", h.intents && "NEAR Intents"].filter(Boolean);
+                return (
+                  <>
+                    {bitcoin}
+                    <Disclosure
+                      key={`account-${wrong}`}
+                      title="More for this heir"
+                      sub={filled.length ? `Set: ${filled.join(", ")}.` : "An Ethereum address, another NEAR account, their name and an email for notices. All optional."}
+                      defaultOpen={wrong || filled.length > 0}
+                    >
+                      <div className="flex flex-col gap-4">
+                        {addresses}
+                        {emailOn && (
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            {name}
+                            <Field label="Their email" optional error={errors[`heir.${i}.email`]} hint="Where to write to them about this plan.">
+                              {(p) => <input {...p} type="email" className={inputClass} placeholder="name@example.com" value={h.noticeEmail ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { noticeEmail: e.target.value })} />}
+                            </Field>
+                          </div>
+                        )}
+                        {intents && (
+                          <div className="flex flex-col gap-3 rounded-row border border-line p-4">
+                            <label className="flex cursor-pointer items-start gap-3 text-[15px]">
+                              <input type="checkbox" checked={!!h.intents} onChange={(e) => upd(i, { intents: e.target.checked })} className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]" />
+                              <span>
+                                <strong>Receive through NEAR Intents</strong>
+                                <span className="block text-sm text-muted">Their NEAR and NEAR tokens are paid into their NEAR Intents account instead of their wallet. From there they can keep them, withdraw them or swap them to almost any asset on almost any chain. Standard plan or above.</span>
+                              </span>
+                            </label>
+                            {h.intents && (
+                              <Field label="Intents account" optional error={errors[`heir.${i}.intents`]} hint={`Defaults to ${(h.near || h.account).trim() || "their NEAR account"}. An Ethereum wallet's Intents account is its 0x address.`}>
+                                {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder={(h.near || h.account).trim() || "amara.testnet"} value={h.intentsAccount ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { intentsAccount: e.target.value })} />}
+                              </Field>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </Disclosure>
+                  </>
                 );
               })()}
-              {priv && (
-                <Field label="Bitcoin address" optional error={errors[`heir.${i}.btc`]} hint={looksLikeEmail(h.account) ? "Kept inside their private record. Defaults to the Bitcoin address kept for their email." : "Kept inside their private record. Testnet tb1q… or tb1p…."}>
-                  {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" value={h.btc ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { btc: e.target.value })} />}
-                </Field>
-              )}
-              {intents && !looksLikeEmail(h.account) && (
-                <div className="flex flex-col gap-3 rounded-row border border-line p-4">
-                  <label className="flex cursor-pointer items-start gap-3 text-[15px]">
-                    <input type="checkbox" checked={!!h.intents} onChange={(e) => upd(i, { intents: e.target.checked })} className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]" />
-                    <span>
-                      <strong>Receive through NEAR Intents</strong>
-                      <span className="block text-sm text-muted">Their NEAR and NEAR tokens are paid into their NEAR Intents account instead of their wallet. From there they can keep them, withdraw them or swap them to almost any asset on almost any chain. Standard plan or above.</span>
-                    </span>
-                  </label>
-                  {h.intents && (
-                    <Field label="Intents account" optional error={errors[`heir.${i}.intents`]} hint={`Defaults to ${(h.near || h.account).trim() || "their NEAR account"}. An Ethereum wallet's Intents account is its 0x address.`}>
-                      {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder={(h.near || h.account).trim() || "amara.testnet"} value={h.intentsAccount ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { intentsAccount: e.target.value })} />}
-                    </Field>
-                  )}
-                </div>
-              )}
             </Card>
           </li>
-        ))}
+          );
+        })}
       </ul>
-      <Button type="button" variant="outline" icon={Plus} className="self-start" onClick={() => set("heirs", [...d.heirs, { account: "", pct: "0", near: "", eth: "" }])}>
+      <Button type="button" variant="outline" icon={Plus} className="self-start" onClick={() => set("heirs", [...d.heirs, { account: "", pct: "0", near: "", eth: "", by: fallbackKind }])}>
         Add heir
       </Button>
       {emailOn && d.heirs.some((h) => looksLikeEmail(h.account) || h.noticeEmail?.trim()) && (

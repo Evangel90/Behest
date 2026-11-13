@@ -6,7 +6,7 @@ import * as btc from "@scure/btc-signer";
 import { describe, expect, it } from "vitest";
 import { segwitAddress } from "../src/lib/evm/email";
 import { SendError, buildBtc, checkBtcAddress, derSignature, planBtc } from "../src/lib/sendout";
-import { accountOf, guardianErrors, heirErrors, intentsDeliveries, looksLikeEmail, unresolvedEmails } from "../src/lib/wizard";
+import { accountOf, guardianErrors, heirErrors, intentsDeliveries, kindOf, looksLikeEmail, unresolvedEmails } from "../src/lib/wizard";
 
 const PRIV = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 const PUB = secp256k1.getPublicKey(PRIV, true);
@@ -136,6 +136,23 @@ describe("people named by email in the wizard", () => {
     expect(guardianErrors(["amara@example.com", "0x" + "a".repeat(40)], "1", owner, emails)["guardian.1"]).toBe("Already listed.");
     expect(guardianErrors(["dayo.testnet"], "1", owner, {}, { "dayo.testnet": "nope" })["guardian.0.email"]).toMatch(/email address/);
     expect(guardianErrors(["dayo.testnet"], "1", owner, {}, { "dayo.testnet": "dayo@example.com" })).toEqual({});
+  });
+
+  it("holds each row to the kind chosen for it", () => {
+    expect(kindOf("", undefined, "email")).toBe("email");
+    expect(kindOf("dayo.testnet", undefined, "email")).toBe("account");
+    expect(kindOf("dayo@example.com", undefined, "account")).toBe("email");
+    expect(kindOf("dayo@example.com", "account", "email")).toBe("account");
+    // an email typed into an account row (or the reverse) is refused with a way out
+    expect(guardianErrors(["dayo@example.com"], "1", owner, {}, {}, ["account"])["guardian.0"]).toMatch(/Choose Email above/);
+    expect(guardianErrors(["dayo.testnet"], "1", owner, {}, {}, ["email"])["guardian.0"]).toMatch(/Enter an email address/);
+    expect(guardianErrors(["dayo.testnet", "funmi@example.com"], "1", owner, {}, {}, ["account", "email"])).toEqual({});
+    const heir = (account: string, by?: "email" | "account") => ({ account, pct: "100", near: "", eth: "", by });
+    expect(heirErrors([heir("amara.testnet", "email")], owner, [])["heir.0.account"]).toMatch(/Enter an email address/);
+    expect(heirErrors([heir("amara@example.com", "account")], owner, [])["heir.0.account"]).toMatch(/Choose Email above/);
+    expect(heirErrors([heir("", "email")], owner, [])["heir.0.account"]).toBe("Enter their email address.");
+    expect(heirErrors([heir("")], owner, [], {}, "account")["heir.0.account"]).toBe("Enter their NEAR account.");
+    expect(heirErrors([heir("amara@example.com", "email")], owner, [])).toEqual({});
   });
 
   it("accepts an email for a heir and still stops someone being heir and guardian", () => {
