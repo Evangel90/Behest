@@ -6,8 +6,12 @@ import { percent } from "./plan";
 export const WIZARD_STEPS = ["start", "timing", "guardians", "heirs", "funding", "review"] as const;
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
-export type Unit = "minutes" | "hours" | "days";
-export const UNIT_MS: Record<Unit, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
+export type Unit = "minutes" | "hours" | "days" | "months";
+/** A month is a fixed 30 days: the contract counts milliseconds, not calendar months. */
+export const UNIT_MS: Record<Unit, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000, months: 30 * 86_400_000 };
+
+/** The longest each timer may be; the contract enforces the same ceilings. */
+export const TIMER_MAX_MS = { checkIn: 365 * UNIT_MS.days, grace: 30 * UNIT_MS.days, waiting: 180 * UNIT_MS.days };
 
 export interface TimerDraft {
   n: string;
@@ -33,6 +37,7 @@ export type FieldErrors = Record<string, string>;
 export const toMs = (t: TimerDraft) => Math.round(Number(t.n) * UNIT_MS[t.unit]);
 
 export function fromMs(ms: number): TimerDraft {
+  if (ms > 0 && ms % UNIT_MS.months === 0) return { n: String(ms / UNIT_MS.months), unit: "months" };
   if (ms > 0 && ms % UNIT_MS.days === 0) return { n: String(ms / UNIT_MS.days), unit: "days" };
   if (ms > 0 && ms % UNIT_MS.hours === 0) return { n: String(ms / UNIT_MS.hours), unit: "hours" };
   return { n: String(ms / UNIT_MS.minutes), unit: "minutes" };
@@ -57,12 +62,17 @@ export function timingErrors(t: { checkIn: TimerDraft; grace: TimerDraft; waitin
   const wa = toMs(t.waiting);
   if (!e.checkIn) {
     if (demo && ci < UNIT_MS.minutes) e.checkIn = "At least 1 minute.";
-    if (!demo && ci < 30 * UNIT_MS.days) e.checkIn = "At least 30 days.";
+    if (!demo && ci < 30 * UNIT_MS.days) e.checkIn = "At least 1 month (30 days).";
+    if (ci > TIMER_MAX_MS.checkIn) e.checkIn = "At most 12 months (365 days).";
   }
-  if (!e.grace && !demo && (gr < UNIT_MS.days || gr > 30 * UNIT_MS.days)) e.grace = "Between 1 and 30 days.";
+  if (!e.grace) {
+    if (!demo && gr < UNIT_MS.days) e.grace = "Between 1 and 30 days.";
+    if (gr > TIMER_MAX_MS.grace) e.grace = demo ? "At most 1 month (30 days)." : "Between 1 and 30 days.";
+  }
   if (!e.waiting) {
     if (demo && wa < UNIT_MS.minutes) e.waiting = "At least 1 minute.";
     if (!demo && wa < 7 * UNIT_MS.days) e.waiting = "At least 7 days.";
+    if (wa > TIMER_MAX_MS.waiting) e.waiting = "At most 6 months (180 days).";
   }
   return e;
 }

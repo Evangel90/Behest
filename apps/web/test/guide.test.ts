@@ -104,10 +104,19 @@ describe("setup wizard", () => {
     for (const n of [3, 6, 7, 9]) expect(sharesTotal(splitEvenly(n).map((pct) => ({ account: "", pct, near: "", eth: "" })))).toBe(10_000);
   });
   it("round-trips timers through the largest whole unit", () => {
-    expect(fromMs(90 * DAY)).toEqual({ n: "90", unit: "days" });
+    expect(fromMs(90 * DAY)).toEqual({ n: "3", unit: "months" });
+    expect(fromMs(45 * DAY)).toEqual({ n: "45", unit: "days" });
     expect(fromMs(2 * 3_600_000)).toEqual({ n: "2", unit: "hours" });
     expect(fromMs(120_000)).toEqual({ n: "2", unit: "minutes" });
     expect(toMs({ n: "1.5", unit: "days" })).toBe(1.5 * DAY);
+  });
+  it("takes months (30 days each) up to the contract's ceilings", () => {
+    const t = (checkIn: string, grace: string, waiting: string) =>
+      timingErrors({ checkIn: { n: checkIn, unit: "months" }, grace: { n: grace, unit: "days" }, waiting: { n: waiting, unit: "months" } }, false);
+    expect(toMs({ n: "6", unit: "months" })).toBe(180 * DAY);
+    expect(t("12", "14", "6")).toEqual({});
+    expect(t("13", "14", "7")).toEqual({ checkIn: "At most 12 months (365 days).", waiting: "At most 6 months (180 days)." });
+    expect(timingErrors({ checkIn: { n: "1", unit: "months" }, grace: { n: "2", unit: "months" }, waiting: { n: "1", unit: "months" } }, true).grace).toBe("At most 1 month (30 days).");
   });
   it("applies demo and production timer limits", () => {
     const t = { checkIn: { n: "5", unit: "minutes" as const }, grace: { n: "0", unit: "minutes" as const }, waiting: { n: "5", unit: "minutes" as const } };

@@ -40,6 +40,7 @@ import {
   type HeirDraft,
   type TimerDraft,
   type Unit,
+  UNIT_MS,
   type WizardStep,
 } from "@/lib/wizard";
 import { BehestLoader } from "@/components/BehestLoader";
@@ -694,14 +695,26 @@ function availabilityChoices(demo: boolean, cur: number) {
   return [...new Set([0, ...(demo ? [10 * MIN_MS, 30 * MIN_MS] : []), 30 * DAY_MS, 90 * DAY_MS, 180 * DAY_MS, cur])].sort((a, b) => a - b);
 }
 
+/** A preset's length in the wizard's own units: whole months (30 days each) where it divides, else as usual. */
+const span = (ms: number) => (ms > 0 && ms % UNIT_MS.months === 0 ? `${ms / UNIT_MS.months} month${ms === UNIT_MS.months ? "" : "s"}` : duration(ms));
+
 const PRESET_ROWS: { k: "checkIn" | "grace" | "waiting" | "quorum" | "notice" | "availability"; label: string; value: (v: ReturnType<typeof presetValues>) => string; means: (v: ReturnType<typeof presetValues>) => string }[] = [
-  { k: "checkIn", label: "Check in every", value: (v) => duration(v.checkIn), means: (v) => `Miss it and, after the grace period, the plan is overdue.` },
-  { k: "grace", label: "Grace", value: (v) => (v.grace ? duration(v.grace) : "none"), means: (v) => (v.grace ? `${duration(v.grace)} extra before guardians can act.` : "Guardians can act the moment a check-in is missed.") },
+  { k: "checkIn", label: "Check in every", value: (v) => span(v.checkIn), means: (v) => `Miss it and, after the grace period, the plan is overdue.` },
+  { k: "grace", label: "Grace", value: (v) => (v.grace ? span(v.grace) : "none"), means: (v) => (v.grace ? `${span(v.grace)} extra before guardians can act.` : "Guardians can act the moment a check-in is missed.") },
   { k: "quorum", label: "Guardians", value: (v) => `${v.quorum} of ${v.guardians}`, means: () => "One guardian can be away or lost without blocking the release." },
-  { k: "waiting", label: "Waiting period", value: (v) => duration(v.waiting), means: (v) => `${duration(v.waiting)} to cancel a release you didn't expect.` },
-  { k: "notice", label: "Edit notice", value: (v) => (v.notice ? duration(v.notice) : "off"), means: (v) => (v.notice ? `A stolen key can't redirect funds for ${duration(v.notice)}; guardians and heirs are told.` : "Edits apply at once.") },
-  { k: "availability", label: "Availability checks", value: (v) => (v.availability ? `every ${duration(v.availability)}` : "off"), means: (v) => (v.availability ? "You're told when a guardian goes quiet." : "Nobody checks guardians are still around.") },
+  { k: "waiting", label: "Waiting period", value: (v) => span(v.waiting), means: (v) => `${span(v.waiting)} to cancel a release you didn't expect.` },
+  { k: "notice", label: "Edit notice", value: (v) => (v.notice ? span(v.notice) : "off"), means: (v) => (v.notice ? `A stolen key can't redirect funds for ${span(v.notice)}; guardians and heirs are told.` : "Edits apply at once.") },
+  { k: "availability", label: "Availability checks", value: (v) => (v.availability ? `every ${span(v.availability)}` : "off"), means: (v) => (v.availability ? "You're told when a guardian goes quiet." : "Nobody checks guardians are still around.") },
 ];
+
+/** The round marker that says "this is a choice": empty until picked, then filled with a tick. */
+function RadioDot({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden className={cx("flex size-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors", on ? "border-signal bg-signal text-white" : "border-line-strong bg-card group-hover:border-signal")}>
+      {on && <Check className="size-3.5 animate-pop" strokeWidth={3} />}
+    </span>
+  );
+}
 
 /** The three timers are what tell the presets apart at a glance; the rest sits in the details. */
 const CARD_ROWS = ["checkIn", "grace", "waiting"];
@@ -720,11 +733,14 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
               role="radio"
               aria-checked={on}
               onClick={() => setD((x) => ({ ...applyPreset(x, p.id, demo), preset: p.id }))}
-              className={cx("flex flex-col gap-3 rounded-card border p-4 text-left transition-colors", on ? "border-signal bg-s-approved/40 ring-2 ring-signal" : "border-line bg-card hover:bg-subtle")}
+              className={cx("group flex cursor-pointer flex-col gap-3 rounded-card border p-4 text-left transition-[background-color,border-color,box-shadow,transform] duration-150", on ? "border-signal bg-s-approved/40 ring-2 ring-signal" : "border-line-strong bg-card hover:-translate-y-0.5 hover:border-signal hover:shadow-float")}
             >
-              <span className="flex flex-col gap-0.5">
-                <span className="text-lg font-semibold">{p.name}</span>
-                <span className="text-sm text-muted">{p.tagline}</span>
+              <span className="flex items-start justify-between gap-3">
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-lg font-semibold">{p.name}</span>
+                  <span className="text-sm text-muted">{p.tagline}</span>
+                </span>
+                <RadioDot on={on} />
               </span>
               <dl className="flex flex-col gap-1 text-sm">
                 {PRESET_ROWS.filter((r) => CARD_ROWS.includes(r.k)).map((r) => (
@@ -735,6 +751,7 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
                 ))}
               </dl>
               <span className="text-sm text-muted">{p.forWhom}</span>
+              <span className={cx("mt-auto border-t border-line pt-3 text-sm font-semibold", on ? "text-signal-text" : "text-ink group-hover:text-signal-text")}>{on ? "Selected" : `Choose ${p.name}`}</span>
             </button>
           );
         })}
@@ -744,11 +761,12 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
         role="radio"
         aria-checked={d.preset === "custom"}
         onClick={() => setD((x) => ({ ...x, preset: "custom" }))}
-        className={cx("flex min-h-11 items-center justify-between gap-3 rounded-row border px-4 py-3 text-left text-[15px]", d.preset === "custom" ? "border-signal ring-2 ring-signal" : "border-line bg-card hover:bg-subtle")}
+        className={cx("flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-row border px-4 py-3 text-left text-[15px] transition-colors", d.preset === "custom" ? "border-signal bg-s-approved/40 ring-2 ring-signal" : "border-line-strong bg-card hover:border-signal")}
       >
         <span>
           <span className="font-semibold">Start from scratch.</span> <span className="text-muted">Set every value yourself.</span>
         </span>
+        <RadioDot on={d.preset === "custom"} />
       </button>
       {error && <span className="text-[13px] font-semibold text-error">{error}</span>}
       {d.preset && d.preset !== "custom" && (
@@ -871,13 +889,14 @@ function TimerField({ label, tip, value, onChange, units, error, hint }: { label
 }
 
 function TimingStep({ d, set, demo, errors, editing }: { d: Draft; set: SetFn; demo: boolean; errors: FieldErrors; editing: boolean }) {
-  const units: Unit[] = demo ? ["minutes", "hours", "days"] : ["days"];
+  const units: Unit[] = demo ? ["minutes", "hours", "days", "months"] : ["days", "months"];
   return (
     <>
       <Card className="flex flex-col gap-6">
-        <TimerField label="Check in every" tip="checkIn" value={d.checkIn} onChange={(t) => set("checkIn", t)} units={units} error={errors.checkIn} hint="One tap, gas paid by Behest. Miss it and the grace period starts." />
-        <TimerField label="Then allow grace of" tip="grace" value={d.grace} onChange={(t) => set("grace", t)} units={units} error={errors.grace} hint={demo ? "Extra time before guardians can act. Zero is fine for a demo." : "Extra time before guardians can act: 1 to 30 days."} />
-        <TimerField label="Waiting period" tip="waiting" value={d.waiting} onChange={(t) => set("waiting", t)} units={units} error={errors.waiting} hint="After guardians approve. You can still cancel during it." />
+        <TimerField label="Check in every" tip="checkIn" value={d.checkIn} onChange={(t) => set("checkIn", t)} units={units} error={errors.checkIn} hint={`One tap, gas paid by Behest. Miss it and the grace period starts. ${demo ? "Up to" : "1 to"} 12 months.`} />
+        <TimerField label="Then allow grace of" tip="grace" value={d.grace} onChange={(t) => set("grace", t)} units={units} error={errors.grace} hint={demo ? "Extra time before guardians can act, up to 1 month. Zero is fine for a demo." : "Extra time before guardians can act: 1 to 30 days."} />
+        <TimerField label="Waiting period" tip="waiting" value={d.waiting} onChange={(t) => set("waiting", t)} units={units} error={errors.waiting} hint={`After guardians approve. You can still cancel during it. ${demo ? "Up to" : "7 days to"} 6 months.`} />
+        <p className="text-sm text-muted">A month counts as 30 days.</p>
       </Card>
       {!editing && (
         <Card className="flex flex-col gap-3">
