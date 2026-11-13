@@ -15,7 +15,7 @@ export class EvmUnsupportedError extends Error {
   code = "EVM_UNSUPPORTED";
 }
 
-export const NO_NEAR_DEPOSIT = "An Ethereum wallet can't attach NEAR. Fund the plan's Ethereum or Bitcoin vault by sending to its address, or ask someone with a NEAR wallet to add NEAR for you.";
+export const NO_NEAR_DEPOSIT = "An email or Ethereum-wallet sign-in can't attach NEAR. Fund the plan by sending to its NEAR, Ethereum or Bitcoin deposit address, or ask someone with a NEAR wallet to add NEAR for you.";
 
 // Nonces are sequential per address, like an account nonce: one signed action
 // in flight at a time, and remember the last one used while the RPC catches up.
@@ -85,10 +85,10 @@ export function evmSession(conn: EvmConnection): Session {
     canSponsorStorage: true,
     personalSign: (message) => conn.sign(message),
     call(method: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<CallResult> {
-      if (opts.receiverId) return Promise.reject(new EvmUnsupportedError("This needs a NEAR wallet: an Ethereum wallet can only act on Behest itself."));
+      if (opts.receiverId) return Promise.reject(new EvmUnsupportedError("This needs a NEAR wallet: an email or Ethereum-wallet sign-in can only act on Behest itself."));
       const deposit = opts.deposit ?? 0n;
       // Storage deposits are dropped: the sponsor pool pays them (D24).
-      if (deposit > 0n && !STORAGE_METHODS.has(method)) return Promise.reject(new EvmUnsupportedError(method === "deposit" ? NO_NEAR_DEPOSIT : "This needs NEAR attached, which an Ethereum wallet can't do."));
+      if (deposit > 0n && !STORAGE_METHODS.has(method)) return Promise.reject(new EvmUnsupportedError(method === "deposit" ? NO_NEAR_DEPOSIT : "This needs NEAR attached, which an email or Ethereum-wallet sign-in can't do."));
       const run = async (): Promise<CallResult> => {
         const nonce = await nextNonce(actor);
         const message = signedActionMessage({

@@ -302,6 +302,10 @@ function Setup() {
   }, [d, existing]);
 
   const owner = session?.accountId ?? "";
+  // D25: Ethereum and Bitcoin destinations belong to the Standard tier. A heir named by email gets the
+  // Ethereum address kept for them only when the owner's tier already covers it, so naming one person
+  // by email on a Free plan stays free (they receive NEAR).
+  const extOk = !tierCfg?.fee_token || !!tierCfg.tiers[tier ? Math.max(tier.tier, editing ? tier.required : 0) : 0]?.external_assets;
   const plan: PlanInput = useMemo(
     () => ({
       check_in_interval_ms: toMs(d.checkIn),
@@ -318,11 +322,11 @@ function Setup() {
           share_bps: Math.round(Number(h.pct) * 100) || 0,
           // Named by email: NEAR goes to the NEAR account kept for the address, ETH to its Ethereum one.
           near_destination: h.near.trim().toLowerCase() || mail?.near || id || null,
-          eth_destination: h.eth.trim() ? h.eth.trim().toLowerCase() : mail ? mail.account : null,
+          eth_destination: h.eth.trim() ? h.eth.trim().toLowerCase() : mail && extOk ? mail.account : null,
         };
       }),
     }),
-    [d],
+    [d, extOk],
   );
   // Ethereum wallets can't attach NEAR: no deposit, and storage must be sponsored.
   const evm = session?.kind === "evm";
@@ -675,7 +679,7 @@ function Setup() {
             {step === "start" && <StartStep d={d} setD={setD} demo={demo} error={show("start").preset} />}
             {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} editing={editing} />}
             {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} demo={demo} editing={editing} emailOn={emailOn} owner={owner} />}
-            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg && !priv} demo={demo} fallback={!!extras.rules?.fallback} sealedInfo={sealedInfo} emailOn={emailOn} />}
+            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg && !priv} demo={demo} fallback={!!extras.rules?.fallback} sealedInfo={sealedInfo} emailOn={emailOn} extOk={extOk} />}
             {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
               <ReviewStep summaryInput={summaryInput} plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
@@ -1197,7 +1201,7 @@ function OwnerNameCard({ d, set, owner }: { d: Draft; set: SetFn; owner: string 
   );
 }
 
-function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null; emailOn: boolean }) {
+function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn, extOk }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null; emailOn: boolean; extOk: boolean }) {
   const total = sharesTotal(d.heirs);
   const upd = (i: number, x: Partial<HeirDraft>) => set("heirs", d.heirs.map((h, j) => (j === i ? { ...h, ...x } : h)));
   /**
@@ -1237,7 +1241,7 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn
                 <Field
                   label={emailOn ? "Email or NEAR account" : "NEAR account"}
                   error={errors[`heir.${i}.account`]}
-                  hint={looksLikeEmail(h.account) ? emailHint(h.account, d.emails, "heir") : emailOn ? "An email address is enough. With a NEAR account, that is their sign-in and where NEAR goes." : "Their sign-in, and where NEAR goes unless you set another account below."}
+                  hint={looksLikeEmail(h.account) ? `${emailHint(h.account, d.emails, "heir")}${extOk || priv ? "" : " On the Free plan that is NEAR; Ethereum and Bitcoin come with Standard."}` : emailOn ? "An email address is enough. With a NEAR account, that is their sign-in and where NEAR goes." : "Their sign-in, and where NEAR goes unless you set another account below."}
                 >
                   {(p) => <input {...p} className={inputClass} placeholder={emailOn ? "amara@example.com" : "amara.testnet"} value={h.account} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, rename(h, e.target.value))} />}
                 </Field>
@@ -1338,7 +1342,7 @@ function FundingStep({ d, set, errors, evm, sponsored }: { d: Draft; set: SetFn;
   if (evm)
     return (
       <Card className="flex flex-col gap-4">
-        <SectionTitle icon={Coins} title="Nothing to send now" sub="An Ethereum wallet can't attach NEAR, so this plan starts without a NEAR balance." />
+        <SectionTitle icon={Coins} title="Nothing to send now" sub="An email or Ethereum-wallet sign-in can't attach NEAR, so this plan starts without a NEAR balance." />
         <ul className="flex flex-col gap-2 text-[15px] leading-relaxed">
           <li className="flex gap-2">
             <Check aria-hidden className="mt-1 size-4 shrink-0 text-ok" />
@@ -1518,7 +1522,7 @@ function StorageNote({ evm, sponsored, spons }: { evm: boolean; sponsored: boole
   if (evm)
     return (
       <Notice tone="warn" title="Behest can't cover storage right now">
-        {spons === null ? "This deployment doesn't sponsor plan storage yet" : "Its sponsor pool or your allowance is used up"}, and an Ethereum wallet can&apos;t attach NEAR. Try again later, or sign in with a NEAR wallet.
+        {spons === null ? "This deployment doesn't sponsor plan storage yet" : "Its sponsor pool or your allowance is used up"}, and an email or Ethereum-wallet sign-in can&apos;t attach NEAR. Try again later, or sign in with a NEAR wallet.
       </Notice>
     );
   return <Notice>Saving attaches 0.1 NEAR for the plan&apos;s storage; the contract refunds what it doesn&apos;t use.</Notice>;

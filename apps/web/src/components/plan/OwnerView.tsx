@@ -338,7 +338,7 @@ function NearTokens({ view, open, busy, act }: { view: PlanView; open: boolean; 
                 Withdraw
               </Button>
             </div>
-            {evm && <span className="text-[13px] leading-relaxed text-muted">Adding tokens means sending them from a NEAR account, which an Ethereum wallet can&apos;t do. You can still withdraw.</span>}
+            {evm && <span className="text-[13px] leading-relaxed text-muted">Adding tokens means sending them from a NEAR account, which an email or Ethereum-wallet sign-in can&apos;t do. You can still withdraw.</span>}
           </>
         )}
       </Dialog>

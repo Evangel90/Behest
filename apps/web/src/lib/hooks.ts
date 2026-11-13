@@ -138,7 +138,7 @@ const ERRORS: Record<string, string> = {
   E_INVALID_TIERS: "That tier schedule isn't valid (the first tier must be free, prices must rise, and the last tier must allow everything).",
   E_INSUFFICIENT_TREASURY: "The treasury doesn't hold that much.",
   E_SPONSOR_EXHAUSTED: "Behest can't cover storage for this right now (its sponsor pool or your allowance is used up). Nothing changed.",
-  E_EVM_METHOD: "An Ethereum wallet can't do this through Behest. Nothing changed.",
+  E_EVM_METHOD: "That can't be done from an email or Ethereum-wallet sign-in. Nothing changed.",
   E_EVM_NONCE: "Another signed action went through first. Try again: you'll be asked to sign once more.",
   E_EVM_EXPIRED: "The signature expired before it reached the chain. Try again.",
   E_EVM_NO_ROLE: "Your account doesn't have a role in this plan that allows that. Nothing changed.",
