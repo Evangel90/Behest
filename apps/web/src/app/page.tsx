@@ -297,7 +297,7 @@ export default function Landing() {
               <InspectForm recent />
             </header>
             {FAQ.map((f) => (
-              <details key={f.q} className="faq group border-b border-hairline">
+              <details key={f.q} name="faq" className="faq group border-b border-hairline">
                 <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-4 px-4 py-6 text-lg tracking-[-0.015em] transition-colors hover:text-signal-text sm:px-8 [&::-webkit-details-marker]:hidden">
                   {f.q}
                   <Plus aria-hidden className="mt-1 size-5 shrink-0 text-muted transition-transform duration-300 ease-ledger group-open:rotate-45" />
