@@ -17,3 +17,6 @@ node_modules/
 .notifier.db*
 dist/
 .vercel
+
+# The demo-video project (kept locally, not part of the repo)
+video/
