@@ -116,10 +116,32 @@ const emailOf = (u: User) => u.linked_accounts.find((a) => a.type === "email")?.
 
 function privyError(e: unknown): Error {
   const m = String((e as { message?: string })?.message ?? e);
-  if (/invalid.*code|incorrect|expired|invalid_credentials|must be|verification/i.test(m)) return new EmailError("BAD_CODE", "That code didn't work. Check the latest email, or send a new code.");
-  if (/too many|rate|429/i.test(m)) return new EmailError("TOO_MANY", "Too many tries. Wait a minute, then send a new code.");
-  if (/fetch|network|timeout/i.test(m)) return new EmailError("UNREACHABLE", "Couldn't reach the sign-in service. Check your connection and try again.");
-  return e instanceof Error ? e : new Error(m);
+  // Only a refusal that is about the code itself may blame the code.
+  if (/invalid email and code|(invalid|incorrect|wrong|expired)[^.]{0,20}code|code[^.]{0,20}(invalid|incorrect|expired|used)/i.test(m)) return new EmailError("BAD_CODE", "That code didn't work. Use the newest email, or send a new code.");
+  if (/too many|rate limit|429/i.test(m)) return new EmailError("TOO_MANY", "Too many tries. Wait a minute, then send a new code.");
+  if (/failed to fetch|network|timeout|timed out/i.test(m)) return new EmailError("UNREACHABLE", "Couldn't reach the sign-in service. Check your connection and try again.");
+  return new Error(`Sign-in didn't go through (${m.slice(0, 160)}). Send a new code and try again.`);
+}
+
+const CHAINS = ["ethereum", "near", "bitcoin-segwit"] as const;
+const lacks = (u: User) => CHAINS.filter((c) => !embedded(u, c));
+const askNotifier = (email: string) => fetch(`${NOTIFIER_URL.replace(/\/$/, "")}/v1/email-wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }).then((r) => r.ok, () => false);
+
+/**
+ * A first-time address signs in to an account with no wallets yet. They are
+ * normally made before the code is even sent (by the notifier); if that didn't
+ * happen, ask again, and failing that create whatever is missing as the
+ * signed-in person. Returns the user as it stands afterwards.
+ */
+async function withWallets(l: Loaded, email: string, user: User): Promise<User> {
+  if (!lacks(user).length) return user;
+  if (await askNotifier(email)) user = (await l.privy.user.get()).user as unknown as User;
+  const missing = lacks(user);
+  if (!missing.length) return user;
+  for (const chain_type of missing) {
+    await l.sdk.create(l.privy, { request: { chain_type, owner: { user_id: user.id } } as never }).catch(() => {});
+  }
+  return (await l.privy.user.get()).user as unknown as User;
 }
 
 function connection({ privy, sdk }: Loaded, user: User): EmailConnection {
@@ -127,7 +149,7 @@ function connection({ privy, sdk }: Loaded, user: User): EmailConnection {
   const near = embedded(user, "near");
   const btc = embedded(user, "bitcoin-segwit");
   if (!eth?.address || !near?.address || !near.id || !btc?.id || !btc.public_key)
-    throw new EmailError("NO_WALLET", "This email's account isn't fully set up yet. Sign out, wait a moment and sign in again.");
+    throw new EmailError("NO_WALLET", "Your code was right, but the account for this address couldn't be finished just now: the service that sets it up didn't answer. Nothing is lost. Try again in a few minutes.");
   const address = eth.address.toLowerCase() as Hex;
   const authorize = (i: { message: string }) => privy.embeddedWallet.signWithUserSigner(i);
   const raw = async (walletId: string, hash: Uint8Array) => {
@@ -174,9 +196,11 @@ function connection({ privy, sdk }: Loaded, user: User): EmailConnection {
 /** Makes sure the address has its wallets (a first-time address has none yet), then emails it a code. */
 export async function sendCode(email: string): Promise<void> {
   const { privy } = await load();
+  // A sign-in left half-done in this browser would make the next code fail for no visible reason.
+  if (await privy.getAccessToken().catch(() => null)) await privy.auth.logout().catch(() => {});
   // Without this a brand-new address would sign in to an account with no wallets. Best effort:
-  // someone an owner already named has them, so a notifier hiccup mustn't block their sign-in.
-  await fetch(`${NOTIFIER_URL.replace(/\/$/, "")}/v1/email-wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }).catch(() => {});
+  // someone an owner already named has them, and sign-in fills any gap itself (see withWallets).
+  await askNotifier(email);
   try {
     await privy.auth.email.sendCode(email);
   } catch (e) {
@@ -194,12 +218,11 @@ export async function loginWithCode(email: string, code: string): Promise<EmailC
     throw privyError(e);
   }
   try {
-    return connection(l, user);
+    return connection(l, await withWallets(l, email, user));
   } catch (e) {
-    // The wallets are made server-side; give a first-time account one more look before giving up.
-    if (!(e instanceof EmailError) || e.code !== "NO_WALLET") throw e;
-    await fetch(`${NOTIFIER_URL.replace(/\/$/, "")}/v1/email-wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }).catch(() => {});
-    return connection(l, (await l.privy.user.get()).user as unknown as User);
+    // Don't stay signed in to an account that can't act: the next attempt must start clean, with a new code.
+    await l.privy.auth.logout().catch(() => {});
+    throw e;
   }
 }
 
@@ -209,7 +232,8 @@ export async function restore(address: string): Promise<EmailConnection | null> 
   try {
     const l = await load();
     if (!(await l.privy.getAccessToken())) return null;
-    const c = connection(l, (await l.privy.user.get()).user as unknown as User);
+    const user = (await l.privy.user.get()).user as unknown as User;
+    const c = connection(l, await withWallets(l, emailOf(user), user));
     return c.address === address.toLowerCase() ? c : null;
   } catch {
     return null;

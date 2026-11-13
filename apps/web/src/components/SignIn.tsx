@@ -87,6 +87,11 @@ export function SignInDialog({ open, onClose, email: startEmail }: { open: boole
       onClose();
     } catch (err) {
       setError(humanError(err));
+      // Anything but a mistyped code used the code up: back to the address, where a new one is sent.
+      if ((err as { code?: string })?.code !== "BAD_CODE") {
+        setCode("");
+        setView("email");
+      }
     } finally {
       setPending(null);
     }
