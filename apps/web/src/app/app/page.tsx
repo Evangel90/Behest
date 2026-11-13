@@ -6,7 +6,9 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, BellRing, ChevronRight, CirclePlus, FlaskConical, HeartPulse, Inbox, Search, UserRound } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Countdown, useNow } from "@/components/interactive";
+import { EmailAccountCard } from "@/components/EmailAccount";
 import { GetNotified } from "@/components/Notifications";
+import { namedPlans, usePeopleNames } from "@/lib/people";
 import { Stagger, StaggerItem } from "@/components/motion";
 import { Avatar } from "@/components/PlanParts";
 import { SignInDialog } from "@/components/SignIn";
@@ -30,6 +32,8 @@ export default function Home() {
   const [others, setOthers] = useState<Entry[] | undefined>(undefined);
   const [signIn, setSignIn] = useState(false);
   const me = session?.accountId ?? null;
+  // An owner's heirs and guardians named by email read as names here, not as the accounts made for them.
+  usePeopleNames(me);
 
   const loadMine = useCallback(async () => {
     if (me) setMine(await getPlan(me).catch(() => null));
@@ -42,7 +46,9 @@ export default function Home() {
     (async () => {
       // Plans that may involve me: everything with an open release plus plans
       // this browser has opened (guardians and heirs arrive via the owner's link).
-      const owners = [...new Set([...(await listOpenReleases().catch(() => [])), ...watched()])].filter((o) => o !== me);
+      // Signed in with an email: the plans that name this address are known without anyone's link.
+      const named = session?.email ? await namedPlans(session).then((ps) => ps.map((p) => p.owner), () => []) : [];
+      const owners = [...new Set([...(await listOpenReleases().catch(() => [])), ...watched(), ...named])].filter((o) => o !== me);
       const views = await Promise.all(owners.map((o) => getPlan(o).catch(() => null)));
       const found = views.flatMap((v) => (v ? [{ view: v, roles: rolesOf(v, me) }] : [])).filter((e) => e.roles.length > 0);
       if (!off) setOthers(found);
@@ -69,7 +75,7 @@ export default function Home() {
   }
 
   const needsMe = (others ?? []).filter((e) => e.roles.some((r) => actionsFor(e.view, r, me ?? undefined).can.length > 0));
-  const name = session ? (session.kind === "persona" ? session.label.split(" ")[0] : shortName(session.accountId)) : "";
+  const name = session ? (session.kind === "persona" ? session.label.split(" ")[0] : session.email ? session.email.email.split("@")[0] : shortName(session.accountId)) : "";
   return (
     <AppShell>
       <div className="flex flex-col gap-2">
@@ -92,6 +98,8 @@ export default function Home() {
           </Stagger>
         </section>
       )}
+
+      <EmailAccountCard />
 
       <section aria-labelledby="your-plan" className="flex flex-col gap-3">
         <h2 id="your-plan" className="px-1 text-sm font-semibold text-muted">

@@ -4,8 +4,8 @@
 // person needs to do now.
 import { useSealed } from "@/components/Sealed";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo } from "react";
-import { CirclePlus, FileQuestion, RotateCcw, Search, WifiOff } from "lucide-react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { CirclePlus, FileQuestion, Mail, RotateCcw, Search, WifiOff } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { PlanHeader, type PlanCtx } from "@/components/plan/common";
 import { DelayView, GuardianView } from "@/components/plan/GuardianView";
@@ -23,8 +23,12 @@ import { Button, ButtonLink, Card, EmptyState, Skeleton } from "@/components/ui"
 import { watch } from "@/lib/demo";
 import type { UiRole } from "@/lib/guide";
 import { usePlan } from "@/lib/hooks";
-import { followUpOpen, rolesOf } from "@/lib/plan";
+import { namedPlans, usePeopleNames } from "@/lib/people";
+import { followUpOpen, rolesOf, shortName } from "@/lib/plan";
+import { SignInDialog } from "@/components/SignIn";
 import { useSession } from "@/lib/session";
+
+const EMAIL_ENABLED = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
 
 export default function PlanPage() {
   return (
@@ -41,6 +45,13 @@ function PlanScreen() {
   const pathname = usePathname();
   const { session, ready } = useSession();
   const me = session?.accountId ?? null;
+  const [signIn, setSignIn] = useState(false);
+  // Names instead of the accounts made for emails: the owner's people, and (for someone signed in by email) the owner.
+  usePeopleNames(me);
+  const [, setNamed] = useState(0);
+  useEffect(() => {
+    if (session?.email) void namedPlans(session).then(() => setNamed((n) => n + 1), () => {});
+  }, [session]);
   const { view, error, refresh, chainNow } = usePlan(owner);
   const prop = view?.plan.proposal;
   const options = useOptions(owner, prop?.id, prop?.waiting_ends_at_ms);
@@ -101,6 +112,21 @@ function PlanScreen() {
       {ctx && ready && (
         <>
           <PlanHeader view={ctx.view} role={role} roles={roles} onRole={setRole} />
+          {!session && EMAIL_ENABLED && (
+            <section aria-label="Were you named in this plan?" className="flex animate-fade-up flex-wrap items-center gap-4 rounded-card border border-signal/40 bg-s-approved/40 p-5">
+              <span aria-hidden className="flex size-11 shrink-0 items-center justify-center rounded-tile bg-card text-signal-text">
+                <Mail className="size-5" />
+              </span>
+              <span className="flex min-w-0 flex-1 basis-64 flex-col gap-0.5">
+                <span className="text-[17px] font-semibold">Did an email bring you here?</span>
+                <span className="text-[15px] text-muted">Sign in with the address it was sent to. You don&apos;t need a wallet: {shortName(owner)} already set aside an account for you.</span>
+              </span>
+              <Button variant="primary" onClick={() => setSignIn(true)}>
+                Sign in with email
+              </Button>
+              <SignInDialog open={signIn} onClose={() => setSignIn(false)} email />
+            </section>
+          )}
           {error && <p className="text-sm text-muted">Showing the last update; reconnecting…</p>}
           <PendingChanges owner={owner} me={me} rec={recovery} now={chainNow} onChanged={refresh} />
           <DelegateCheckIn owner={owner} me={me ?? ""} open={!!ctx.view.plan.proposal && ctx.view.status !== "Settled"} onDone={refresh} />

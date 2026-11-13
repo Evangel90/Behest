@@ -7,6 +7,7 @@ import { BadgeCheck, CircleAlert, Inbox, KeyRound, LifeBuoy, PenLine, Send, Undo
 import { useCallback, useEffect, useState } from "react";
 import { isMissingMethod, view } from "@/lib/contract";
 import { shortName, when } from "@/lib/plan";
+import { useSession } from "@/lib/session";
 import { CHAIN_LABEL, proofHow, sigHex } from "@/lib/destinations";
 import type { DestChain, DestinationView, PlanView } from "@/lib/types";
 import { CopyButton, Disclosure, Field, Segmented } from "./interactive";
@@ -57,6 +58,10 @@ function Proven({ d }: { d: DestinationView }) {
 function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: DestinationView; me: string | null; onDone: () => unknown; compact?: boolean }) {
   const how = proofHow(d.chain, d.destination);
   const { busy, act } = useTx(onDone);
+  const { session } = useSession();
+  const emailNear = session?.email?.near;
+  // Signed in as this very Ethereum address (a wallet, or an email's account): one click, no second wallet.
+  const own = how === "eth" && !!session?.personalSign && session.accountId === d.destination.toLowerCase();
   const [msg, setMsg] = useState<string | null>(null);
   const [sig, setSig] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -78,7 +83,13 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
       </Button>
     ) : (
       <p className="text-sm text-muted">
-        Sign in to Behest as <span className="font-mono">{d.destination}</span> and open this plan to prove it.
+        {emailNear === d.destination ? (
+          "This is the NEAR account kept for your email. Only your sign-in can move what arrives here."
+        ) : (
+          <>
+            Sign in to Behest as <span className="break-all font-mono">{d.destination}</span> and open this plan to prove it.
+          </>
+        )}
       </p>
     );
 
@@ -94,6 +105,14 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
       setErr(e instanceof Error ? e.message : String(e));
     }
   }
+  async function withSession() {
+    setErr(null);
+    try {
+      await act(label, "prove_destination", args(await session!.personalSign!(msg!)), { done });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
   async function pasted() {
     const s = how === "eth" ? (/^0x[0-9a-fA-F]{130}$/.test(sig.trim()) ? sig.trim() : null) : sigHex(sig);
     if (!s) return setErr(how === "eth" ? "That isn't a 65-byte 0x… signature." : "That isn't a Bitcoin signed-message signature (base64 or hex).");
@@ -103,7 +122,12 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
 
   return (
     <div className={cx("flex flex-col gap-3", !compact && "border-t border-line pt-3")}>
-      {how === "eth" && wallets.length > 0 && msg && (
+      {own && msg && (
+        <Button size="sm" variant="primary" icon={BadgeCheck} className="self-start" loading={busy === label} disabled={!!busy} onClick={() => void withSession()}>
+          Prove this address is mine
+        </Button>
+      )}
+      {how === "eth" && !own && wallets.length > 0 && msg && (
         <div className="flex flex-wrap gap-2">
           {wallets.map((w) => (
             <Button key={w.id} size="sm" variant="primary" icon={Wallet} disabled={!!busy} onClick={() => void withWallet(w.id)}>

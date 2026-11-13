@@ -12,6 +12,7 @@ import type { Transfer } from "@/lib/types";
 import { useVault } from "@/lib/vault";
 import { useConfirm } from "../feedback";
 import { HeirIntentsCard, useIntentsHolding } from "../Intents";
+import { EmailAccountCard } from "../EmailAccount";
 import { GetNotified } from "../Notifications";
 import { Countdown, Dialog, Disclosure, Term } from "../interactive";
 import { Row, Timeline, receiptUrl } from "../PlanParts";
@@ -93,7 +94,13 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
             <span className="text-[15px] leading-normal text-muted">
               {mine.length ? mine.map(({ t }) => formatAmount(t)).join(" + ") : p ? `Nothing for you in release #${p.id}.` : "Amounts are fixed when a release is proposed."}
               {heir?.eth_destination && <> · Ethereum wallet ending in <strong className="text-ink">{heir.eth_destination.slice(-4).toUpperCase()}</strong></>}
-              {heir?.near_destination && <> · NEAR account <strong className="text-ink">{heir.near_destination.split(".")[0]}</strong></>}
+              {heir?.near_destination && (
+                <>
+                  {" "}
+                  · {/^[0-9a-f]{64}$/.test(heir.near_destination) ? "NEAR account ending in " : "NEAR account "}
+                  <strong className="text-ink">{/^[0-9a-f]{64}$/.test(heir.near_destination) ? heir.near_destination.slice(-4).toUpperCase() : heir.near_destination.split(".")[0]}</strong>
+                </>
+              )}
               {mine.length > 0 && " · fees paid"}
             </span>
           </div>
@@ -180,6 +187,7 @@ export function HeirView({ ctx }: { ctx: PlanCtx }) {
         )}
       </div>
       <div className="flex flex-col gap-6">
+        <EmailAccountCard />
         {me && <MyDestinationsCard planView={view} me={me} dest={ctx.destinations} />}
         <HeirIntentsCard owner={view.plan.owner} holding={intents} />
         <GetNotified role="heir" />

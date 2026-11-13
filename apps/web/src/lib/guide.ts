@@ -156,7 +156,9 @@ export function nextStep(view: PlanView, role: UiRole, ctx: GuideCtx): NextStep 
     }
 
     case "heir": {
-      const first = shortName(ctx.me ?? "");
+      // Someone signed in with an email or an Ethereum wallet has no name to greet: an address in a headline reads as an error.
+      const short = shortName(ctx.me ?? "");
+      const first = /^0x[0-9a-f]{4}…/i.test(short) ? "" : `, ${short}`;
       const mine = p?.transfers.filter((t) => t.heir === ctx.me) ?? [];
       const started = mine.some((t) => t.state !== "Pending");
       if (ctx.followUp && s === "Overdue")
@@ -166,23 +168,23 @@ export function nextStep(view: PlanView, role: UiRole, ctx: GuideCtx): NextStep 
       // instead of promising something that isn't in this release.
       if (p && mine.length === 0 && s !== "Active" && s !== "Overdue")
         return s === "Settled"
-          ? { tone: "done", title: `Nothing in this release was for you, ${first}.`, body: `${name}'s release has completed. None of its transfers went to you. If anything is left in the plan, a follow-up round can still include you.` }
-          : { tone: "calm", title: `This release has nothing for you, ${first}.`, body: `None of the transfers in ${name}'s release #${p.id} go to you. There's nothing to receive this time; if anything is left afterwards, a follow-up round can include you.` };
-      if (s === "Proposed") return { tone: "calm", title: `Nothing for you to do yet, ${first}.`, body: `${name}'s guardians have proposed a release. Nothing moves until enough of them approve and a waiting period passes.` };
+          ? { tone: "done", title: `Nothing in this release was for you${first}.`, body: `${name}'s release has completed. None of its transfers went to you. If anything is left in the plan, a follow-up round can still include you.` }
+          : { tone: "calm", title: `This release has nothing for you${first}.`, body: `None of the transfers in ${name}'s release #${p.id} go to you. There's nothing to receive this time; if anything is left afterwards, a follow-up round can include you.` };
+      if (s === "Proposed") return { tone: "calm", title: `Nothing for you to do yet${first}.`, body: `${name}'s guardians have proposed a release. Nothing moves until enough of them approve and a waiting period passes.` };
       if (s === "Waiting" && ends)
         return {
           tone: "calm",
-          title: `Nothing for you to do yet, ${first}.`,
+          title: `Nothing for you to do yet${first}.`,
           body: `In about ${relative(ends, ctx.now).replace("in ", "")} you'll be able to receive what ${name} set aside for you. If ${name} turns out to be reachable, they can stop this until then. That's by design.`,
           deadline: { at: ends, label: "Ready in" },
         };
       if (s === "Eligible" || (s === "Executing" && !started))
-        return { tone: "attention", title: `It's ready for you, ${first}.`, body: `You can now receive what ${name} set aside for you. It goes straight to the addresses ${name} chose; network fees are already covered.` };
+        return { tone: "attention", title: `It's ready for you${first}.`, body: `You can now receive what ${name} set aside for you. It goes straight to the addresses ${name} chose; network fees are already covered.` };
       if (s === "Executing") return { tone: "calm", title: "On its way.", body: "Each part arrives separately. You can close this page; nothing is lost if you do." };
       if (s === "Settled") return { tone: "done", title: "Done.", body: `Everything ${name} set aside for you has arrived. Your receipts are below.` };
       return {
         tone: "calm",
-        title: `Nothing for you to do yet, ${first}.`,
+        title: `Nothing for you to do yet${first}.`,
         body: `${name} has set something aside for you. If ${name} stops checking in, their guardians can start a release and we'll walk you through receiving it.`,
       };
     }
