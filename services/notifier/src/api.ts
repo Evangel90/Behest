@@ -440,7 +440,9 @@ export function createApi(d: ApiDeps): Server {
         const a = await signed(req, "contacts.remove");
         if (Number(a.id) !== id) throw new HttpError(400, "ID_MISMATCH", "the signed request names a different contact");
         const c = ownContact(a.account, id);
-        store.removeContact(id);
+        // Removing an address an owner supplied is the person saying no: it stays off even if the owner names them again.
+        if (scopeOf(c)) store.disable(id, "unsubscribed");
+        else store.removeContact(id);
         if (c.status === "active") engine.security(a.account, "Notification channel removed", `${c.channel === "email" ? c.address : c.channel === "telegram" ? `Telegram ${c.label ?? "chat"}` : "A webhook"} was removed from the notifications for ${a.account}.`);
         log("contact removed", { account: a.account, channel: c.channel });
         return json(req, res, 200, { ok: true });

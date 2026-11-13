@@ -359,10 +359,21 @@ function EmailCard({ info, contacts, busy, onAdd, onResend, onRemove, onTest }: 
         <ul className="flex flex-col gap-2">
           {contacts.map((c) => (
             <ContactRow key={c.id} c={c} busy={busy} onRemove={onRemove} onTest={onTest}>
-              {c.status !== "active" && (
-                <Button variant="subtle" size="sm" icon={RefreshCw} className="self-start" onClick={() => onResend(c)} disabled={!!busy} loading={busy === `resend-${c.id}`}>
-                  Send a new link
-                </Button>
+              {c.added_by?.length && c.status === "active" ? (
+                // An address a plan's owner supplied: it hears about that plan only until its account takes it on.
+                <div className="flex flex-col gap-2 rounded-tile bg-subtle p-3 text-sm">
+                  <span className="text-muted">Added by the owner of a plan that names you. It only gets notices about that plan.</span>
+                  <Button variant="subtle" size="sm" className="self-start bg-card" onClick={() => onAdd(c.address)} disabled={!!busy} loading={busy === "email"}>
+                    Use it for all my notices
+                  </Button>
+                </div>
+              ) : (
+                c.status !== "active" &&
+                c.disabled_reason !== "unsubscribed" && (
+                  <Button variant="subtle" size="sm" icon={RefreshCw} className="self-start" onClick={() => onResend(c)} disabled={!!busy} loading={busy === `resend-${c.id}`}>
+                    Send a new link
+                  </Button>
+                )
               )}
             </ContactRow>
           ))}

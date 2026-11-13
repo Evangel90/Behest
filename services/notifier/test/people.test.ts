@@ -317,6 +317,16 @@ describe("people API", () => {
     expect(store.contactBy("dayo.testnet", "email", "dayo@example.com")).toBeUndefined();
   });
 
+  it("an owner-supplied address the person removes stays off", async () => {
+    store.putPerson(person({ account: "amara.testnet", email: "amara4@example.com" }));
+    const c = store.contactBy("amara.testnet", "email", "amara4@example.com")!;
+    const r = await call("DELETE", `/v1/contacts/${c.id}`, await envelope(heirKey.signer, "amara.testnet", "contacts.remove", { id: c.id }));
+    expect(r.status).toBe(200);
+    expect(store.contact(c.id)).toMatchObject({ status: "disabled", disabled_reason: "unsubscribed" });
+    store.putPerson(person({ account: "amara.testnet", email: "amara4@example.com", role: "guardian" }));
+    expect(store.activeContacts("amara.testnet").some((x) => x.address === "amara4@example.com")).toBe(false);
+  });
+
   it("the account an address was created for confirms it by signing, with no second email", async () => {
     // amara.testnet stands in for the wallet created for her address
     store.putPerson(person({ account: "amara.testnet", email: "amara2@example.com" }));

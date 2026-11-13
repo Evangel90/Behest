@@ -16,6 +16,7 @@ import { BtcOwnerCard, useBtc } from "../Bitcoin";
 import { useConfirm } from "../feedback";
 import { Address, Dialog, Field, Segmented, Term } from "../interactive";
 import { GuardianList, Timeline, receiptUrl } from "../PlanParts";
+import { NamedPeopleCard } from "../People";
 import { Pulse } from "../Pulse";
 import { OptionsCard } from "../ReleaseOptions";
 import { RulesCard } from "../ReleaseRules";
@@ -126,6 +127,7 @@ export function OwnerView({ ctx }: { ctx: PlanCtx }) {
           <Heirs view={view} sealed={ctx.sealed} />
           <GuardianList view={view} />
         </div>
+        <NamedPeopleCard view={view} />
       </Group>
 
       <Group title="Safety">
