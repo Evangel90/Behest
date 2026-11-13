@@ -3,7 +3,7 @@
 // funding, then a plain-language review before anything is signed.
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Coins, Compass, Hourglass, Divide, Gift, Mail, Pencil, Plus, RotateCcw, ScrollText, ShieldCheck, Timer, Trash2, UserRound, WifiOff, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/chrome";
 import { Disclosure, Field, Segmented, Term } from "@/components/interactive";
 import { HeirList, ShareBar } from "@/components/PlanParts";
@@ -15,27 +15,32 @@ import { SummaryList } from "@/components/Summary";
 import { PRESETS, applyPreset, editedFrom, presetValues, type PresetId } from "@/lib/presets";
 import { planSummary } from "@/lib/summary";
 import { commitment, downloadJson, localRecords, matching, recordFile, saveLocalRecords, type HeirRecord, type PrivateView, type Unrevealed } from "@/lib/sealed";
-import { backupRecords } from "@/lib/notify";
+import { backupRecords, getInfo } from "@/lib/notify";
+import { localPeople, namePerson, peopleError, type PersonRole } from "@/lib/people";
 import { IntentsBridgeAddress } from "@/components/Intents";
 import { Button, ButtonLink, Card, EmptyState, Notice, SectionTitle, Skeleton, cx, inputClass } from "@/components/ui";
 import { getBtcDestinations, getConfig, getPlan, getSponsorship, sponsorshipAvailable, view as viewCall, type Sponsorship } from "@/lib/contract";
 import type { DaoCall } from "@/lib/dao";
 import { getIntentsConfig, getIntentsDelivery, type IntentsConfig, type IntentsDelivery } from "@/lib/intents";
 import { humanError } from "@/lib/hooks";
-import { describePlan, duration, parseNear, percent, shortName, validateDraft } from "@/lib/plan";
+import { describePlan, duration, parseNear, percent, shortAddr, shortName, validateDraft } from "@/lib/plan";
 import { SponsorRefused, useSession } from "@/lib/session";
 import { features, formatUsd, reasonFor, requiredTier, useTier, useTierConfig } from "@/lib/tiers";
 import type { PlanInput, PlanView, ReleaseOptions, ReleaseRules } from "@/lib/types";
 import {
   WIZARD_STEPS,
+  accountOf,
   fromMs,
   guardianErrors,
   heirErrors,
   intentsDeliveries,
+  looksLikeEmail,
   sharesTotal,
   splitEvenly,
   timingErrors,
   toMs,
+  unresolvedEmails,
+  type EmailAccounts,
   type FieldErrors,
   type HeirDraft,
   type TimerDraft,
@@ -52,7 +57,7 @@ const STEP_META: Record<WizardStep, { label: string; icon: LucideIcon; title: st
   start: { label: "Start", icon: Compass, title: "Pick a starting point.", lede: "A preset fills in the settings for you. You can change any of them later." },
   timing: { label: "Timing", icon: Timer, title: "How often will you check in?", lede: "Miss a check-in and the grace period, and your guardians may start a release. You can cancel until the waiting period ends." },
   guardians: { label: "Guardians", icon: ShieldCheck, title: "Who watches over the plan?", lede: "People you trust to notice you're unreachable. They can only release the plan exactly as written, never change where funds go." },
-  heirs: { label: "Heirs", icon: Gift, title: "Who receives what?", lede: "Give each person a share and the addresses where it should arrive. Nobody else can change these." },
+  heirs: { label: "Heirs", icon: Gift, title: "Who receives what?", lede: "Give each person a share. An email address is all you need for them; nobody else can change who receives." },
   funding: { label: "Funding", icon: Coins, title: "What goes in now?", lede: "Put some NEAR into the plan. Ethereum and Bitcoin vaults appear on your plan page once it's saved." },
   review: { label: "Review", icon: ScrollText, title: "Read it once more.", lede: "This is exactly what you're signing. Nothing is sent until you confirm in your wallet." },
 };
@@ -78,6 +83,14 @@ interface Draft {
   unrevealed: Unrevealed;
   /** Let Behest keep an encrypted copy of the records. */
   backup: boolean;
+  /** Email addresses typed for guardians or heirs → the account kept for each (filled in when a step is left). */
+  emails: EmailAccounts;
+  /** For guardians named by account: where to write to them (key: the account as typed, lowercased). */
+  noticeEmails: Record<string, string>;
+  /** What the people named here know the owner as; used in emails to them. */
+  ownerName: string;
+  /** Write to heirs now that they are named (guardians always are). */
+  tellHeirs: boolean;
 }
 const DEMO_DRAFT: Draft = {
   checkIn: { n: "5", unit: "minutes" },
@@ -95,6 +108,10 @@ const DEMO_DRAFT: Draft = {
   revealWindow: 5 * 60_000,
   unrevealed: "Redistribute",
   backup: false,
+  emails: {},
+  noticeEmails: {},
+  ownerName: "",
+  tellHeirs: false,
 };
 
 export default function SetupPage() {
@@ -129,6 +146,12 @@ function Setup() {
   /** D33: records made on save, to download before leaving. */
   const [madeRecords, setMadeRecords] = useState<HeirRecord[] | null>(null);
   const [backupNote, setBackupNote] = useState<string | null>(null);
+  /** People can be named by email here (the notifier can create their accounts). */
+  const [emailOn, setEmailOn] = useState(false);
+  useEffect(() => void getInfo().then((i) => setEmailOn(!!i.email_wallets)).catch(() => {}), []);
+  /** Turning typed emails into accounts (leaving the guardians or heirs step). */
+  const [resolving, setResolving] = useState(false);
+  const [peopleNote, setPeopleNote] = useState<string | null>(null);
   /** D26: acting as a DAO, saving is a proposal; this is its id. */
   const [proposed, setProposed] = useState<number | null | undefined>(undefined);
   // D25: what the saved plan already has beside the policy (rules, options,
@@ -166,13 +189,39 @@ function Setup() {
         setExisting(v);
         if (v) {
           const p = v.plan.policy;
+          // People this owner named by email on this browser read as their address again, not the account made for it.
+          const known = localPeople(session.accountId);
+          const emails: EmailAccounts = {};
+          const noticeEmails: Record<string, string> = {};
+          const person = (account: string, role: PersonRole) => known.find((k) => k.account === account && k.role === role);
+          const entry = (account: string, role: PersonRole) => {
+            const k = person(account, role);
+            if (!k?.by_email) return account;
+            emails[k.email] = { account, near: k.near ?? "", btc: k.btc ?? "" };
+            return k.email;
+          };
+          for (const g of p.guardians) {
+            const k = person(g, "guardian");
+            if (k && !k.by_email) noticeEmails[g] = k.email;
+          }
           setD({
             checkIn: fromMs(p.check_in_interval_ms),
             grace: fromMs(p.grace_ms),
             waiting: fromMs(p.waiting_period_ms),
-            guardians: p.guardians,
+            guardians: p.guardians.map((g) => entry(g, "guardian")),
             quorum: String(p.quorum),
-            heirs: p.heirs.map((h) => ({ account: h.account_id, pct: String(h.share_bps / 100), near: h.near_destination === h.account_id ? "" : (h.near_destination ?? ""), eth: h.eth_destination ?? "" })),
+            heirs: p.heirs.map((h) => {
+              const k = person(h.account_id, "heir");
+              const mine = k?.by_email ? k : null;
+              return {
+                account: entry(h.account_id, "heir"),
+                pct: String(h.share_bps / 100),
+                near: h.near_destination === h.account_id || (mine && h.near_destination === mine.near) ? "" : (h.near_destination ?? ""),
+                eth: mine && h.eth_destination === h.account_id ? "" : (h.eth_destination ?? ""),
+                label: k?.label ?? undefined,
+                noticeEmail: k && !k.by_email ? k.email : undefined,
+              };
+            }),
             deposit: "0",
             preset: "custom",
             notice: 0,
@@ -182,6 +231,10 @@ function Setup() {
             revealWindow: 5 * 60_000,
             unrevealed: "Redistribute",
             backup: false,
+            emails,
+            noticeEmails,
+            ownerName: "",
+            tellHeirs: known.some((k) => k.role === "heir" && k.announce),
           });
           // D33: a sealed plan's heirs come from this browser's records, when they match.
           void viewCall<PrivateView | null>("get_private_heirs", { owner: v.plan.owner })
@@ -254,14 +307,20 @@ function Setup() {
       check_in_interval_ms: toMs(d.checkIn),
       grace_ms: toMs(d.grace),
       waiting_period_ms: toMs(d.waiting),
-      guardians: d.guardians.map((g) => g.trim().toLowerCase()).filter(Boolean),
+      // An email stands for the account kept for it (empty until it has one: the plan can't be signed before).
+      guardians: d.guardians.map((g) => accountOf(g, d.emails)).filter(Boolean),
       quorum: Number(d.quorum) || 0,
-      heirs: d.heirs.map((h) => ({
-        account_id: h.account.trim().toLowerCase(),
-        share_bps: Math.round(Number(h.pct) * 100) || 0,
-        near_destination: (h.near.trim() || h.account.trim()).toLowerCase() || null,
-        eth_destination: h.eth.trim() ? h.eth.trim().toLowerCase() : null,
-      })),
+      heirs: d.heirs.map((h) => {
+        const mail = d.emails[h.account.trim().toLowerCase()];
+        const id = accountOf(h.account, d.emails);
+        return {
+          account_id: id,
+          share_bps: Math.round(Number(h.pct) * 100) || 0,
+          // Named by email: NEAR goes to the NEAR account kept for the address, ETH to its Ethereum one.
+          near_destination: h.near.trim().toLowerCase() || mail?.near || id || null,
+          eth_destination: h.eth.trim() ? h.eth.trim().toLowerCase() : mail ? mail.account : null,
+        };
+      }),
     }),
     [d],
   );
@@ -277,8 +336,8 @@ function Setup() {
   const errs: Record<WizardStep, FieldErrors> = {
     start: d.preset ? {} : { preset: "Pick a starting point, or start from scratch." },
     timing: timingErrors(d, demo),
-    guardians: guardianErrors(d.guardians, d.quorum, owner),
-    heirs: heirErrors(d.heirs, owner, d.guardians),
+    guardians: guardianErrors(d.guardians, d.quorum, owner, d.emails, d.noticeEmails),
+    heirs: heirErrors(d.heirs, owner, d.guardians, d.emails),
     funding: depositYocto === null ? { deposit: "Not a valid NEAR amount." } : {},
     review: {},
   };
@@ -319,12 +378,55 @@ function Setup() {
     setStep(to);
     top.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const next = (e?: FormEvent) => {
+  const focusInvalid = () => requestAnimationFrame(() => (document.querySelector("[aria-invalid=true]") as HTMLElement | null)?.focus());
+  /** Emails typed for guardians or heirs that have no account yet. */
+  const pendingEmails = unresolvedEmails([...d.guardians, ...d.heirs.map((h) => h.account)], d.emails);
+
+  /**
+   * Gives every typed email its account (the notifier asks Privy for the wallets
+   * kept for that address). Returns the full map, or null if it couldn't be done.
+   */
+  async function resolveEmails(): Promise<EmailAccounts | null> {
+    if (!session) return null;
+    const todo: { email: string; role: PersonRole; label?: string }[] = [
+      ...d.guardians.map((g) => ({ email: g.trim().toLowerCase(), role: "guardian" as const })),
+      ...d.heirs.map((h) => ({ email: h.account.trim().toLowerCase(), role: "heir" as const, label: h.label?.trim() || undefined })),
+    ].filter((x, i, all) => looksLikeEmail(x.email) && !d.emails[x.email] && all.findIndex((y) => y.email === x.email) === i);
+    if (!todo.length) return d.emails;
+    setResolving(true);
+    setError(null);
+    try {
+      const found: EmailAccounts = {};
+      for (const t of todo) {
+        const p = await namePerson(session, { ...t, announce: t.role === "heir" ? d.tellHeirs : true, name: d.ownerName.trim() || undefined });
+        found[t.email] = { account: p.account, near: p.near ?? "", btc: p.btc ?? "" };
+      }
+      const all = { ...d.emails, ...found };
+      setD((x) => ({ ...x, emails: { ...x.emails, ...found } }));
+      return all;
+    } catch (e) {
+      setError(peopleError(e));
+      return null;
+    } finally {
+      setResolving(false);
+    }
+  }
+  // Reaching the review another way (the stepper) still needs every email to have its account.
+  useEffect(() => {
+    if (step === "review" && pendingEmails.length && !resolving && !error) void resolveEmails();
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const next = async (e?: FormEvent) => {
     e?.preventDefault();
+    if (resolving) return;
     setTried((t) => ({ ...t, [step]: true }));
-    if (!stepOk(step)) {
-      requestAnimationFrame(() => (document.querySelector("[aria-invalid=true]") as HTMLElement | null)?.focus());
-      return;
+    if (!stepOk(step)) return focusInvalid();
+    if (step === "guardians" || step === "heirs") {
+      const emails = await resolveEmails();
+      if (!emails) return;
+      // An address can turn out to be the owner's own, or someone already listed by account.
+      const after = step === "guardians" ? guardianErrors(d.guardians, d.quorum, owner, emails, d.noticeEmails) : heirErrors(d.heirs, owner, d.guardians, emails);
+      if (Object.keys(after).length) return focusInvalid();
     }
     const n = steps[idx + 1];
     if (n) go(n);
@@ -345,15 +447,49 @@ function Setup() {
     await session.call(method, args, { deposit: INTENTS_DEPOSIT, summary });
   }
 
+  /**
+   * Brings the notifier's list of named people in line with what was just signed:
+   * names, who gets told now, and addresses for people named by account. The
+   * plan is already saved, so a failure here only delays their emails.
+   */
+  async function syncPeople(): Promise<boolean> {
+    if (!session) return true;
+    const name = d.ownerName.trim() || undefined;
+    const jobs: Parameters<typeof namePerson>[1][] = [];
+    for (const g of d.guardians) {
+      const e = g.trim().toLowerCase();
+      if (looksLikeEmail(e)) jobs.push({ email: e, role: "guardian", name });
+      else if (e && d.noticeEmails[e]?.trim()) jobs.push({ email: d.noticeEmails[e]!, role: "guardian", account: e, name });
+    }
+    for (const h of d.heirs) {
+      const e = h.account.trim().toLowerCase();
+      const label = h.label?.trim() || undefined;
+      if (looksLikeEmail(e)) jobs.push({ email: e, role: "heir", label, announce: d.tellHeirs, name });
+      else if (e && h.noticeEmail?.trim()) jobs.push({ email: h.noticeEmail, role: "heir", account: e, label, announce: d.tellHeirs, name });
+    }
+    if (!jobs.length) return true;
+    try {
+      for (const j of jobs) await namePerson(session, j);
+      const told = jobs.filter((j) => j.role !== "heir" || j.announce).length;
+      setPeopleNote(told ? `We'll email ${told === 1 ? "the person" : `the ${told} people`} you chose to tell within a minute or two.` : null);
+      return true;
+    } catch (e) {
+      setPeopleNote(`Your plan is saved, but the emails couldn't be set up (${peopleError(e)}). Edit the plan and save again to retry.`);
+      return false;
+    }
+  }
+
   async function submit() {
     if (!session) return;
     setError(null);
+    // Nothing is signed while an email still has no account behind it.
+    if (pendingEmails.length && !(await resolveEmails())) return;
     try {
       setPhase("plan");
       // D26: a DAO saves the plan and its first deposit in one proposal (one vote), paying its own storage.
       // D33: records (salts kept for unchanged heirs) and their commitments, computed here.
       const records: HeirRecord[] = priv
-        ? plan.heirs.map((h, i) => ({ account_id: h.account_id, share_bps: h.share_bps, near_destination: h.near_destination, eth_destination: h.eth_destination, btc_destination: d.heirs[i]?.btc?.trim() || null, salt: d.heirs[i]?.salt || crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "") }))
+        ? plan.heirs.map((h, i) => ({ account_id: h.account_id, share_bps: h.share_bps, near_destination: h.near_destination, eth_destination: h.eth_destination, btc_destination: d.heirs[i]?.btc?.trim() || d.emails[d.heirs[i]?.account.trim().toLowerCase() ?? ""]?.btc || null, salt: d.heirs[i]?.salt || crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "") }))
         : [];
       const sealed = priv ? { commitments: await Promise.all(records.map((r) => commitment(owner, r))), reveal_window_ms: d.revealWindow, unrevealed: d.unrevealed } : null;
       const saveMethod = priv ? "set_private_plan" : "set_plan";
@@ -429,6 +565,7 @@ function Setup() {
         if (!queued.length) throw e;
         setQueuedNote((n) => `${n ?? ""} Save the NEAR Intents choices again once it has taken effect.`);
       }
+      const peopleOk = await syncPeople();
       if (!editing && depositYocto && depositYocto > 0n) {
         setPhase("deposit");
         await session.call("deposit", { owner: session.accountId }, { deposit: depositYocto });
@@ -437,7 +574,7 @@ function Setup() {
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch {}
-      if (!queued.length && !priv) setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
+      if (!queued.length && !priv && peopleOk) setTimeout(() => router.push(`/plan/${encodeURIComponent(session.accountId)}`), 1400);
     } catch (e) {
       setError(humanError(e));
       setPhase("idle");
@@ -500,6 +637,7 @@ function Setup() {
               {queuedNote ?? <>{madeRecords ? "Save the records below before you leave. " : "Taking you to it now. "}{paidBy === "behest" ? "Behest covered the plan's storage. " : ""}Remember to check in every {duration(plan.check_in_interval_ms)}.</>}
             </p>
           )}
+          {peopleNote && <p className="max-w-[420px] text-[15px] text-muted">{peopleNote}</p>}
           {madeRecords && <RecordsDownload owner={owner} records={madeRecords} note={backupNote} />}
           <ButtonLink href={`/plan/${encodeURIComponent(owner)}`} variant="primary" iconRight={ArrowRight}>
             {proposed !== undefined ? "Go to the proposals" : "Open your plan"}
@@ -536,8 +674,8 @@ function Setup() {
           <Swap id={step} dir={dir} className="flex flex-col gap-4">
             {step === "start" && <StartStep d={d} setD={setD} demo={demo} error={show("start").preset} />}
             {step === "timing" && <TimingStep d={d} set={set} demo={demo} errors={show("timing")} editing={editing} />}
-            {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} demo={demo} editing={editing} />}
-            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg && !priv} demo={demo} fallback={!!extras.rules?.fallback} sealedInfo={sealedInfo} />}
+            {step === "guardians" && <GuardianStep d={d} set={set} errors={show("guardians")} demo={demo} editing={editing} emailOn={emailOn} owner={owner} />}
+            {step === "heirs" && <HeirStep d={d} set={set} errors={show("heirs")} intents={!!intentsCfg && !priv} demo={demo} fallback={!!extras.rules?.fallback} sealedInfo={sealedInfo} emailOn={emailOn} />}
             {step === "funding" && <FundingStep d={d} set={set} errors={show("funding")} evm={evm} sponsored={sponsored} />}
             {step === "review" && session && (
               <ReviewStep summaryInput={summaryInput} plan={plan} d={d} owner={owner} editing={editing} depositYocto={depositYocto} onEdit={go} finalErrors={finalErrors} ack={ack} setAck={setAck} evm={evm} sponsored={sponsored} spons={spons} />
@@ -552,6 +690,11 @@ function Setup() {
               {error}
             </Notice>
           )}
+          {step === "review" && pendingEmails.length > 0 && !resolving && (
+            <Notice tone="warn" title="Some people don't have an account yet" action={<Button type="button" size="sm" variant="outline" onClick={() => void resolveEmails()}>Try again</Button>}>
+              {pendingEmails.join(", ")}: each email address needs the account that will hold their share before you can sign.
+            </Notice>
+          )}
           {signing && <SigningProgress phase={phase} withDeposit={!editing && !!depositYocto && depositYocto > 0n} evm={evm} />}
 
           <div className="sticky bottom-[calc(68px+env(safe-area-inset-bottom))] z-10 -mx-4 flex items-center justify-between gap-2 border-t border-line bg-paper/90 px-4 py-3 backdrop-blur-md sm:-mx-0 sm:rounded-row sm:border sm:px-3 lg:bottom-2">
@@ -562,11 +705,11 @@ function Setup() {
               Step {idx + 1} of {steps.length}
             </span>
             {step !== "review" ? (
-              <Button type="submit" variant="ink" iconRight={ArrowRight}>
-                Continue
+              <Button type="submit" variant="ink" iconRight={ArrowRight} loading={resolving}>
+                {resolving ? "Setting up their accounts" : "Continue"}
               </Button>
             ) : (
-              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || !ack || tierBlocked || (!editing && depositYocto === null) || evmBlocked || (evm && spons === undefined)} onClick={submit}>
+              <Button type="button" variant="primary" icon={Check} loading={signing} disabled={finalErrors.length > 0 || pendingEmails.length > 0 || resolving || !ack || tierBlocked || (!editing && depositYocto === null) || evmBlocked || (evm && spons === undefined)} onClick={submit}>
                 {editing ? "Sign and update" : "Sign and create"}
               </Button>
             )}
@@ -938,44 +1081,80 @@ function TimingStep({ d, set, demo, errors, editing }: { d: Draft; set: SetFn; d
   );
 }
 
-function GuardianStep({ d, set, errors, demo, editing }: { d: Draft; set: SetFn; errors: FieldErrors; demo: boolean; editing: boolean }) {
+/** The line under an email entry: what it means for that person, and the account once there is one. */
+function emailHint(entry: string, emails: EmailAccounts, role: "guardian" | "heir") {
+  const mail = emails[entry.trim().toLowerCase()];
+  const what = role === "heir" ? "They sign in with this address and need no wallet. Their share arrives in the account kept for it." : "They sign in with this address and need no wallet.";
+  return mail ? `${what} Account ${shortAddr(mail.account)}.` : what;
+}
+
+function GuardianStep({ d, set, errors, demo, editing, emailOn, owner }: { d: Draft; set: SetFn; errors: FieldErrors; demo: boolean; editing: boolean; emailOn: boolean; owner: string }) {
   const filled = d.guardians.filter((g) => g.trim()).length;
   const max = Math.max(1, filled);
   const q = Math.min(Number(d.quorum) || 1, max);
+  const anyEmail = d.guardians.some((g) => looksLikeEmail(g) || d.noticeEmails[g.trim().toLowerCase()]?.trim()) || d.heirs.some((h) => looksLikeEmail(h.account) || h.noticeEmail?.trim());
   return (
     <>
       <Card className="flex flex-col gap-4">
-        <SectionTitle icon={ShieldCheck} title={<Term k="guardian">Guardians</Term>} sub="NEAR accounts. Two or three people who know you well is typical." />
-        <ul className="flex flex-col gap-3">
-          {d.guardians.map((g, i) => (
-            <li key={i} className="flex animate-fade-up items-start gap-2">
-              <Field label={`Guardian ${i + 1}`} error={errors[`guardian.${i}`]} className="flex-1">
-                {(p) => (
-                  <input
-                    {...p}
-                    className={inputClass}
-                    placeholder={["dayo.testnet", "funmi.testnet", "chidi.testnet"][i] ?? "guardian.testnet"}
-                    value={g}
-                    autoComplete="off"
-                    spellCheck={false}
-                    autoCapitalize="none"
-                    onChange={(e) => set("guardians", d.guardians.map((x, j) => (j === i ? e.target.value : x)))}
-                  />
+        <SectionTitle
+          icon={ShieldCheck}
+          title={<Term k="guardian">Guardians</Term>}
+          sub={emailOn ? "An email address is enough for each: they sign in with it and need no wallet. Or enter a NEAR account. Two or three people who know you well is typical." : "NEAR accounts. Two or three people who know you well is typical."}
+        />
+        <ul className="flex flex-col gap-4">
+          {d.guardians.map((g, i) => {
+            const typed = g.trim().toLowerCase();
+            const mail = looksLikeEmail(typed);
+            return (
+              <li key={i} className="flex animate-fade-up flex-col gap-2">
+                <div className="flex items-start gap-2">
+                  <Field label={`Guardian ${i + 1}`} error={errors[`guardian.${i}`]} hint={mail ? emailHint(g, d.emails, "guardian") : undefined} className="flex-1">
+                    {(p) => (
+                      <input
+                        {...p}
+                        className={inputClass}
+                        placeholder={emailOn ? (["dayo@example.com", "funmi@example.com", "chidi@example.com"][i] ?? "name@example.com") : (["dayo.testnet", "funmi.testnet", "chidi.testnet"][i] ?? "guardian.testnet")}
+                        value={g}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCapitalize="none"
+                        onChange={(e) => set("guardians", d.guardians.map((x, j) => (j === i ? e.target.value : x)))}
+                      />
+                    )}
+                  </Field>
+                  {d.guardians.length > 1 && (
+                    <button type="button" aria-label={`Remove guardian ${i + 1}`} onClick={() => set("guardians", d.guardians.filter((_, j) => j !== i))} className="mt-[30px] flex size-12 shrink-0 items-center justify-center rounded-tile text-muted hover:bg-subtle hover:text-ink">
+                      <Trash2 aria-hidden className="size-[18px]" />
+                    </button>
+                  )}
+                </div>
+                {emailOn && typed && !mail && (
+                  <Field label="Their email" optional error={errors[`guardian.${i}.email`]} hint="We'll tell them they're a guardian, and write when they're needed." className={d.guardians.length > 1 ? "mr-14" : undefined}>
+                    {(p) => (
+                      <input
+                        {...p}
+                        type="email"
+                        className={inputClass}
+                        placeholder="name@example.com"
+                        value={d.noticeEmails[typed] ?? ""}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCapitalize="none"
+                        onChange={(e) => set("noticeEmails", { ...d.noticeEmails, [typed]: e.target.value })}
+                      />
+                    )}
+                  </Field>
                 )}
-              </Field>
-              {d.guardians.length > 1 && (
-                <button type="button" aria-label={`Remove guardian ${i + 1}`} onClick={() => set("guardians", d.guardians.filter((_, j) => j !== i))} className="mt-[30px] flex size-12 shrink-0 items-center justify-center rounded-tile text-muted hover:bg-subtle hover:text-ink">
-                  <Trash2 aria-hidden className="size-[18px]" />
-                </button>
-              )}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
         <Button type="button" variant="outline" size="sm" icon={Plus} className="self-start" onClick={() => set("guardians", [...d.guardians, ""])}>
           Add guardian
         </Button>
         {errors.guardians && <span className="text-[13px] font-semibold text-error">{errors.guardians}</span>}
       </Card>
+      {emailOn && anyEmail && <OwnerNameCard d={d} set={set} owner={owner} />}
       <Card className="flex flex-col gap-4">
         <SectionTitle title={<Term k="quorum">Approvals needed</Term>} sub="How many guardians must agree before a release goes ahead." />
         <Segmented
@@ -1005,9 +1184,29 @@ function GuardianStep({ d, set, errors, demo, editing }: { d: Draft; set: SetFn;
   );
 }
 
-function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null }) {
+/** People named by email don't know the owner as an account: what the emails should call them. */
+function OwnerNameCard({ d, set, owner }: { d: Draft; set: SetFn; owner: string }) {
+  const shown = d.ownerName.trim() || shortName(owner);
+  return (
+    <Card className="flex flex-col gap-3">
+      <SectionTitle icon={Mail} title="How should the emails introduce you?" sub="The people you name by email hear from Behest, so they need to recognise who named them." />
+      <Field label="Your name" optional hint={`They'll read: "${shown} named you a guardian of their inheritance plan."`}>
+        {(p) => <input {...p} className={inputClass} placeholder="Kemi Adeyemi" maxLength={40} value={d.ownerName} autoComplete="name" onChange={(e) => set("ownerName", e.target.value)} />}
+      </Field>
+    </Card>
+  );
+}
+
+function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo, emailOn }: { d: Draft; set: SetFn; errors: FieldErrors; intents: boolean; demo: boolean; fallback: boolean; sealedInfo: { count: number; known: number } | null; emailOn: boolean }) {
   const total = sharesTotal(d.heirs);
   const upd = (i: number, x: Partial<HeirDraft>) => set("heirs", d.heirs.map((h, j) => (j === i ? { ...h, ...x } : h)));
+  /**
+   * Typing a different person into a row. Addresses entered for an account belong
+   * to that account: when the row becomes an email (or stops being one), they are
+   * dropped rather than silently kept as where the new person is paid.
+   */
+  const rename = (h: HeirDraft, account: string): Partial<HeirDraft> =>
+    looksLikeEmail(account) !== looksLikeEmail(h.account) && h.account.trim() ? { account, near: "", eth: "", btc: "", intents: false, intentsAccount: "", noticeEmail: "" } : { account };
   const priv = d.privacy === "private";
   return (
     <>
@@ -1027,7 +1226,7 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: 
           <li key={i} className="animate-fade-up">
             <Card className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold">{h.account.trim() ? shortName(h.account.trim()) : `Heir ${i + 1}`}</span>
+                <span className="truncate text-sm font-semibold">{h.label?.trim() || (looksLikeEmail(h.account) ? h.account.trim() : h.account.trim() ? shortName(h.account.trim()) : `Heir ${i + 1}`)}</span>
                 {d.heirs.length > 1 && (
                   <Button type="button" variant="ghost" size="sm" icon={Trash2} onClick={() => set("heirs", d.heirs.filter((_, j) => j !== i))} aria-label={`Remove heir ${i + 1}`}>
                     Remove
@@ -1035,8 +1234,12 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: 
                 )}
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_160px]">
-                <Field label="NEAR account" error={errors[`heir.${i}.account`]} hint="Their sign-in, and where NEAR goes unless you set another account below.">
-                  {(p) => <input {...p} className={inputClass} placeholder="amara.testnet" value={h.account} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { account: e.target.value })} />}
+                <Field
+                  label={emailOn ? "Email or NEAR account" : "NEAR account"}
+                  error={errors[`heir.${i}.account`]}
+                  hint={looksLikeEmail(h.account) ? emailHint(h.account, d.emails, "heir") : emailOn ? "An email address is enough. With a NEAR account, that is their sign-in and where NEAR goes." : "Their sign-in, and where NEAR goes unless you set another account below."}
+                >
+                  {(p) => <input {...p} className={inputClass} placeholder={emailOn ? "amara@example.com" : "amara.testnet"} value={h.account} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, rename(h, e.target.value))} />}
                 </Field>
                 <Field label="Share" error={errors[`heir.${i}.pct`]}>
                   {(p) => (
@@ -1047,23 +1250,48 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: 
                   )}
                 </Field>
               </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="NEAR goes to" optional error={errors[`heir.${i}.near`]} hint={h.account.trim() ? `Defaults to ${h.account.trim()}.` : "Defaults to the heir account."}>
-                  {(p) => <input {...p} className={inputClass} placeholder={h.account || "amara.testnet"} value={h.near} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { near: e.target.value })} />}
-                </Field>
-                <div className="flex flex-col gap-1.5">
-                  <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint="For Sepolia ETH and tokens. Leave empty for none.">
-                    {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="0x…" value={h.eth} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { eth: e.target.value })} />}
+              {emailOn && (looksLikeEmail(h.account) || (h.account.trim() && !h.account.includes("@"))) && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Their name" optional hint="Only you see this. It replaces the address on your screens.">
+                    {(p) => <input {...p} className={inputClass} placeholder="Amara" maxLength={60} value={h.label ?? ""} autoComplete="off" onChange={(e) => upd(i, { label: e.target.value })} />}
                   </Field>
-                  <IntentsBridgeAddress account={(h.intentsAccount || h.near || h.account).trim().toLowerCase()} chain="eth:1" onUse={(eth) => upd(i, { eth })} />
+                  {!looksLikeEmail(h.account) && (
+                    <Field label="Their email" optional error={errors[`heir.${i}.email`]} hint="Where to write to them about this plan.">
+                      {(p) => <input {...p} type="email" className={inputClass} placeholder="name@example.com" value={h.noticeEmail ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { noticeEmail: e.target.value })} />}
+                    </Field>
+                  )}
                 </div>
-              </div>
+              )}
+              {(() => {
+                const mail = looksLikeEmail(h.account);
+                const fields = (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field label="NEAR goes to" optional error={errors[`heir.${i}.near`]} hint={mail ? "Defaults to the NEAR account kept for their email." : h.account.trim() ? `Defaults to ${h.account.trim()}.` : "Defaults to the heir account."}>
+                      {(p) => <input {...p} className={inputClass} placeholder={mail ? "their-own.testnet" : h.account || "amara.testnet"} value={h.near} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { near: e.target.value })} />}
+                    </Field>
+                    <div className="flex flex-col gap-1.5">
+                      <Field label="Ethereum address" optional error={errors[`heir.${i}.eth`]} hint={mail ? "Defaults to the Ethereum address kept for their email." : "For Sepolia ETH and tokens. Leave empty for none."}>
+                        {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="0x…" value={h.eth} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { eth: e.target.value })} />}
+                      </Field>
+                      {!mail && <IntentsBridgeAddress account={(h.intentsAccount || h.near || h.account).trim().toLowerCase()} chain="eth:1" onUse={(eth) => upd(i, { eth })} />}
+                    </div>
+                  </div>
+                );
+                // Named by email, everything already has somewhere to land; other addresses are the exception.
+                return mail ? (
+                  <Disclosure title="Pay to wallets they already have" sub="Only if you know their own addresses. Otherwise leave this closed." defaultOpen={!!(h.near.trim() || h.eth.trim())}>
+                    {fields}
+                  </Disclosure>
+                ) : (
+                  fields
+                );
+              })()}
               {priv && (
-                <Field label="Bitcoin address" optional error={errors[`heir.${i}.btc`]} hint="Kept inside their private record. Testnet tb1q… or tb1p….">
+                <Field label="Bitcoin address" optional error={errors[`heir.${i}.btc`]} hint={looksLikeEmail(h.account) ? "Kept inside their private record. Defaults to the Bitcoin address kept for their email." : "Kept inside their private record. Testnet tb1q… or tb1p…."}>
                   {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" value={h.btc ?? ""} autoComplete="off" spellCheck={false} autoCapitalize="none" onChange={(e) => upd(i, { btc: e.target.value })} />}
                 </Field>
               )}
-              {intents && (
+              {intents && !looksLikeEmail(h.account) && (
                 <div className="flex flex-col gap-3 rounded-row border border-line p-4">
                   <label className="flex cursor-pointer items-start gap-3 text-[15px]">
                     <input type="checkbox" checked={!!h.intents} onChange={(e) => upd(i, { intents: e.target.checked })} className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]" />
@@ -1086,7 +1314,22 @@ function HeirStep({ d, set, errors, intents, demo, fallback, sealedInfo }: { d: 
       <Button type="button" variant="outline" icon={Plus} className="self-start" onClick={() => set("heirs", [...d.heirs, { account: "", pct: "0", near: "", eth: "" }])}>
         Add heir
       </Button>
-      {!priv && <p className="text-sm text-muted">Bitcoin addresses are added on your plan page once the Bitcoin vault is set up.</p>}
+      {emailOn && d.heirs.some((h) => looksLikeEmail(h.account) || h.noticeEmail?.trim()) && (
+        <Card className="flex flex-col gap-3">
+          <SectionTitle icon={Mail} title="When should your heirs hear from us?" sub="Guardians are told as soon as the plan names them, because they have a job to do. Heirs are your call." />
+          <Segmented
+            label="When heirs are emailed"
+            value={d.tellHeirs ? "now" : "later"}
+            onChange={(v) => set("tellHeirs", v === "now")}
+            options={[
+              { value: "later", label: "When a release reaches them" },
+              { value: "now", label: "Now" },
+            ]}
+          />
+          <p className="text-sm text-muted">{d.tellHeirs ? "Each heir gets one email saying you named them, with nothing to do yet." : "They hear nothing until a release is approved and their share is on its way."} Every email has an unsubscribe link.</p>
+        </Card>
+      )}
+      {!priv && <p className="text-sm text-muted">Bitcoin addresses are added on your plan page once the Bitcoin vault is set up{emailOn ? "; a heir named by email already has one waiting" : ""}.</p>}
     </>
   );
 }

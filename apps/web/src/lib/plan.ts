@@ -37,7 +37,16 @@ export function relative(target: number, now: number): string {
 
 const PERSONA_NAMES: Record<string, string> = { owner: "Kemi", g1: "Dayo", g2: "Funmi", g3: "Chidi" };
 
+// What the signed-in owner calls the people they named by email (see lib/people): a
+// name or the address reads better than the 0x account made for it.
+const KNOWN_NAMES = new Map<string, string>();
+export function registerNames(names: Record<string, string>) {
+  for (const [account, name] of Object.entries(names)) if (name) KNOWN_NAMES.set(account.toLowerCase(), name);
+}
+
 export function shortName(account: string): string {
+  const known = KNOWN_NAMES.get(account.toLowerCase());
+  if (known) return known;
   // Ethereum-wallet accounts (0x…): the short address, as wallets show it.
   if (/^0x[0-9a-fA-F]{40}$/.test(account)) return shortAddr(account.toLowerCase());
   const first = account.split(".")[0] ?? account;

@@ -30,6 +30,8 @@ export interface NotifierInfo {
   kinds: KindInfo[];
   limits: { email: number; telegram: number; webhook: number; watches: number };
   webhook_https_only: boolean;
+  /** People can be named by email (the notifier can create their wallets). */
+  email_wallets?: boolean;
 }
 
 export interface Contact {
@@ -41,6 +43,8 @@ export interface Contact {
   created_ms: number;
   verified_ms: number | null;
   disabled_reason: string | null;
+  /** Owners who supplied this address (it only hears about their plans); null for one this account set up. */
+  added_by?: string[] | null;
   telegram?: { username: string | null; name: string | null } | null;
   last_delivery: { status: string; at_ms: number; error: string | null } | null;
 }
@@ -76,7 +80,7 @@ export class NotifierError extends Error {
 
 const base = () => NOTIFIER_URL.replace(/\/$/, "");
 
-async function request<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${base()}${path}`, {
@@ -163,10 +167,10 @@ function storedToken(account: string): string | null {
 export const getInfo = () => request<NotifierInfo>("GET", "/v1/info");
 
 /** Opens a notifier session for the signed-in account (one signature). */
-export async function openSession(session: Session): Promise<string> {
+export async function openSession(session: Session, summary = `view notification settings for ${session.accountId}`): Promise<string> {
   const existing = storedToken(session.accountId);
   if (existing) return existing;
-  const env = await signAction(session, `view notification settings for ${session.accountId}`, "session");
+  const env = await signAction(session, summary, "session");
   const r = await request<{ token: string; expires_ms: number }>("POST", "/v1/session", env);
   try {
     sessionStorage.setItem(TOKEN_KEY(session.accountId), JSON.stringify(r));

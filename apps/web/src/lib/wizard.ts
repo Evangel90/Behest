@@ -30,6 +30,32 @@ export interface HeirDraft {
   btc?: string;
   /** D33: the record's salt, kept while editing so unchanged heirs keep their commitment. */
   salt?: string;
+  /** What the owner calls them (private: kept with their email, never on-chain). */
+  label?: string;
+  /** For a heir named by account: where to write to them about this plan. */
+  noticeEmail?: string;
+}
+
+/** What an email address typed for a guardian or heir turned into (the wallets kept for that address). */
+export interface EmailAccount {
+  account: string;
+  near: string;
+  btc: string;
+}
+/** Email (lowercased) → its account, once resolved. */
+export type EmailAccounts = Record<string, EmailAccount>;
+
+const EMAIL = /^[^\s@<>()",;:\\[\]]{1,64}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+export const looksLikeEmail = (s: string) => s.trim().length <= 254 && EMAIL.test(s.trim());
+
+/** The account a guardian or heir entry stands for: itself, or the one made for its email ("" until resolved). */
+export function accountOf(entry: string, emails: EmailAccounts = {}): string {
+  const e = entry.trim().toLowerCase();
+  return looksLikeEmail(e) ? (emails[e]?.account ?? "") : e;
+}
+/** Guardian and heir entries that are emails still waiting for an account. */
+export function unresolvedEmails(entries: string[], emails: EmailAccounts = {}): string[] {
+  return [...new Set(entries.map((x) => x.trim().toLowerCase()).filter((x) => looksLikeEmail(x) && !emails[x]))];
 }
 /** Field key → message. Keys: checkIn, grace, waiting, guardian.<i>, guardians, quorum, heir.<i>.<field>, shares, deposit. */
 export type FieldErrors = Record<string, string>;
@@ -77,15 +103,20 @@ export function timingErrors(t: { checkIn: TimerDraft; grace: TimerDraft; waitin
   return e;
 }
 
-export function guardianErrors(guardians: string[], quorum: string, owner: string): FieldErrors {
+export function guardianErrors(guardians: string[], quorum: string, owner: string, emails: EmailAccounts = {}, noticeEmails: Record<string, string> = {}): FieldErrors {
   const e: FieldErrors = {};
   const list = guardians.map((g) => g.trim().toLowerCase());
+  // An email stands for its account once resolved; until then it is compared as typed.
+  const ids = list.map((g) => accountOf(g, emails) || g);
   const filled = list.filter(Boolean);
   list.forEach((g, i) => {
     if (!g) return;
-    if (!looksLikeNearAccount(g)) e[`guardian.${i}`] = "That doesn't look like a NEAR account (e.g. dayo.testnet).";
-    else if (g === owner) e[`guardian.${i}`] = "You can't guard your own plan.";
-    else if (list.indexOf(g) !== i) e[`guardian.${i}`] = "Already listed.";
+    const mail = looksLikeEmail(g);
+    if (!mail && !looksLikeNearAccount(g)) e[`guardian.${i}`] = g.includes("@") ? "That doesn't look like an email address." : "Enter their email address, or a NEAR account (e.g. dayo.testnet).";
+    else if (ids[i] === owner) e[`guardian.${i}`] = "You can't guard your own plan.";
+    else if (ids.indexOf(ids[i]!) !== i) e[`guardian.${i}`] = "Already listed.";
+    const notice = noticeEmails[g]?.trim();
+    if (!mail && notice && !looksLikeEmail(notice)) e[`guardian.${i}.email`] = "That doesn't look like an email address.";
   });
   if (filled.length === 0) e.guardians = "Add at least one guardian.";
   const q = Number(quorum);
@@ -97,14 +128,16 @@ export function sharesTotal(heirs: HeirDraft[]): number {
   return heirs.reduce((s, h) => s + (Math.round(Number(h.pct) * 100) || 0), 0);
 }
 
-export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[]): FieldErrors {
+export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[], emails: EmailAccounts = {}): FieldErrors {
   const e: FieldErrors = {};
-  const gs = guardians.map((g) => g.trim().toLowerCase()).filter(Boolean);
-  const ids = heirs.map((h) => h.account.trim().toLowerCase());
+  const key = (x: string) => accountOf(x, emails) || x.trim().toLowerCase();
+  const gs = guardians.filter((g) => g.trim()).map(key);
+  const ids = heirs.map((h) => key(h.account));
   heirs.forEach((h, i) => {
     const id = ids[i]!;
-    if (!id) e[`heir.${i}.account`] = "Enter the heir's NEAR account.";
-    else if (!looksLikeNearAccount(id)) e[`heir.${i}.account`] = "That doesn't look like a NEAR account.";
+    const typed = h.account.trim().toLowerCase();
+    if (!id) e[`heir.${i}.account`] = "Enter their email address, or a NEAR account.";
+    else if (!looksLikeEmail(typed) && !looksLikeNearAccount(typed)) e[`heir.${i}.account`] = typed.includes("@") ? "That doesn't look like an email address." : "Enter their email address, or a NEAR account.";
     else if (id === owner) e[`heir.${i}.account`] = "You can't be your own heir.";
     else if (gs.includes(id)) e[`heir.${i}.account`] = "Someone can't be both an heir and a guardian.";
     else if (ids.indexOf(id) !== i) e[`heir.${i}.account`] = "Already listed.";
@@ -115,6 +148,7 @@ export function heirErrors(heirs: HeirDraft[], owner: string, guardians: string[
     if (h.eth.trim() && !looksLikeEthAddress(h.eth)) e[`heir.${i}.eth`] = "An Ethereum address is 0x followed by 40 characters.";
     if (h.intents && h.intentsAccount?.trim() && !looksLikeNearAccount(h.intentsAccount)) e[`heir.${i}.intents`] = "A NEAR account or a 0x address.";
     if (h.btc?.trim() && !/^tb1[02-9ac-hj-np-z]{8,87}$/.test(h.btc.trim())) e[`heir.${i}.btc`] = "A testnet Bitcoin address starts with tb1.";
+    if (h.noticeEmail?.trim() && !looksLikeEmail(h.noticeEmail)) e[`heir.${i}.email`] = "That doesn't look like an email address.";
   });
   if (heirs.length === 0) e.shares = "Add at least one heir.";
   else {
@@ -145,6 +179,6 @@ export function stepOf(key: string): WizardStep {
 /** D27: the set_intents_delivery list for a draft (opted-in heirs only). */
 export function intentsDeliveries(heirs: HeirDraft[]) {
   return heirs
-    .filter((h) => h.intents && h.account.trim())
+    .filter((h) => h.intents && h.account.trim() && !looksLikeEmail(h.account))
     .map((h) => ({ account_id: h.account.trim().toLowerCase(), enabled: true, intents_account: h.intentsAccount?.trim() ? h.intentsAccount.trim().toLowerCase() : null }));
 }
