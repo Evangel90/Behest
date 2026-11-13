@@ -530,7 +530,8 @@ function Setup() {
 
       {editing && existing && step === steps[0] && <Notice tone="info">Your current plan is filled in. Saving makes a new version, which counts as a check-in; any open release must be cancelled first.</Notice>}
 
-      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+      {/* The review step is the whole plan already, so the "so far" sidebar steps aside there. */}
+      <div className={cx("grid grid-cols-1 items-start gap-6", step !== "review" && "lg:grid-cols-[minmax(0,1fr)_340px]")}>
         <form onSubmit={step === "review" ? (e) => e.preventDefault() : next} noValidate className="flex min-w-0 flex-col gap-4">
           <Swap id={step} dir={dir} className="flex flex-col gap-4">
             {step === "start" && <StartStep d={d} setD={setD} demo={demo} error={show("start").preset} />}
@@ -572,7 +573,7 @@ function Setup() {
           </div>
         </form>
 
-        <aside className="hidden flex-col gap-3 lg:sticky lg:top-2 lg:flex">
+        <aside className={cx("hidden flex-col gap-3 lg:sticky lg:top-2", step !== "review" && "lg:flex")}>
           <Card className="flex flex-col gap-4">
             <span className="text-sm font-semibold text-muted">Your plan so far</span>
             <p className={cx("text-[15px] leading-relaxed", anyUnset && "text-muted")}>
