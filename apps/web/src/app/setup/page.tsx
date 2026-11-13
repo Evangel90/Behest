@@ -634,16 +634,27 @@ function PrivacyCard({ d, set, demo, fallback, sealedInfo }: { d: Draft; set: Se
           <Field label="Reveal window" hint="After you become overdue, how long a release waits for every heir to reveal.">
             {() => <Segmented label="Reveal window" value={String(d.revealWindow)} onChange={(v) => set("revealWindow", Number(v))} options={revealChoices(demo, d.revealWindow).map((ms) => ({ value: String(ms), label: duration(ms) }))} />}
           </Field>
-          <Field label="If a heir never reveals" hint={fallback ? "Choose where their share goes. Nothing happens by default." : "Add a fallback recipient on your plan page to send unrevealed shares there instead."}>
-            {() => (
-              <Segmented
-                label="If a heir never reveals"
-                value={d.unrevealed}
-                onChange={(v) => set("unrevealed", v)}
-                options={[{ value: "Redistribute", label: "Split among the others" }, ...(fallback ? [{ value: "Fallback" as const, label: "To your fallback" }] : [])]}
-              />
-            )}
-          </Field>
+          {fallback ? (
+            <Field label="If a heir never reveals" hint="Choose where their share goes.">
+              {() => (
+                <Segmented
+                  label="If a heir never reveals"
+                  value={d.unrevealed}
+                  onChange={(v) => set("unrevealed", v)}
+                  options={[
+                    { value: "Redistribute", label: "Split among the others" },
+                    { value: "Fallback", label: "To your fallback" },
+                  ]}
+                />
+              )}
+            </Field>
+          ) : (
+            // One outcome is not a choice: say it as a fact, not as a lone button.
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-semibold">If a heir never reveals</span>
+              <p className="text-sm leading-relaxed text-muted">Their share is split among the other heirs. To send it to one person instead, add a fallback recipient on your plan page after saving.</p>
+            </div>
+          )}
           <Field label="Backup" hint={d.backup ? "Behest stores the records encrypted and gives each heir theirs only once you're overdue. Behest itself could read them." : "Only you and your heirs hold the records. If one is lost, that share follows the rule above."}>
             {() => (
               <Segmented
