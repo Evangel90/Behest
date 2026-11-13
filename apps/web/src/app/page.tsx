@@ -111,7 +111,7 @@ export default function Landing() {
                 passed on exactly as you wish.
               </h1>
               <p className={`max-w-[640px] text-muted ${lede}`}>
-                Bitcoin, Ethereum and NEAR in one plan. A single contract on NEAR coordinates the inheritance across all three chains, with no company in the middle. Choose who receives what, check in now and then, and stay in control until the very last moment.
+                One plan for your Bitcoin, Ethereum and NEAR, coordinated by a single contract on NEAR. You stay in control until the very last moment.
               </p>
               <HeroActions />
             </div>
