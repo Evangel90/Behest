@@ -627,7 +627,7 @@ function PrivacyCard({ d, set, demo, fallback, sealedInfo }: { d: Draft; set: Se
         <>
           <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm leading-relaxed">
             <li>On-chain there&apos;s only a fingerprint per heir. Nobody can read who or how much.</li>
-            <li>You&apos;ll download one recovery record per heir. Give each heir theirs (it&apos;s also in their printed packet).</li>
+            <li>Each heir needs a recovery record file to claim. You&apos;ll download one per heir to pass on; their printed packet has it too.</li>
             <li>Once you&apos;re overdue, heirs reveal their records; if you check in again, everything is hidden again.</li>
             <li>Payments themselves are public on every chain once they happen. Standard plan or above.</li>
           </ul>
