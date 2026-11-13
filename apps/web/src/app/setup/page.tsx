@@ -511,6 +511,10 @@ function Setup() {
 
   const meta = STEP_META[step];
   const signing = phase !== "idle";
+  // Before a starting point is picked, and for any timer left blank, the summary says "not set" instead of a number nobody chose.
+  const blank = (t: TimerDraft) => !d.preset || t.n.trim() === "";
+  const unset = { checkIn: blank(d.checkIn), grace: blank(d.grace), waiting: blank(d.waiting) };
+  const anyUnset = unset.checkIn || unset.grace || unset.waiting;
   return (
     <AppShell mainClassName="max-w-[1180px]">
       <div ref={top} className="scroll-mt-24 flex flex-col gap-2">
@@ -571,10 +575,12 @@ function Setup() {
         <aside className="hidden flex-col gap-3 lg:sticky lg:top-2 lg:flex">
           <Card className="flex flex-col gap-4">
             <span className="text-sm font-semibold text-muted">Your plan so far</span>
-            <p className="text-[15px] leading-relaxed">{session ? describePlan(plan) : ""}</p>
-            <Consequences plan={plan} />
+            <p className={cx("text-[15px] leading-relaxed", anyUnset && "text-muted")}>
+              {anyUnset ? (d.preset ? "Starting from scratch: set your timers in the next step and the plan is spelled out here." : "Pick a starting point and the plan is spelled out here.") : session ? describePlan(plan) : ""}
+            </p>
+            <Consequences plan={plan} unset={unset} />
             {d.preset && d.preset !== "custom" && !editing && <PresetBadge d={d} demo={demo} />}
-            <AsideWarnings input={summaryInput} />
+            {!anyUnset && <AsideWarnings input={summaryInput} />}
             {tiersOn && tierCfg && (
               <span className="flex items-center justify-between gap-2 rounded-row bg-subtle px-3 py-2 text-sm">
                 <span>
@@ -707,6 +713,12 @@ const PRESET_ROWS: { k: "checkIn" | "grace" | "waiting" | "quorum" | "notice" | 
   { k: "availability", label: "Availability checks", value: (v) => (v.availability ? `every ${span(v.availability)}` : "off"), means: (v) => (v.availability ? "You're told when a guardian goes quiet." : "Nobody checks guardians are still around.") },
 ];
 
+/** "Start from scratch" clears what a preset (or the built-in default) filled in, so every value really is the user's own. */
+function scratch(demo: boolean): Pick<Draft, "checkIn" | "grace" | "waiting" | "notice" | "availability"> {
+  const unit: Unit = demo ? "minutes" : "days";
+  return { checkIn: { n: "", unit }, grace: { n: "", unit }, waiting: { n: "", unit }, notice: 0, availability: 0 };
+}
+
 /** The round marker that says "this is a choice": empty until picked, then filled with a tick. */
 function RadioDot({ on }: { on: boolean }) {
   return (
@@ -760,7 +772,7 @@ function StartStep({ d, setD, demo, error }: { d: Draft; setD: (f: (x: Draft) =>
         type="button"
         role="radio"
         aria-checked={d.preset === "custom"}
-        onClick={() => setD((x) => ({ ...x, preset: "custom" }))}
+        onClick={() => setD((x) => (x.preset === "custom" ? x : { ...x, ...scratch(demo), preset: "custom" }))}
         className={cx("flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-row border px-4 py-3 text-left text-[15px] transition-colors", d.preset === "custom" ? "border-signal bg-s-approved/40 ring-2 ring-signal" : "border-line-strong bg-card hover:border-signal")}
       >
         <span>
@@ -1115,12 +1127,12 @@ function FundingStep({ d, set, errors, evm, sponsored }: { d: Draft; set: SetFn;
 }
 
 /** "If you stop checking in": the release clock, with the plan's own durations. */
-function Consequences({ plan }: { plan: PlanInput }) {
+function Consequences({ plan, unset }: { plan: PlanInput; unset?: { checkIn: boolean; grace: boolean; waiting: boolean } }) {
   const items: [string, string][] = [
-    ["You stop checking in", `after ${duration(plan.check_in_interval_ms)}`],
-    ["Grace period", plan.grace_ms > 0 ? duration(plan.grace_ms) : "none"],
+    ["You stop checking in", unset?.checkIn ? "not set" : `after ${duration(plan.check_in_interval_ms)}`],
+    ["Grace period", unset?.grace ? "not set" : plan.grace_ms > 0 ? duration(plan.grace_ms) : "none"],
     ["Guardians approve", plan.guardians.length ? `${plan.quorum || "?"} of ${plan.guardians.length}` : "—"],
-    ["Waiting, you can cancel", duration(plan.waiting_period_ms)],
+    ["Waiting, you can cancel", unset?.waiting ? "not set" : duration(plan.waiting_period_ms)],
     ["Heirs receive", plan.heirs.length ? `${plan.heirs.length} heir${plan.heirs.length === 1 ? "" : "s"}` : "—"],
   ];
   return (
