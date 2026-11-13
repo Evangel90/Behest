@@ -62,40 +62,25 @@ const FAQ = [
   { q: "What is Behest?", a: "An inheritance protocol for crypto. You set heirs, guardians and timing; a public contract on NEAR coordinates the inheritance across NEAR, Ethereum and Bitcoin, signing for each chain itself. No company or custodian sits in the middle." },
   {
     q: "Do I have to trust Behest?",
-    a: "No. Nothing depends on anyone keeping a promise. The contract holds the funds, enforces the timers and can only pay the addresses you set. Guardians decide when a release may start, never where funds go. Behest pays gas and can't move anything. One caveat today: on testnet Behest can still upgrade the contract's code; mainnet plans put upgrades behind a time lock and several keys.",
+    a: "No. The contract holds the funds, enforces the timers and can only pay the addresses you set. Behest pays gas and can't move anything. If Behest disappeared, every signed transfer is public for anyone to broadcast, and each heir's printed packet explains how to claim without this website. One caveat today: on testnet Behest can still upgrade the contract's code; mainnet plans put upgrades behind a time lock and several keys.",
   },
   { q: "What if I forget to check in?", a: "Nothing can start until you're overdue and the grace period has passed. Even after guardians propose, you can cancel or check in until the waiting period ends." },
-  { q: "Could guardians team up and take the funds?", a: "No. They can only approve releasing the plan exactly as written, to your heirs' fixed addresses." },
-  {
-    q: "Can I keep my heirs private?",
-    a: "Yes. Choose Private when you set up the plan. The chain then holds only a fingerprint per heir, so nobody can read who inherits, how much or where. Each heir gets a recovery record (it's in their printed packet, with a QR code). Once you've stopped checking in, they reveal it; if you check in again, the plan is hidden again. You decide whether Behest keeps an encrypted copy of the records, which it hands each heir only once you're overdue. A share nobody reveals in time goes to the other heirs or to your fallback. Standard tier.",
-  },
-  {
-    q: "What if a guardian disappears?",
-    a: "Turn on availability checks and guardians confirm now and then that they're still around. Name standbys, and one can take a quiet guardian's seat after a delay you set. Guardians can also hand their seat to a new account or step down. The number of approvals needed never goes down on its own.",
-  },
+  { q: "Could guardians team up and take the funds?", a: "No. They decide when a release may start, never where funds go: they can only approve the plan exactly as written, to your heirs' fixed addresses." },
   {
     q: "What if someone gets my key?",
     a: "Set an edit notice. Changes to heirs, addresses, shares and guardians then wait that long before they take effect, everyone on the plan is told, and you can cancel. Add a second key to your account or a check-in delegate as a way back in.",
   },
   {
-    q: "How do I know my heirs' addresses are right?",
-    a: "Heirs prove they control each address: a NEAR account by signing in, an Ethereum address with a signature, a Bitcoin address with a signed message. Your plan shows which are proven. While you're around, a heir can ask you to change an address; only you can approve it.",
+    q: "Can I keep my heirs private?",
+    a: "Yes. Choose Private when you set up the plan. The chain then holds only a fingerprint per heir, so nobody can read who inherits, how much or where. Each heir gets a recovery record to reveal once you've stopped checking in; if you check in again, the plan is hidden again. Standard tier.",
   },
   {
     q: "Do heirs need crypto experience?",
-    a: "No. Name a heir by their email address and that is all they need: when a release reaches them they get an email, sign in with a code from their inbox, and receive their share into an account kept for that address. From the same screen they can send it to an exchange or a wallet. Heirs who already have a wallet can be named by its address instead. Either way the pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas.",
+    a: "No. Name a heir by their email address: when a release reaches them they sign in with a code from their inbox, receive their share, and can send it on to an exchange or a wallet. That share is as safe as their inbox and Privy, the wallet service that keeps the account, though neither Privy nor Behest can release a plan early or redirect a share. Heirs who already have a wallet can be named by its address instead and depend on neither.",
   },
-  {
-    q: "What does a heir who claims by email depend on?",
-    a: "Their inbox, and Privy, the wallet service that keeps the account for their email address. Whoever can read that inbox can claim and move the share, so it is as safe as their email. The contract still decides when and how much: neither Privy nor Behest can release a plan early or redirect a share. A heir with their own wallet depends on neither, and a heir who claimed by email can move what they received to their own wallet straight away.",
-  },
-  { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it. Each heir's printed recovery packet explains how to claim with any NEAR tool, without Behest's website." },
-  { q: "Can a DAO or a company use it?", a: "Yes. A Sputnik DAO can own a plan, be a guardian or be a heir; its members vote on each action. Owners can also name check-in delegates." },
-  { q: "How will I know when something happens?", a: "Turn on notifications by email, Telegram or webhook. Owners get check-in reminders; guardians and heirs hear when a release is proposed, approved or ready, when a private heir is revealed, and when the plan changes." },
   {
     q: "What does it cost?",
-    a: "A plan with one heir and NEAR is free. More heirs, Ethereum and Bitcoin, NEAR Intents delivery, private heirs, release rules and check-in delegates are Standard; automatic release and delay signers are Complete. Each is a one-time USDC fee that anyone can pay for you, and upgrading costs only the difference. Behest pays plan storage and NEAR gas. Ethereum and Bitcoin network fees come out of the plan's own vault and are shown before anything is signed. On testnet, payments use free test USDC.",
+    a: "A plan with one heir and NEAR is free. More heirs, Ethereum and Bitcoin, private heirs and release rules are Standard; automatic release and delay signers are Complete. Each is a one-time USDC fee that anyone can pay for you, and upgrading costs only the difference. Behest pays plan storage and NEAR gas; Ethereum and Bitcoin network fees come out of the plan's own vault. On testnet, payments use free test USDC.",
   },
 ];
 
