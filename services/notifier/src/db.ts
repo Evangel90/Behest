@@ -401,6 +401,10 @@ export class Store {
       return this.person(p.owner, p.account, p.role)!;
     });
   }
+  /** Plans that name `account` through an email (so a person signing in with one finds them), with what each owner asked to be called. */
+  namedBy(account: string): { owner: string; role: PersonRole; name: string | null }[] {
+    return this.all<{ owner: string; role: PersonRole; name: string | null }>("SELECT p.owner, p.role, n.name FROM people p LEFT JOIN owner_names n ON n.owner = p.owner WHERE p.account = ? ORDER BY p.created_ms", account);
+  }
   /** Is `account` the wallet that was created for `email` (so only that inbox can sign as it)? */
   isOwnEmail(account: string, email: string): boolean {
     return !!this.get("SELECT 1 FROM people WHERE account = ? AND email = ? AND by_email = 1 LIMIT 1", account, email);

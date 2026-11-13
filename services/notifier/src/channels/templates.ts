@@ -1,7 +1,7 @@
 // Message bodies for each channel. Plain and calm: say what happened, what
 // the reader can do, and when. Never say or imply that the owner died.
 import { scopeOf } from "../db.js";
-import { KIND_INFO, name } from "../diff.js";
+import { KIND_INFO } from "../diff.js";
 import type { Outgoing } from "./types.js";
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -12,7 +12,7 @@ export function emailNotice(m: Outgoing): { subject: string; text: string; html:
   const n = m.notice;
   // An address the plan's owner supplied: say so, since the reader never asked for these.
   const why = scopeOf(m.contact)
-    ? `You get this because the owner of this plan (${name(n.owner)}) named you in it on Behest and gave this address. Unsubscribe below to stop every message about it.`
+    ? "You get this because the owner of this plan named you in it on Behest and gave this address. Unsubscribe below to stop every message about it."
     : `You get this because ${m.account} asked Behest to send "${KIND_INFO[n.kind]?.label ?? n.kind}" notices to this address.`;
   const text = [
     n.text,

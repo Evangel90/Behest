@@ -22,6 +22,7 @@
 //   GET    /v1/people                     bearer: the people this owner named with an email address
 //   POST   /v1/people                     bearer: name someone by email (creates their wallets) or attach an email to an account
 //   DELETE /v1/people/:account?role=…     bearer
+//   GET    /v1/named                      bearer: the plans that name this account through an email
 //   POST   /v1/email-wallets              public: make sure an email address has wallets before it signs in (returns nothing about them)
 //   GET    /v1/verify?token=…             page with a confirm button (mail scanners don't confirm by fetching)
 //   POST   /v1/verify                     confirm an email
@@ -307,6 +308,10 @@ export function createApi(d: ApiDeps): Server {
     if (m === "GET" && path === "/v1/people") {
       const owner = bearer(req);
       return json(req, res, 200, { name: store.ownerName(owner), people: store.people(owner).map(publicPerson) });
+    }
+    if (m === "GET" && path === "/v1/named") {
+      // For the person: which plans name this account by email, and who their owners are to them.
+      return json(req, res, 200, { plans: store.namedBy(bearer(req)) });
     }
     if (m === "PUT" && path === "/v1/people/name") {
       const owner = bearer(req);

@@ -146,7 +146,7 @@ describe("an address the owner supplied", () => {
     const contact = store.contactBy(ETH.toLowerCase(), "email", "amara@example.com")!;
     const notice = { ...noticeFor("kemi.testnet", "k"), recipients: [], created_ms: 0 };
     const m = emailNotice({ notice, account: contact.account, contact, deliveryId: "d", unsubscribeUrl: "http://n/u", settingsUrl: "http://app/notifications" });
-    expect(m.text).toContain("the owner of this plan (Kemi) named you in it on Behest and gave this address");
+    expect(m.text).toContain("the owner of this plan named you in it on Behest and gave this address");
     expect(m.text).not.toContain("asked Behest to send");
     store.activate(contact.id);
     expect(emailNotice({ notice, account: contact.account, contact: store.contact(contact.id)!, deliveryId: "d", unsubscribeUrl: "u", settingsUrl: "s" }).text).toContain("asked Behest to send");
@@ -258,6 +258,15 @@ describe("people API", () => {
     const list = await call("GET", "/v1/people", undefined, auth);
     expect(list.json.name).toBe("Kemi A.");
     expect(list.json.people.map((p: { account: string }) => p.account)).toEqual([ETH.toLowerCase(), "dayo.testnet"]);
+  });
+
+  it("shows the person which plans name them, and what their owners are called", async () => {
+    // amara.testnet stands in for the wallet created for an address
+    store.putPerson(person({ account: "amara.testnet", email: "amara3@example.com", role: "heir" }));
+    const mine = await call("GET", "/v1/named", undefined, await session(heirKey, "amara.testnet"));
+    expect(mine.json).toEqual({ plans: [{ owner: "kemi.testnet", role: "heir", name: "Kemi A." }] });
+    expect((await call("GET", "/v1/named")).status).toBe(401);
+    store.removePerson("kemi.testnet", "amara.testnet", "heir");
   });
 
   it("refuses bad input and reports a Privy outage without leaving a half-made person", async () => {
