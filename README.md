@@ -53,7 +53,8 @@ pnpm --filter @behest/web smoke         # live: Try-as sandbox → release → S
 Sign-in options:
 - **NEAR wallets** through NEAR Connect (HOT, Meteor, Intear, MyNearWallet, Ledger, WalletConnect). Wallets that can sign delegate actions get gas sponsored for heir, guardian and check-in calls.
 - **Ethereum wallets** (MetaMask and others) through NEAR Connect's Ethereum Wallets module, acting from the eth-implicit `0x…` NEAR account. These wallets can't sign delegate actions, so they pay their own gas.
-- **Email, Google or passkey** through NEAR Auth. Shown, but switched off until `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set, because NEAR has to issue that client ID.
+- **Email** (D34). A 6-digit code to the inbox signs in; the account is the Ethereum, NEAR and Bitcoin wallets Privy keeps for that address. To Behest it is an Ethereum wallet: every action is a signed readable message the relayer submits. On when `PRIVY_APP_ID` is set (and `PRIVY_APP_SECRET` for the notifier).
+- **Email, Google or passkey** through NEAR Auth. Shown only when email sign-in is off, and switched off until `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set, because NEAR has to issue that client ID.
 - **Try as…** (testnet only). `/api/demo` creates six funded accounts under `DEMO_FUNDER_ACCOUNT_ID` from public keys the browser generates. The private keys never leave the browser. Rate limits: 3 sandboxes per hour per IP and 30 per day.
 
 Heirs see the paper theme in plain language; hashes appear only under "Technical details". Anyone can open `/plan/<owner>?view=inspect`.
@@ -108,6 +109,16 @@ pnpm --filter @behest/testnet e2e-recovery   # live: queued, cancelled and appli
 ```sh
 pnpm --filter @behest/testnet e2e-private   # live: sealed heirs, refused reveals, reseal on check-in, unrevealed share redistributed
 ```
+
+### People named by email (D34)
+
+- **Naming.** In the setup wizard every guardian and heir is "an email address or a NEAR account". For an address, the notifier asks Privy for the wallets kept for it (creating them if new) and returns the account the plan will name; ETH, NEAR and BTC default to those wallets, and the owner can enter other destinations. Emails stay in the notifier's database, never on-chain. People named by account can be given an email for notices only.
+- **Telling them.** Guardians get one email when the plan on-chain first names them; heirs only if the owner chooses "now", otherwise they first hear when a release is approved. The owner sets the name those emails use. An address an owner supplied only hears about that owner's plan, and unsubscribing sticks.
+- **Claiming.** The person opens the link, signs in with the same address (a code to the inbox, no wallet) and is the account the plan names: a guardian proposes and approves, a heir receives. The app finds the plans that name them.
+- **Moving it on.** "Your account" shows what arrived (NEAR and NEAR tokens, ETH and ERC-20s, BTC) with a send form for each. Ethereum transactions are signed whole by the service; NEAR and Bitcoin transactions are built and checked in the browser and only their hash is signed.
+- **What it depends on.** The person's inbox and Privy. The contract still decides when and how much; neither Privy nor Behest can start a release or redirect a share. A heir with their own wallet depends on neither.
+
+Set `PRIVY_APP_ID` and `PRIVY_APP_SECRET` (dashboard.privy.io; email login on). The web app only ever sees the app id.
 
 ### Destination proofs and requests (D30, D31)
 
@@ -335,6 +346,7 @@ After a release, the vault keeps the unused network-fee reserve, the rounding re
 - [x] Destination updates while the owner is active: recipient requests, owner approval under the edit notice; owner account-recovery guidance in the app (D31, threats 57–59; live `e2e-destinations`)
 - [x] Guided presets (Careful, Balanced, Quick, or from scratch) that fill in timers, guardians, the edit notice and availability checks, all editable; a plain-language summary with consequences and warnings, before saving, on every plan view and during a release (D32)
 - [x] Commitment-based private heir details: sealed fingerprints, reveal once overdue, resealed on check-in, unrevealed shares redistributed or to the fallback; records in each heir's packet, optional encrypted Behest backup; public mode stays (D33, threats 60–65; live `e2e-private`)
+- [x] Heirs and guardians named by email: wallets created for the address before they ever sign in, emails to them from the owner's plan only, email sign-in, claim, and send-out of NEAR, ETH and BTC from the same screen (D34, threats 66–70; live run in the browser with real inboxes: named → told → guardian releases → heir receives → sends NEAR and ETH on)
 - [ ] Property/state-machine tests and fuzzing; upgrade and long-timer tests
 - [ ] A second independent executor
 - [ ] RPC failover, durable job queues, alerts, runbooks, status page
