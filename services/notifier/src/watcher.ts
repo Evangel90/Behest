@@ -54,8 +54,9 @@ export class Watcher {
   async owners(): Promise<{ all: string[]; keep: Set<string> }> {
     const open = await this.openReleases();
     // A DAO with council notices on has no contacts of its own; its plan is watched for the council.
-    // Owners who named someone by email are read until that person has been told (the plan may be saved a little later).
-    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner), ...this.store.councils(), ...this.store.ownersWithUnnamed()]);
+    // Owners who named someone by email are read from the start (the plan may be saved a little later) and for as
+    // long as that address can be written to: the people they named subscribed to nothing themselves.
+    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner), ...this.store.councils(), ...this.store.ownersWithUnnamed(), ...this.store.peopleOwners()]);
     return { all: [...new Set([...keep, ...this.store.knownOwners()])], keep };
   }
 

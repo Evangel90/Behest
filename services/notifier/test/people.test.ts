@@ -194,9 +194,20 @@ describe("telling people they were named", () => {
     expect(`${g.text} ${h.text}`).not.toMatch(/\b(died|death|deceased|dies)\b/i);
     expect(store.hasNotice(`kemi.testnet:named:${quiet}:heir`)).toBe(false);
 
-    // told once; the owner is no longer read just for this
+    // told once
     expect(store.ownersWithUnnamed()).toEqual([]);
     expect((await w.tick()).notices).toBe(0);
+
+    // ...and the plan stays watched for them: when the owner goes quiet, the guardian named by email hears it
+    expect(store.peopleOwners()).toEqual(["kemi.testnet"]);
+    plans.set("kemi.testnet", { ...planOf("kemi.testnet", ["dayo.testnet"], [heir, quiet]), status: "Overdue", now_ms: 200 * MIN });
+    expect(await w.tick()).toMatchObject({ owners: 1, notices: 1 });
+    const overdue = store.notice("kemi.testnet:overdue:0")!;
+    expect(overdue.subject).toBe("Kemi Adeyemi hasn't checked in");
+    expect(store.deliveries(overdue.key).map((d) => d.account)).toEqual(["dayo.testnet"]);
+    // once every address the owner supplied is switched off, nobody needs the plan read any more
+    for (const p of store.people("kemi.testnet")) store.disable(store.contactBy(p.account, "email", p.email)!.id, "unsubscribed");
+    expect(store.peopleOwners()).toEqual([]);
   });
 });
 

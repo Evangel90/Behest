@@ -357,6 +357,16 @@ export class Store {
   ownersWithUnnamed(): string[] {
     return this.all<{ owner: string }>("SELECT DISTINCT owner FROM people WHERE named_ms IS NULL").map((r) => r.owner);
   }
+  /**
+   * Owners who named someone by email whose address can still be written to.
+   * Their plans are read every round: those people have no other way to hear
+   * that the owner has gone quiet, which is the moment a guardian is needed.
+   */
+  peopleOwners(): string[] {
+    return this.all<{ owner: string }>(
+      "SELECT DISTINCT p.owner FROM people p JOIN contacts c ON c.account = p.account AND c.channel = 'email' AND c.address = p.email AND c.status = 'active'",
+    ).map((r) => r.owner);
+  }
   countPeople(owner: string): number {
     return Number(this.get<{ n: number }>("SELECT COUNT(*) AS n FROM people WHERE owner = ?", owner)?.n ?? 0);
   }
