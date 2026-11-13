@@ -2,7 +2,7 @@
 // Landing-page demo: an example plan in the dashboard frame. Tabs and the
 // check-in button work locally; nothing touches the chain.
 import { useRef, useState, type KeyboardEvent } from "react";
-import { Ban, BadgeCheck, Check, Coins, EyeOff, Gift, HeartPulse, History, Hourglass, LayoutGrid, ShieldCheck, Sparkles, Split, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Ban, BadgeCheck, Check, Coins, EyeOff, Gift, HeartPulse, History, Hourglass, LayoutGrid, Mail, ShieldCheck, Sparkles, Split, type LucideIcon } from "lucide-react";
 import { Mark } from "./chrome";
 import { motion, Swap } from "./motion";
 import { cx } from "./ui";
@@ -21,7 +21,7 @@ const ASSETS = [
   { k: "NEAR", c: "#171717", name: "NEAR", amt: "0.05 NEAR · 0.01 wNEAR in escrow", tag: "Gas sponsored" },
 ];
 const HEIRS = [
-  { i: "A", n: "Amara", d: "ETH · 0x71C7…976F", p: "60%", c: "#A9CCFF" },
+  { i: "A", n: "Amara", d: "amara@example.com", p: "60%", c: "#A9CCFF" },
   { i: "T", n: "Tobi", d: "BTC · tb1qdj8g…u7en", p: "40%", c: "#FDBA8C" },
 ];
 const GUARDIANS = ["Dayo", "Funmi", "Chidi"];
@@ -201,17 +201,18 @@ function DemoHead({ k, t }: { k: string; t: string }) {
   );
 }
 
-type Panel = "split" | "quorum" | "checkin" | "private" | "notice" | "proof" | "preset";
+type Panel = "split" | "quorum" | "checkin" | "private" | "notice" | "proof" | "preset" | "email";
 const FEATURES: { t: string; b: string; p: Panel; icon: LucideIcon }[] = [
   { t: "Start from a preset", b: "Careful, Balanced or Quick fill in sensible timers, guardians and safety settings, and explain every one. Change anything. Before you save, the whole plan is read back to you in plain words, with warnings for risky choices.", p: "preset", icon: Sparkles },
-  { t: "Split across your heirs", b: "Give each person a share and a fixed address on the chain they use: NEAR, Ethereum or Bitcoin, or their NEAR Intents account. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split", icon: Split },
+  { t: "Heirs claim with just an email", b: "Name a heir or a guardian by their email address. When the time comes they get a message, sign in with a code from their inbox and receive their share. No wallet, no seed phrase, nothing to install. They can send it on to an exchange or their own wallet from the same screen.", p: "email", icon: Mail },
+  { t: "Split across your heirs", b: "Give each person a share by email, or a fixed address on the chain they use: NEAR, Ethereum or Bitcoin, or their NEAR Intents account. Add fixed amounts, a remainder rule, alternates and a fallback.", p: "split", icon: Split },
   { t: "Keep your heirs private", b: "Choose private and the chain holds only a fingerprint of each heir. Who inherits, how much and where stay hidden until you stop checking in. Each heir then reveals their own recovery record, from their printed packet or, if you allow it, from Behest's encrypted copy.", p: "private", icon: EyeOff },
   { t: "Protected by guardians", b: "People you trust approve a release together. None of them can act alone or change where funds go. Availability checks catch a guardian who has gone quiet, and a standby can take their seat.", p: "quorum", icon: ShieldCheck },
   { t: "Check in with one tap", b: "Prove you're here every few months. Behest pays the gas, so a check-in costs you nothing. A delegate or your DAO can check in for you too.", p: "checkin", icon: HeartPulse },
   { t: "Big edits give notice", b: "Changes to heirs, addresses, shares or guardians can wait a notice period before they take effect, and everyone on the plan is told. If someone gets your key, you have time to cancel.", p: "notice", icon: Hourglass },
   { t: "Addresses heirs have proven", b: "Heirs prove they control each address with a signature, and can ask you for a new one while you're around. Only you approve it.", p: "proof", icon: BadgeCheck },
   { t: "Cancel until the last moment", b: "Even after a release is proposed and approved, one tap stops it until the waiting period ends. Delay signers can extend that wait.", p: "quorum", icon: Ban },
-  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their wallet. Or have transfers start automatically. Money added later goes out in a follow-up round.", p: "split", icon: Coins },
+  { t: "Heirs pay no gas", b: "Network fees are reserved from the plan, so heirs need nothing but their email or their wallet. Or have transfers start automatically. Money added later goes out in a follow-up round.", p: "split", icon: Coins },
 ];
 
 /** Feature accordion with the matching panel on the blue gradient. */
@@ -270,6 +271,55 @@ export function FeatureExplorer() {
               <div className="flex justify-between rounded-tile border border-white/5 bg-[#1F1F1F] p-5 text-sm">
                 <span className="text-[#A1A1A1]">Allocated</span>
                 <span>100%</span>
+              </div>
+            </>
+          )}
+          {panel === "email" && (
+            <>
+              <div className="flex flex-col gap-2 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                <span className="flex items-center justify-between text-xs text-[#A1A1A1]">
+                  <span className="flex items-center gap-2">
+                    <Mail aria-hidden className="size-3.5" />
+                    Behest · to amara@example.com
+                  </span>
+                  <span>now</span>
+                </span>
+                <span className="text-[20px] leading-tight tracking-[-0.015em]">Kemi&apos;s plan is ready for you</span>
+                <span className="text-sm leading-relaxed text-[#A1A1A1]">What Kemi set aside for you is ready. Sign in with this email address to receive it. You don&apos;t need a wallet.</span>
+              </div>
+              <div className="flex flex-col gap-3 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                <span className="text-sm text-[#A1A1A1]">Code from your inbox</span>
+                <div className="flex gap-1.5" aria-label="Sign-in code, for example 4 8 2 9 1 6">
+                  {"482916".split("").map((n, i) => (
+                    <span key={i} aria-hidden className="flex h-11 flex-1 items-center justify-center rounded-lg bg-white/[0.06] font-mono text-lg">
+                      {n}
+                    </span>
+                  ))}
+                </div>
+                <span className="flex items-center gap-1.5 text-sm text-[#7DD3A8]">
+                  <Check aria-hidden className="size-4" />
+                  Signed in as amara@example.com
+                </span>
+              </div>
+              <div className="flex flex-col gap-3 rounded-tile border border-white/5 bg-[#1F1F1F] p-5">
+                <span className="text-sm text-[#A1A1A1]">Received · your share of Kemi&apos;s plan</span>
+                {[
+                  ["BTC", "#FB7A1E", "0.00024 BTC"],
+                  ["ETH", "#6366F1", "0.012 ETH"],
+                  ["NEAR", "#3B82F6", "0.03 NEAR"],
+                ].map(([k, c, amt]) => (
+                  <div key={k} className="flex items-center justify-between">
+                    <span className="flex items-center gap-3">
+                      <span aria-hidden className="flex h-7 w-7 items-center justify-center rounded-full text-[9px] font-bold" style={{ background: c }}>
+                        {k}
+                      </span>
+                      <span className="text-[15px]">{amt}</span>
+                    </span>
+                    <span className="flex items-center gap-1 rounded-full bg-white/[0.08] px-2.5 py-1 text-xs">
+                      Send <ArrowUpRight aria-hidden className="size-3" />
+                    </span>
+                  </div>
+                ))}
               </div>
             </>
           )}

@@ -27,7 +27,7 @@ const TECH = [
   { t: "NEAR Protocol", c: "#2F6BFF", b: "The coordinator. Your plan's rules live and are enforced here: check-ins, guardians, waiting periods, and every amount on every chain." },
   { t: "Chain Signatures", c: "#FB7A1E", b: "Lets the plan control its own Ethereum and Bitcoin addresses. The contract builds each transaction, so the MPC network can only sign what your plan allows." },
   { t: "NEAR Intents", c: "#22C55E", b: "Heirs can receive into their Intents account and swap to almost any asset. On mainnet, plan fees can be paid with almost any asset too." },
-  { t: "Any wallet, no gas", c: "#3B82F6", b: "Sign in with a NEAR wallet, MetaMask or another Ethereum wallet. Behest pays NEAR gas and plan storage; executors that broadcast signed transfers are replaceable." },
+  { t: "Email or any wallet, no gas", c: "#3B82F6", b: "Sign in with an email address, a NEAR wallet, MetaMask or another Ethereum wallet. Behest pays NEAR gas and plan storage; executors that broadcast signed transfers are replaceable." },
 ];
 
 const STATS = [
@@ -82,7 +82,14 @@ const FAQ = [
     q: "How do I know my heirs' addresses are right?",
     a: "Heirs prove they control each address: a NEAR account by signing in, an Ethereum address with a signature, a Bitcoin address with a signed message. Your plan shows which are proven. While you're around, a heir can ask you to change an address; only you can approve it.",
   },
-  { q: "Do heirs need crypto experience?", a: "They need the wallet address you recorded. Heir pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas. In automatic mode they don't even need to claim." },
+  {
+    q: "Do heirs need crypto experience?",
+    a: "No. Name a heir by their email address and that is all they need: when a release reaches them they get an email, sign in with a code from their inbox, and receive their share into an account kept for that address. From the same screen they can send it to an exchange or a wallet. Heirs who already have a wallet can be named by its address instead. Either way the pages are in plain language, network fees come from the plan, and Behest pays their NEAR gas.",
+  },
+  {
+    q: "What does a heir who claims by email depend on?",
+    a: "Their inbox, and Privy, the wallet service that keeps the account for their email address. Whoever can read that inbox can claim and move the share, so it is as safe as their email. The contract still decides when and how much: neither Privy nor Behest can release a plan early or redirect a share. A heir with their own wallet depends on neither, and a heir who claimed by email can move what they received to their own wallet straight away.",
+  },
   { q: "What if Behest disappears?", a: "Rules live on-chain and executors are replaceable: every signed transfer is public and anyone can broadcast it. Each heir's printed recovery packet explains how to claim with any NEAR tool, without Behest's website." },
   { q: "Can a DAO or a company use it?", a: "Yes. A Sputnik DAO can own a plan, be a guardian or be a heir; its members vote on each action. Owners can also name check-in delegates." },
   { q: "How will I know when something happens?", a: "Turn on notifications by email, Telegram or webhook. Owners get check-in reminders; guardians and heirs hear when a release is proposed, approved or ready, when a private heir is revealed, and when the plan changes." },
