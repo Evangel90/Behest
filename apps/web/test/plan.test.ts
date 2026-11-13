@@ -29,7 +29,7 @@ describe("plain language", () => {
     expect(describePlan(policy)).toBe(
       "If you don't check in for 90 days plus 7 days of grace, any 2 of 3 guardians may propose a release. " +
         "A waiting period of 30 days follows, during which you can cancel. " +
-        "Then Amara and Tobi receive their shares at the fixed addresses below. Nobody can change where funds go.",
+        "Then Amara and Tobi receive their shares at the addresses fixed in the plan. Nobody can change where funds go.",
     );
   });
 

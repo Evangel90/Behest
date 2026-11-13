@@ -67,7 +67,7 @@ export function describePlan(p: PlanInput, ownerLabel = "you"): string {
   return [
     `If ${you ? "you don't" : `${ownerLabel} doesn't`} check in for ${duration(p.check_in_interval_ms)}${grace}, ${p.guardians.length ? `any ${p.quorum} of ${p.guardians.length} guardians` : "your guardians"} may propose a release.`,
     `A waiting period of ${duration(p.waiting_period_ms)} follows, during which ${you ? "you" : ownerLabel} can cancel.`,
-    `Then ${heirs} receive${p.heirs.filter((h) => h.account_id).length === 1 ? "s" : ""} their shares at the fixed addresses below. Nobody can change where funds go.`,
+    `Then ${heirs} receive${p.heirs.filter((h) => h.account_id).length === 1 ? "s" : ""} their shares at the addresses fixed in the plan. Nobody can change where funds go.`,
   ].join(" ");
 }
 
