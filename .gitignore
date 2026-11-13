@@ -20,3 +20,6 @@ dist/
 
 # The demo-video project (kept locally, not part of the repo)
 video/
+
+# Claude Code local working files
+.claude/
