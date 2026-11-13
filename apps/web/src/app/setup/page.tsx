@@ -979,13 +979,14 @@ function GuardianStep({ d, set, errors, demo, editing }: { d: Draft; set: SetFn;
       </Card>
       {!editing && (
         <Card className="flex flex-col gap-3">
-          <SectionTitle title="Availability checks" sub="Guardians confirm now and then that they're still around (any vote counts). You and your heirs are told when one goes quiet. Add standby guardians later on your plan page." />
+          <SectionTitle title="Availability checks" sub="A regular check that your guardians are still reachable. Each guardian confirms once within the period you choose, and any vote they cast counts as confirming. If one goes quiet, you and your heirs are told, so there is time to replace them before they are needed. You can add standby guardians later on your plan page." />
           <Segmented
             label="Availability checks"
             value={String(d.availability)}
             onChange={(v) => set("availability", Number(v))}
             options={availabilityChoices(demo, d.availability).map((ms) => ({ value: String(ms), label: ms ? duration(ms) : "Off" }))}
           />
+          <p className="text-sm text-muted">{d.availability ? `Each guardian confirms at least once every ${duration(d.availability)}.` : "Nobody checks that your guardians are still reachable."}</p>
         </Card>
       )}
     </>
