@@ -33,7 +33,7 @@ export default function OpenGraphImage() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
             <span style={{ fontSize: 76, fontWeight: 500, lineHeight: 1.04, maxWidth: 900 }}>Everything you own, passed on exactly as you wish.</span>
-            <span style={{ fontSize: 30, opacity: 0.8 }}>A trustless inheritance protocol for Bitcoin, Ethereum and NEAR.</span>
+            <span style={{ fontSize: 30, opacity: 0.8 }}>Bitcoin, Ethereum and NEAR in one plan. Enforced by a contract, not a company.</span>
           </div>
         </div>
       </div>

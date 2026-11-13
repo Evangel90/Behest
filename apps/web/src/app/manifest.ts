@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Behest",
     short_name: "Behest",
-    description: "A trustless inheritance protocol for Bitcoin, Ethereum and NEAR.",
+    description: "Inheritance for Bitcoin, Ethereum and NEAR, enforced by a public contract. No custodian.",
     start_url: "/app",
     display: "standalone",
     background_color: "#0A0A0A",

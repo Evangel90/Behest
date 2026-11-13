@@ -59,10 +59,10 @@ const LIMITS = [
 ];
 
 const FAQ = [
-  { q: "What is Behest?", a: "A trustless inheritance protocol for crypto. You set heirs, guardians and timing; a public contract on NEAR holds the funds and carries the plan out across NEAR, Ethereum and Bitcoin. No company or custodian sits in the middle." },
+  { q: "What is Behest?", a: "An inheritance protocol for crypto. You set heirs, guardians and timing; a public contract on NEAR holds the funds and carries the plan out across NEAR, Ethereum and Bitcoin. No company or custodian sits in the middle." },
   {
-    q: "What does trustless mean here?",
-    a: "You don't rely on anyone keeping a promise. The contract holds the funds, enforces the timers and can only pay the addresses you set. Guardians decide when a release may start, never where funds go. Behest pays gas and can't move anything. One caveat today: on testnet Behest can still upgrade the contract's code; mainnet plans put upgrades behind a time lock and several keys.",
+    q: "Do I have to trust Behest?",
+    a: "No. Nothing depends on anyone keeping a promise. The contract holds the funds, enforces the timers and can only pay the addresses you set. Guardians decide when a release may start, never where funds go. Behest pays gas and can't move anything. One caveat today: on testnet Behest can still upgrade the contract's code; mainnet plans put upgrades behind a time lock and several keys.",
   },
   { q: "What if I forget to check in?", a: "Nothing can start until you're overdue and the grace period has passed. Even after guardians propose, you can cancel or check in until the waiting period ends." },
   { q: "Could guardians team up and take the funds?", a: "No. They can only approve releasing the plan exactly as written, to your heirs' fixed addresses." },
@@ -105,7 +105,6 @@ export default function Landing() {
           <BehestWatermark className="absolute right-[-12%] top-[-6%] -z-0 w-[min(760px,95vw)] sm:right-[-4%] lg:right-[2%]" />
           <div className={`${frame} relative`}>
             <div className="flex animate-fade-up flex-col items-start gap-6 px-4 pb-16 pt-[clamp(64px,8vw,96px)] sm:px-8">
-              <p className="inline-flex h-7 items-center rounded-tag bg-subtle px-2.5 text-sm font-semibold text-muted">The trustless inheritance protocol</p>
               <h1 className="max-w-[900px] text-[clamp(36px,5vw,60px)] font-medium leading-none tracking-[-0.025em]">
                 Everything you own,
                 <br />
@@ -143,7 +142,7 @@ export default function Landing() {
         <section id="safety" className="bg-frame text-white">
           <div className={`${frameDark} ${air}`}>
             <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
-              <h2 className={h2}>Trustless: nobody can redirect a single coin.</h2>
+              <h2 className={h2}>Nobody can redirect a single coin.</h2>
               <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>
                 You don&apos;t have to trust your guardians, the people who send transactions, or us. The contract enforces your plan, and the destinations you set are the only ones it will ever sign for.
               </p>
@@ -329,7 +328,7 @@ export default function Landing() {
                 <Mark light />
                 <span className="text-[21px] font-semibold tracking-[-0.03em]">behest</span>
               </span>
-              <p className="max-w-[400px] text-base leading-6 text-[#A1A1A1]">A trustless, non-custodial inheritance protocol for Bitcoin, Ethereum and NEAR. Not a will or legal advice. Testnet software.</p>
+              <p className="max-w-[400px] text-base leading-6 text-[#A1A1A1]">Inheritance for Bitcoin, Ethereum and NEAR, enforced by a public contract with no custodian. Not a will or legal advice. Testnet software.</p>
             </div>
             <div className="grid grid-cols-2 gap-8">
               {[
