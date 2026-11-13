@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   // Absolute URLs for the link-preview image; set NEXT_PUBLIC_SITE_URL in production.
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001"),
   title: "Behest — inheritance enforced by a contract, not a company",
-  description: "Decide who receives your Bitcoin, Ethereum and NEAR; a public contract, not a company, holds the funds and can only pay the addresses you chose.",
+  description: "Decide who receives your Bitcoin, Ethereum and NEAR. One public contract on NEAR coordinates the inheritance across all three chains and can only pay the addresses you chose.",
 };
 
 export const viewport: Viewport = {

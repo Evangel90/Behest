@@ -24,7 +24,7 @@ const SAFETY = [
 ];
 
 const TECH = [
-  { t: "NEAR Protocol", c: "#2F6BFF", b: "Where your plan's rules live and are enforced: check-ins, guardians, waiting periods, every amount." },
+  { t: "NEAR Protocol", c: "#2F6BFF", b: "The coordinator. Your plan's rules live and are enforced here: check-ins, guardians, waiting periods, and every amount on every chain." },
   { t: "Chain Signatures", c: "#FB7A1E", b: "Lets the plan control its own Ethereum and Bitcoin addresses. The contract builds each transaction, so the MPC network can only sign what your plan allows." },
   { t: "NEAR Intents", c: "#22C55E", b: "Heirs can receive into their Intents account and swap to almost any asset. On mainnet, plan fees can be paid with almost any asset too." },
   { t: "Any wallet, no gas", c: "#3B82F6", b: "Sign in with a NEAR wallet, MetaMask or another Ethereum wallet. Behest pays NEAR gas and plan storage; executors that broadcast signed transfers are replaceable." },
@@ -59,7 +59,7 @@ const LIMITS = [
 ];
 
 const FAQ = [
-  { q: "What is Behest?", a: "An inheritance protocol for crypto. You set heirs, guardians and timing; a public contract on NEAR holds the funds and carries the plan out across NEAR, Ethereum and Bitcoin. No company or custodian sits in the middle." },
+  { q: "What is Behest?", a: "An inheritance protocol for crypto. You set heirs, guardians and timing; a public contract on NEAR coordinates the inheritance across NEAR, Ethereum and Bitcoin, signing for each chain itself. No company or custodian sits in the middle." },
   {
     q: "Do I have to trust Behest?",
     a: "No. Nothing depends on anyone keeping a promise. The contract holds the funds, enforces the timers and can only pay the addresses you set. Guardians decide when a release may start, never where funds go. Behest pays gas and can't move anything. One caveat today: on testnet Behest can still upgrade the contract's code; mainnet plans put upgrades behind a time lock and several keys.",
@@ -111,7 +111,7 @@ export default function Landing() {
                 passed on exactly as you wish.
               </h1>
               <p className={`max-w-[640px] text-muted ${lede}`}>
-                Bitcoin, Ethereum and NEAR in one plan, held and carried out by a public contract instead of a company. Choose who receives what, check in now and then, and stay in control until the very last moment.
+                Bitcoin, Ethereum and NEAR in one plan. A single contract on NEAR coordinates the inheritance across all three chains, with no company in the middle. Choose who receives what, check in now and then, and stay in control until the very last moment.
               </p>
               <HeroActions />
             </div>
@@ -167,8 +167,8 @@ export default function Landing() {
         <section className="border-t border-white/[0.11] bg-frame text-white">
           <div className={`${frameDark} ${air}`}>
             <Reveal className="flex flex-col gap-4 px-4 pb-16 sm:px-8">
-              <h2 className={h2}>Built on open infrastructure.</h2>
-              <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>Behest runs on NEAR technology that controls assets across chains without bridges or custodians.</p>
+              <h2 className={h2}>One contract on NEAR, coordinating every chain.</h2>
+              <p className={`max-w-[768px] text-[#A1A1A1] ${lede}`}>Your Bitcoin stays on Bitcoin and your ETH stays on Ethereum. The plan lives on NEAR and signs for each chain directly, with no bridges, wrapped tokens or custodians.</p>
             </Reveal>
             <div className="grid gap-px bg-white/[0.11] py-px sm:grid-cols-2 lg:grid-cols-4">
               {TECH.map((t, i) => (
@@ -328,7 +328,7 @@ export default function Landing() {
                 <Mark light />
                 <span className="text-[21px] font-semibold tracking-[-0.03em]">behest</span>
               </span>
-              <p className="max-w-[400px] text-base leading-6 text-[#A1A1A1]">Inheritance for Bitcoin, Ethereum and NEAR, enforced by a public contract with no custodian. Not a will or legal advice. Testnet software.</p>
+              <p className="max-w-[400px] text-base leading-6 text-[#A1A1A1]">Inheritance for Bitcoin, Ethereum and NEAR, coordinated by one public contract on NEAR. No custodian. Not a will or legal advice. Testnet software.</p>
             </div>
             <div className="grid grid-cols-2 gap-8">
               {[
