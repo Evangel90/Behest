@@ -5,6 +5,9 @@
 //  - "evm": an Ethereum wallet (MetaMask, Rabby, Coinbase Wallet, WalletConnect)
 //    connected in the app. The user acts as the NEAR account named by their
 //    address (0x…); every action is a signed message the relayer submits (D23).
+//    Signing in with an email address is the same thing: the wallet is the one
+//    kept for that address (see evm/email), which is how a heir named by email
+//    claims with no wallet of their own.
 //  - "dao": a council member (signed in with a NEAR wallet or a persona) acts
 //    as a SputnikDAO. Every call becomes an add_proposal on the DAO with the
 //    bond attached; it runs as the DAO once the council approves (D26).
@@ -53,6 +56,8 @@ export interface Session {
   canSponsorStorage: boolean;
   /** Ethereum wallets: EIP-191 personal_sign of UTF-8 text. */
   personalSign?(message: string): Promise<string>;
+  /** Signed in with an email address: the address, and the NEAR and Bitcoin wallets that come with it. */
+  email?: import("./evm/email").EmailWallet;
   call(method: string, args: Record<string, unknown>, opts?: CallOptions): Promise<CallResult>;
   /** D26: the DAO this session acts for, and the member who signs its proposals. */
   dao?: { id: string; member: Session; policy: DaoPolicy };
@@ -66,6 +71,10 @@ interface Ctx {
   connectWallet(): Promise<void>;
   /** Connects an Ethereum wallet by id (EIP-6963 rdns or "walletconnect"). WalletConnect reports its pairing link through onUri. */
   connectEvm(walletId: string, opts?: { onUri?: (uri: string) => void }): Promise<void>;
+  /** Email sign-in, step 1: send a code to the address. */
+  emailCode(email: string): Promise<void>;
+  /** Email sign-in, step 2: the code from the inbox signs in. */
+  connectEmail(email: string, code: string): Promise<void>;
   actAsPersona(p: Persona): void;
   /** The Ethereum wallet set aside by switching to a test persona, if any. */
   lastEvm: { wallet: string; name: string; address: string } | null;
@@ -420,6 +429,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (session?.kind === "wallet") await (await getConnector()).disconnect().catch(() => {});
         await adoptEvm(c);
       },
+      async emailCode(email) {
+        await (await import("./evm/email")).sendCode(email);
+      },
+      async connectEmail(email, code) {
+        const c = await (await import("./evm/email")).loginWithCode(email, code);
+        forget(PERSONA_KEY);
+        if (session?.kind === "wallet") await (await getConnector()).disconnect().catch(() => {});
+        await adoptEvm(c);
+      },
       actAsPersona(p) {
         try {
           localStorage.setItem(PERSONA_KEY, p.accountId);
@@ -437,7 +455,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       lastEvm,
       async backToEvm() {
         if (!lastEvm) return;
-        const c = (await (await evm()).restore({ wallet: lastEvm.wallet, address: lastEvm.address }).catch(() => null)) ?? (await (await evm()).connect(lastEvm.wallet));
+        const back = await (await evm()).restore({ wallet: lastEvm.wallet, address: lastEvm.address }).catch(() => null);
+        if (!back && lastEvm.wallet === "email") throw new Error("Your email sign-in has ended. Sign in with your email again.");
+        const c = back ?? (await (await evm()).connect(lastEvm.wallet));
         forget(PERSONA_KEY);
         forget(LAST_EVM_KEY);
         setLastEvm(null);

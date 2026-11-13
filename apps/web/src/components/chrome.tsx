@@ -138,7 +138,7 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
       </>
     );
   }
-  const name = session.kind === "persona" ? session.label : session.accountId;
+  const name = session.kind === "persona" ? session.label : (session.email?.email ?? session.accountId);
   return (
     <>
       <button
@@ -152,7 +152,7 @@ export function AccountButton({ dark, full, compact }: { dark?: boolean; full?: 
         title={session.accountId}
       >
         <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#A9CCFF] text-sm font-semibold text-[#0A0A0A]">
-          {initials(session.kind === "persona" ? session.label : shortName(session.accountId))}
+          {initials(session.kind === "persona" ? session.label : (session.email?.email ?? shortName(session.accountId)))}
         </span>
         {!compact && (
           <span className="flex min-w-0 flex-1 flex-col leading-tight">

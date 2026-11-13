@@ -1,16 +1,18 @@
 "use client";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, FlaskConical, Hexagon, Landmark, Mail, Puzzle, Smartphone, Wallet, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { humanError } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
-import { CopyButton, Dialog } from "./interactive";
+import { CopyButton, Dialog, Field } from "./interactive";
 import { QrCode } from "./QrCode";
-import { Notice, TestnetTag, cx } from "./ui";
+import { Button, Notice, TestnetTag, cx, inputClass } from "./ui";
 import { BehestLoader } from "./BehestLoader";
 
 const NEAR_AUTH_ENABLED = Boolean(process.env.NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID);
 const WC_ENABLED = Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
+const EMAIL_ENABLED = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface FoundWallet {
   id: string;
@@ -18,13 +20,17 @@ interface FoundWallet {
   icon?: string;
 }
 
-type View = "main" | "evm" | "qr";
+type View = "main" | "evm" | "qr" | "email" | "code";
 /** Set when someone chose "A DAO or multisig": the account menu opens the DAO picker once signed in. */
 export const PICK_DAO = "behest.pick-dao";
 
-export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { connectWallet, connectEvm } = useSession();
+export function SignInDialog({ open, onClose, email: startEmail }: { open: boolean; onClose: () => void; /** Open straight on the email step (someone following a link from their inbox). */ email?: boolean | string }) {
+  const { connectWallet, connectEvm, emailCode, connectEmail } = useSession();
   const [view, setView] = useState<View>("main");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [sentAt, setSentAt] = useState(0);
+  const [, tick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [wallets, setWallets] = useState<FoundWallet[] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -34,10 +40,57 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
   // Start on the first screen each time, unless a wallet request is still open.
   useEffect(() => {
     if (open && !pending) {
-      setView("main");
+      setView(startEmail && EMAIL_ENABLED ? "email" : "main");
+      if (typeof startEmail === "string" && startEmail) setEmail(startEmail);
+      setCode("");
       setError(null);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Send a new code" unlocks after half a minute.
+  const resendIn = Math.max(0, 30 - Math.floor((Date.now() - sentAt) / 1000));
+  useEffect(() => {
+    if (view !== "code" || resendIn === 0) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [view, resendIn]);
+
+  async function sendEmailCode(e?: FormEvent) {
+    e?.preventDefault();
+    if (pending) return;
+    const address = email.trim();
+    if (!EMAIL_RE.test(address)) return setError("Enter the email address you were written to at, like name@example.com.");
+    setError(null);
+    setPending("email");
+    try {
+      await emailCode(address);
+      setEmail(address);
+      setCode("");
+      setSentAt(Date.now());
+      setView("code");
+    } catch (err) {
+      setError(humanError(err));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function submitCode(e?: FormEvent, value = code) {
+    e?.preventDefault();
+    if (pending) return;
+    if (!/^\d{6}$/.test(value.trim())) return setError("Enter the 6 digits from the email.");
+    setError(null);
+    setPending("code");
+    try {
+      await connectEmail(email, value);
+      setView("main");
+      onClose();
+    } catch (err) {
+      setError(humanError(err));
+    } finally {
+      setPending(null);
+    }
+  }
 
   // Find browser-extension wallets (EIP-6963) once the Ethereum list is shown.
   useEffect(() => {
@@ -103,6 +156,74 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
     if (view === "qr") void cancelQr();
     onClose();
   };
+
+  if (view === "email" || view === "code") {
+    const back = (
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          setView(view === "code" ? "email" : "main");
+        }}
+        className="-mt-1 inline-flex min-h-9 items-center gap-1.5 self-start rounded-full pr-3 text-sm text-muted transition-colors hover:text-ink"
+      >
+        <ArrowLeft aria-hidden className="size-4" />
+        {view === "code" ? "Use a different address" : "All sign-in options"}
+      </button>
+    );
+    if (view === "email")
+      return (
+        <Dialog open={open} onClose={close} title="Sign in with email" description="No wallet or app needed. We email you a 6-digit code; entering it signs you in.">
+          {back}
+          <form onSubmit={sendEmailCode} className="flex flex-col gap-4" noValidate>
+            <Field label="Email address" hint="If someone named you in their plan, use the address their message came to.">
+              {(p) => <input {...p} type="email" inputMode="email" autoComplete="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" className={inputClass} />}
+            </Field>
+            {error && <Notice tone="error">{error}</Notice>}
+            <Button type="submit" loading={pending === "email"} iconRight={ArrowRight}>
+              Email me a code
+            </Button>
+          </form>
+          <p className="text-xs leading-relaxed text-muted">
+            Your account is kept by Privy, a wallet service, and opened by this inbox: whoever can read this address&apos;s email can act as you. Behest never sees a key. Already use a wallet? Sign in with that instead and depend on neither.
+          </p>
+        </Dialog>
+      );
+    return (
+      <Dialog open={open} onClose={close} title="Enter your code" description={<>We sent 6 digits to <b className="font-semibold text-ink">{email}</b>. It can take a minute; check spam too.</>}>
+        {back}
+        <form onSubmit={submitCode} className="flex flex-col gap-4" noValidate>
+          <Field label="6-digit code">
+            {(p) => (
+              <input
+                {...p}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                maxLength={6}
+                value={code}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/\D/g, "").slice(0, 6);
+                  setCode(v);
+                  // Six digits is the whole code: no need to press the button.
+                  if (v.length === 6) void submitCode(undefined, v);
+                }}
+                placeholder="000000"
+                className={cx(inputClass, "font-mono text-xl tracking-[0.4em]")}
+              />
+            )}
+          </Field>
+          {error && <Notice tone="error">{error}</Notice>}
+          <Button type="submit" loading={pending === "code"}>
+            Sign in
+          </Button>
+        </form>
+        <button type="button" disabled={resendIn > 0 || !!pending} onClick={() => void sendEmailCode()} className="inline-flex min-h-9 items-center self-start text-sm text-muted underline-offset-4 transition-colors enabled:hover:text-ink enabled:hover:underline disabled:cursor-not-allowed">
+          {pending === "email" ? "Sending…" : resendIn > 0 ? `Send a new code in ${resendIn}s` : "Send a new code"}
+        </button>
+      </Dialog>
+    );
+  }
 
   if (view === "evm" || view === "qr") {
     const qr = view === "qr";
@@ -172,6 +293,18 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Dialog open={open} onClose={close} title="Sign in" description="Behest never holds your keys. Pick whatever you already use.">
       <div className="flex flex-col gap-2">
+        {EMAIL_ENABLED && (
+          <Option
+            icon={Mail}
+            onClick={() => {
+              setError(null);
+              setView("email");
+            }}
+            title="Email"
+            body="Get a code in your inbox. The way in if someone named you in their plan and you've never used a wallet."
+            tag="No wallet"
+          />
+        )}
         <Option icon={Wallet} onClick={() => void nearWallet()} title="NEAR wallet" body="HOT, Meteor, Intear, MyNearWallet, Ledger and more." tag="Gas sponsored" />
         <Option
           icon={Hexagon}
@@ -190,13 +323,15 @@ export function SignInDialog({ open, onClose }: { open: boolean; onClose: () => 
           body="Sign in as a council member with a NEAR wallet, then pick the SputnikDAO (Trezu) you act for. Each action becomes a proposal."
           tag="Proposals"
         />
-        <Option
-          icon={Mail}
-          disabled={!NEAR_AUTH_ENABLED}
-          title="Email, Google or passkey"
-          body={NEAR_AUTH_ENABLED ? "No wallet needed." : "Through NEAR Auth. Not switched on yet: it needs a client ID issued by NEAR."}
-          tag={NEAR_AUTH_ENABLED ? "No wallet" : "Soon"}
-        />
+        {(NEAR_AUTH_ENABLED || !EMAIL_ENABLED) && (
+          <Option
+            icon={Mail}
+            disabled={!NEAR_AUTH_ENABLED}
+            title="Email, Google or passkey"
+            body={NEAR_AUTH_ENABLED ? "No wallet needed." : "Through NEAR Auth. Not switched on yet: it needs a client ID issued by NEAR."}
+            tag={NEAR_AUTH_ENABLED ? "No wallet" : "Soon"}
+          />
+        )}
       </div>
       <Link href="/try" onClick={onClose} className="group flex items-start gap-3 rounded-row border border-dashed border-line-strong p-4 transition-colors hover:border-signal hover:bg-card">
         <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-tile bg-s-approved text-[var(--s-approved-fg)]">

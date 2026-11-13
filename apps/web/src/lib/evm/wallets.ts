@@ -19,7 +19,7 @@ export interface WalletInfo {
   name: string;
   /** data: URI from the wallet's announcement. */
   icon?: string;
-  kind: "injected" | "walletconnect";
+  kind: "injected" | "walletconnect" | "email";
 }
 
 export const WALLETCONNECT: WalletInfo = { id: "walletconnect", name: "WalletConnect", kind: "walletconnect" };
@@ -100,6 +100,8 @@ export interface EvmConnection {
   onAccountChange(fn: (address: Hex | null) => void): () => void;
   /** Ends the wallet's link to this site where the wallet supports it. */
   disconnect(): Promise<void>;
+  /** Signed in with an email address: the NEAR and Bitcoin wallets that come with it (see ./email). */
+  email?: import("./email").EmailWallet;
 }
 
 export class WalletError extends Error {
@@ -299,6 +301,7 @@ export function cancelConnect() {
  */
 export async function restore(saved: { wallet: string; address: string }): Promise<EvmConnection | null> {
   const address = lower(saved.address);
+  if (saved.wallet === "email") return (await import("./email")).restore(address);
   if (saved.wallet === WALLETCONNECT.id) {
     const up = await walletConnect().catch(() => null);
     return up && wcAddress(up) === address ? wcConnection(up, address) : null;

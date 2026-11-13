@@ -19,6 +19,8 @@ const config: NextConfig = {
     NEXT_PUBLIC_SEPOLIA_RPC_URL: process.env.PUBLIC_SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
     // Public by design (WalletConnect project ids ship in every dapp); empty hides the phone-wallet option.
     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: process.env.WALLETCONNECT_PROJECT_ID ?? "",
+    // Public by design (Privy app ids ship in every app that uses it); empty hides email sign-in. The app secret stays with the notifier.
+    NEXT_PUBLIC_PRIVY_APP_ID: process.env.PRIVY_APP_ID ?? "",
   },
 };
 export default config;

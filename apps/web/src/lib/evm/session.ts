@@ -81,6 +81,7 @@ export function evmSession(conn: EvmConnection): Session {
     kind: "evm",
     label: actor,
     via: conn.wallet.name,
+    email: conn.email,
     canSponsorStorage: true,
     personalSign: (message) => conn.sign(message),
     call(method: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<CallResult> {
