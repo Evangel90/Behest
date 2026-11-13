@@ -3,6 +3,7 @@
 // sheets, disclosures, segmented controls and live countdowns.
 import { Check, ChevronDown, CircleHelp, Copy, ExternalLink, X, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { GLOSSARY, type GlossaryKey } from "@/lib/glossary";
 import { countdown } from "@/lib/guide";
 import { shortAddr } from "@/lib/plan";
@@ -193,8 +194,15 @@ function usePopover() {
   return { open, setOpen, anchor, pos };
 }
 
-function Bubble({ id, pos, children }: { id: string; pos: { left: number; top: number; above: boolean }; children: ReactNode }) {
-  return (
+/**
+ * Rendered into the page body (or the open dialog, which sits in the top
+ * layer), never next to the anchor: an ancestor with a transform, filter or
+ * will-change would otherwise become the box that `fixed` is measured from,
+ * and the bubble would land far from the icon.
+ */
+function Bubble({ id, pos, anchor, children }: { id: string; pos: { left: number; top: number; above: boolean }; anchor: HTMLElement | null; children: ReactNode }) {
+  const host = anchor?.closest("dialog[open]") ?? document.body;
+  return createPortal(
     <span
       role="tooltip"
       id={id}
@@ -202,7 +210,8 @@ function Bubble({ id, pos, children }: { id: string; pos: { left: number; top: n
       style={{ left: pos.left, top: pos.top, transform: pos.above ? "translateY(-100%)" : undefined }}
     >
       {children}
-    </span>
+    </span>,
+    host,
   );
 }
 
@@ -226,7 +235,7 @@ export function Term({ k, children }: { k: GlossaryKey; children: ReactNode }) {
         {children}
       </button>
       {open && pos && (
-        <Bubble id={id} pos={pos}>
+        <Bubble id={id} pos={pos} anchor={anchor.current}>
           {GLOSSARY[k]}
         </Bubble>
       )}
@@ -258,7 +267,7 @@ export function Tip({ k, text, label = "What does this mean?", dark }: { k?: Glo
         <CircleHelp aria-hidden className="size-4" />
       </button>
       {open && pos && (
-        <Bubble id={id} pos={pos}>
+        <Bubble id={id} pos={pos} anchor={anchor.current}>
           {text ?? (k ? GLOSSARY[k] : null)}
         </Bubble>
       )}
