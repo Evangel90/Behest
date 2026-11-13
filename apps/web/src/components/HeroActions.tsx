@@ -32,7 +32,7 @@ export function HeroActions() {
             Try it as a guardian or heir
           </ButtonLink>
         </div>
-        <span className="text-base text-muted">No custody. No middlemen. Ready in minutes on testnet.</span>
+        <span className="text-base text-muted">No custody. No middlemen. Only the plan you wrote.</span>
       </>
     );
 
