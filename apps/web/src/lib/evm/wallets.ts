@@ -171,7 +171,7 @@ function walletConnect(): Promise<UniversalProvider> {
     const p = import("@walletconnect/universal-provider").then(({ default: UP }) =>
       UP.init({
         projectId: WC_PROJECT_ID,
-        metadata: { name: "Behest", description: "Inheritance plans on NEAR", url: window.location.origin, icons: [`${window.location.origin}/icon.svg`] },
+        metadata: { name: "Behest", description: "Trustless inheritance protocol", url: window.location.origin, icons: [`${window.location.origin}/icon.svg`] },
       }),
     );
     p.catch(() => {

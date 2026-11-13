@@ -10,8 +10,8 @@ const mono = Geist_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: 
 export const metadata: Metadata = {
   // Absolute URLs for the link-preview image; set NEXT_PUBLIC_SITE_URL in production.
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001"),
-  title: "Behest — inheritance on NEAR",
-  description: "Decide who receives your NEAR, Ethereum and Bitcoin, publicly or privately. If you stop checking in, guardians can start a release that only pays the addresses you chose.",
+  title: "Behest — trustless inheritance for Bitcoin, Ethereum and NEAR",
+  description: "A trustless inheritance protocol. Decide who receives your Bitcoin, Ethereum and NEAR; a public contract, not a company, holds the funds and can only pay the addresses you chose.",
 };
 
 export const viewport: Viewport = {
