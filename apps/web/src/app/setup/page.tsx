@@ -62,6 +62,7 @@ const STEP_META: Record<WizardStep, { label: string; icon: LucideIcon; title: st
   review: { label: "Review", icon: ScrollText, title: "Read it once more.", lede: "This is exactly what you're signing. Nothing is sent until you confirm in your wallet." },
 };
 
+const EMAIL_ENABLED = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
 const DRAFT_KEY = "behest.setup-draft";
 interface Draft {
   checkIn: TimerDraft;
@@ -146,9 +147,13 @@ function Setup() {
   /** D33: records made on save, to download before leaving. */
   const [madeRecords, setMadeRecords] = useState<HeirRecord[] | null>(null);
   const [backupNote, setBackupNote] = useState<string | null>(null);
-  /** People can be named by email here (the notifier can create their accounts). */
-  const [emailOn, setEmailOn] = useState(false);
-  useEffect(() => void getInfo().then((i) => setEmailOn(!!i.email_wallets)).catch(() => {}), []);
+  /**
+   * People can be named by email here. Shown whenever email sign-in is set up for this site, so the
+   * fields don't silently turn back into "NEAR account" while the notifier (which creates the
+   * accounts) is slow or down: that is reported when an address is actually looked up.
+   */
+  const [emailOn, setEmailOn] = useState(EMAIL_ENABLED);
+  useEffect(() => void getInfo().then((i) => setEmailOn(EMAIL_ENABLED || !!i.email_wallets)).catch(() => {}), []);
   /** Turning typed emails into accounts (leaving the guardians or heirs step). */
   const [resolving, setResolving] = useState(false);
   const [peopleNote, setPeopleNote] = useState<string | null>(null);
