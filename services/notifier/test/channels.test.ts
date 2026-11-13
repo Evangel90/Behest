@@ -1,9 +1,10 @@
 import type { LookupAddress } from "node:dns";
 import { afterEach, describe, expect, it } from "vitest";
-import { classifySmtp, EmailSender } from "../src/channels/email.js";
+import { BrevoSender, classifyBrevo, classifySmtp, EmailSender, parseFrom } from "../src/channels/email.js";
 import { TelegramBot } from "../src/channels/telegram.js";
 import { PermanentError, RejectedError, TransientError, type Outgoing } from "../src/channels/types.js";
 import { checkWebhookUrl, guardedLookup, guardedPost, isPublicAddress, sign, verifyWebhook, WebhookSender } from "../src/channels/webhook.js";
+import { loadConfig } from "../src/config.js";
 import { Store, type Contact, type StoredNotice } from "../src/db.js";
 import { Engine } from "../src/engine.js";
 import { fakeTelegram, receiver, smtpSink, unQP, until } from "./helpers.js";
@@ -134,6 +135,81 @@ describe("email", () => {
     expect(classifySmtp({ responseCode: 552 })).toBeInstanceOf(RejectedError);
     expect(classifySmtp({ responseCode: 535, code: "EAUTH" })).toBeInstanceOf(TransientError);
     expect(classifySmtp({ code: "ECONNREFUSED" })).toBeInstanceOf(TransientError);
+  });
+});
+
+describe("email over Brevo's HTTPS API", () => {
+  const brevo = (answer: () => Response | Promise<Response>) => {
+    const calls: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] = [];
+    const fake = (async (url: string, init: RequestInit) => {
+      calls.push({ url, headers: init.headers as Record<string, string>, body: JSON.parse(init.body as string) });
+      return answer();
+    }) as typeof fetch;
+    return { calls, mail: new BrevoSender({ key: "xkeysib-test", apiBase: "https://brevo.test/v3", from: "Behest <notify@behest.example>" }, fake) };
+  };
+  const ok = () => new Response(JSON.stringify({ messageId: "<1@relay>" }), { status: 201 });
+
+  it("posts notices and confirmations as JSON with the API key, keeping only custom headers", async () => {
+    const { calls, mail } = brevo(ok);
+    await mail.send(out(contact({})));
+    await mail.sendVerification("kemi.testnet", "kemi@example.com", "https://n.example/v1/verify?token=abc", 48);
+    const [n, v] = calls;
+    expect(n!.url).toBe("https://brevo.test/v3/smtp/email");
+    expect(n!.headers["api-key"]).toBe("xkeysib-test");
+    expect(n!.body).toMatchObject({ sender: { email: "notify@behest.example", name: "Behest" }, to: [{ email: "amara@example.com" }], subject: "Behest: 1 ETH from Kemi's plan arrived" });
+    // Brevo refuses standard headers; the unsubscribe link travels in the body instead.
+    expect(n!.body.headers).toEqual({ "X-Behest-Delivery": "d".repeat(32), "X-Behest-Kind": "transfer_confirmed" });
+    expect(n!.body.textContent).toContain("https://n.example/v1/unsubscribe?token=UNSUB");
+    expect(n!.body.htmlContent).toContain("https://n.example/v1/unsubscribe?token=UNSUB");
+    expect(n!.body.htmlContent).toContain("https://sepolia.etherscan.io/tx/0xfeed");
+    expect(v!.body).toMatchObject({ to: [{ email: "kemi@example.com" }] });
+    expect(v!.body.textContent).toContain("https://n.example/v1/verify?token=abc");
+    expect(v!.body.headers).toBeUndefined();
+  });
+
+  it("classifies Brevo's answers: bad message rejected, account, rate and outage retried", async () => {
+    const reply = (status: number, body: unknown, headers?: Record<string, string>) => () => new Response(JSON.stringify(body), { status, headers });
+    const c = out(contact({}));
+    await expect(brevo(reply(400, { code: "invalid_parameter", message: "email is not valid in to" })).mail.send(c)).rejects.toBeInstanceOf(RejectedError);
+    await expect(brevo(reply(400, { code: "invalid_parameter", message: "Sending has been rejected because the sender you used is not valid" })).mail.send(c)).rejects.toBeInstanceOf(TransientError);
+    await expect(brevo(reply(401, { code: "unauthorized", message: "Key not found" })).mail.send(c)).rejects.toBeInstanceOf(TransientError);
+    await expect(brevo(reply(402, { code: "not_enough_credits", message: "no credits" })).mail.send(c)).rejects.toBeInstanceOf(TransientError);
+    await expect(brevo(reply(503, {})).mail.send(c)).rejects.toBeInstanceOf(TransientError);
+    await expect(brevo(reply(429, { message: "slow down" }, { "retry-after": "7" })).mail.send(c)).rejects.toMatchObject({ retryAfterMs: 7000 });
+    await expect(
+      brevo(() => {
+        throw new Error("fetch failed");
+      }).mail.send(c),
+    ).rejects.toBeInstanceOf(TransientError);
+    expect(classifyBrevo(400, { code: "account_under_validation", message: "wait" })).toBeInstanceOf(TransientError);
+    expect((classifyBrevo(429, {}, "99999") as TransientError).retryAfterMs).toBe(3_600_000);
+    expect((classifyBrevo(500, {}, "soon") as TransientError).retryAfterMs).toBeUndefined();
+  });
+
+  it("reads the sender from a From line", () => {
+    expect(parseFrom("Behest <notify@behest.example>")).toEqual({ email: "notify@behest.example", name: "Behest" });
+    expect(parseFrom('"Behest Notices" <n@b.example>')).toEqual({ email: "n@b.example", name: "Behest Notices" });
+    expect(parseFrom("<n@b.example>")).toEqual({ email: "n@b.example" });
+    expect(parseFrom(" n@b.example ")).toEqual({ email: "n@b.example" });
+  });
+});
+
+describe("configuration", () => {
+  const base = { BEHEST_CONTRACT_ID: "behest.testnet" };
+
+  it("uses Brevo when BREVO_API_KEY is set, with EMAIL_FROM or SMTP_FROM as the sender", () => {
+    expect(loadConfig(base).brevo).toBeUndefined();
+    expect(loadConfig({ ...base, BREVO_API_KEY: "k", SMTP_HOST: "smtp.example", SMTP_FROM: "a@b.example" }).brevo).toEqual({ key: "k", apiBase: "https://api.brevo.com/v3", from: "a@b.example" });
+    expect(loadConfig({ ...base, BREVO_API_KEY: "k", EMAIL_FROM: "Behest <c@d.example>", SMTP_FROM: "a@b.example" }).brevo!.from).toBe("Behest <c@d.example>");
+    expect(() => loadConfig({ ...base, BREVO_API_KEY: "k" })).toThrow(/EMAIL_FROM/);
+  });
+
+  it("lists the main RPC first, then fallbacks, without repeats", () => {
+    expect(loadConfig(base).nearRpcUrls).toEqual(["https://rpc.testnet.fastnear.com", "https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"]);
+    expect(loadConfig({ ...base, NEAR_RPC_URL: "https://a.example", NEAR_RPC_FALLBACK_URLS: "https://b.example, https://a.example" }).nearRpcUrls).toEqual(["https://a.example", "https://b.example"]);
+    expect(loadConfig({ ...base, NEAR_RPC_URL: "https://a.example", NEAR_RPC_FALLBACK_URLS: "" }).nearRpcUrls).toEqual(["https://a.example"]);
+    // No public fallbacks are assumed off testnet.
+    expect(loadConfig({ BEHEST_CONTRACT_ID: "behest.near", NEAR_RPC_URL: "https://m.example" }).nearRpcUrls).toEqual(["https://m.example"]);
   });
 });
 

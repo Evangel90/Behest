@@ -67,6 +67,21 @@ describe("NEP-413 verification", () => {
     expect(await lookup("kemi.testnet")).toEqual(["ed25519:full"]);
     expect(await lookup("none.testnet")).toBeNull();
   });
+
+  it("hands a failing RPC over to the next and stays there", async () => {
+    const asked: string[] = [];
+    const fake = (async (url: string) => {
+      asked.push(url);
+      if (url === "http://down") return new Response("{}", { status: 429 });
+      if (url === "http://deprecated") return new Response(JSON.stringify({ error: { code: -429, message: "THIS ENDPOINT IS DEPRECATED" } }));
+      return new Response(JSON.stringify({ result: { keys: [{ public_key: "ed25519:full", access_key: { permission: "FullAccess" } }] } }));
+    }) as typeof fetch;
+    const lookup = rpcKeyLookup(["http://down", "http://deprecated", "http://good"], 0, fake);
+    expect(await lookup("kemi.testnet")).toEqual(["ed25519:full"]);
+    expect(await lookup("amara.testnet")).toEqual(["ed25519:full"]);
+    expect(asked).toEqual(["http://down", "http://deprecated", "http://good", "http://good"]);
+    await expect(rpcKeyLookup(["http://down", "http://deprecated"], 0, fake)("kemi.testnet")).rejects.toThrow(/DEPRECATED/);
+  });
 });
 
 const require58 = (k: string) => baseDecode(k.split(":")[1]!);

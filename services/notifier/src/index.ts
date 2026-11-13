@@ -3,11 +3,11 @@
 // Watches plans, turns changes into notices (diff.ts), and delivers them per
 // person over email, Telegram and webhooks (engine.ts), with contacts kept
 // private in a local SQLite database and managed through a signed HTTP API.
-import { JsonRpcProvider } from "near-api-js";
+import { FailoverRpcProvider, JsonRpcProvider } from "near-api-js";
 import { createApi } from "./api.js";
 import { parseKey, type HeirRecord } from "./records.js";
 import { councilReader } from "./council.js";
-import { EmailSender } from "./channels/email.js";
+import { BrevoSender, EmailSender } from "./channels/email.js";
 import { TelegramBot } from "./channels/telegram.js";
 import { WebhookSender } from "./channels/webhook.js";
 import { loadConfig } from "./config.js";
@@ -23,11 +23,13 @@ const store = new Store(cfg.dbPath);
 const imported = store.importLegacy(cfg.legacyStatePath);
 if (imported) log("imported legacy state file", { sent: imported, from: cfg.legacyStatePath });
 
-const provider = new JsonRpcProvider({ url: cfg.nearRpcUrl });
+// One rate-limiting or down RPC hands over to the next (and stays there until that one fails).
+const provider = new FailoverRpcProvider(cfg.nearRpcUrls.map((url) => new JsonRpcProvider({ url })));
 const view = <T>(method: string, args: Record<string, unknown>) => provider.callFunction({ contractId: cfg.contractId, method, args }) as Promise<T>;
 const councilOf = councilReader(<T>(contractId: string, method: string, args: Record<string, unknown>) => provider.callFunction({ contractId, method, args }) as Promise<T>);
 
-const email = cfg.smtp ? new EmailSender(cfg.smtp) : undefined;
+// Brevo's HTTPS API wins when both are set: hosts like Railway block SMTP ports.
+const email = cfg.brevo ? new BrevoSender(cfg.brevo) : cfg.smtp ? new EmailSender(cfg.smtp) : undefined;
 const telegram = cfg.telegram ? new TelegramBot(cfg.telegram, store, log) : undefined;
 const webhook = new WebhookSender(cfg.contractId, cfg.webhookAllowInsecure);
 const engine = new Engine(store, cfg, { email, telegram, webhook }, log);
@@ -48,15 +50,15 @@ const records = recordsKey
       },
     }
   : undefined;
-const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrl), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log, records });
+const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrls), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log, records });
 api.listen(cfg.port, cfg.host, () => log("notifier api listening", { port: cfg.port, publicUrl: cfg.publicUrl }));
 
 log("notifier started", {
   contractId: cfg.contractId,
-  rpc: cfg.nearRpcUrl,
+  rpc: cfg.nearRpcUrls,
   intervalMs: cfg.intervalMs,
   db: cfg.dbPath,
-  channels: { email: Boolean(email), telegram: telegram ? cfg.telegram!.username : false, webhook: true, operatorFeed: Boolean(cfg.operatorWebhookUrl) },
+  channels: { email: cfg.brevo ? "brevo" : cfg.smtp ? "smtp" : false, telegram: telegram ? cfg.telegram!.username : false, webhook: true, operatorFeed: Boolean(cfg.operatorWebhookUrl) },
 });
 
 let stopping = false;

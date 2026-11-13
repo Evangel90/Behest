@@ -90,27 +90,42 @@ export type KeyLookup = (account: string) => Promise<string[] | null>;
  * Full-access keys of an account via JSON-RPC `view_access_key_list`
  * (null if the account doesn't exist). Results are cached briefly.
  */
-export function rpcKeyLookup(rpcUrl: string, ttlMs = 60_000, fetchFn: typeof fetch = fetch): KeyLookup {
+export function rpcKeyLookup(rpcUrls: string | string[], ttlMs = 60_000, fetchFn: typeof fetch = fetch): KeyLookup {
+  const urls = [rpcUrls].flat();
   const cache = new Map<string, { at: number; keys: string[] | null }>();
-  return async (account) => {
-    const hit = cache.get(account);
-    if (hit && Date.now() - hit.at < ttlMs) return hit.keys;
-    const res = await fetchFn(rpcUrl, {
+  /** Index of the RPC that answered last; a failing one hands over to the next. */
+  let current = 0;
+  const ask = async (url: string, account: string): Promise<string[] | null> => {
+    const res = await fetchFn(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: "notifier", method: "query", params: { request_type: "view_access_key_list", finality: "final", account_id: account } }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`rpc ${res.status}`);
     const body = (await res.json()) as { result?: { keys: { public_key: string; access_key: { permission: unknown } }[] }; error?: { cause?: { name?: string }; message?: string } };
-    let keys: string[] | null;
     if (body.error) {
       if (body.error.cause?.name !== "UNKNOWN_ACCOUNT") throw new Error(`rpc: ${body.error.message ?? "error"}`);
-      keys = null;
-    } else {
-      keys = (body.result?.keys ?? []).filter((k) => k.access_key.permission === "FullAccess").map((k) => k.public_key);
+      return null;
     }
-    cache.set(account, { at: Date.now(), keys });
-    return keys;
+    return (body.result?.keys ?? []).filter((k) => k.access_key.permission === "FullAccess").map((k) => k.public_key);
+  };
+  return async (account) => {
+    const hit = cache.get(account);
+    if (hit && Date.now() - hit.at < ttlMs) return hit.keys;
+    let last: unknown;
+    for (let i = 0; i < urls.length; i++) {
+      const at = (current + i) % urls.length;
+      try {
+        const keys = await ask(urls[at]!, account);
+        current = at;
+        cache.set(account, { at: Date.now(), keys });
+        return keys;
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last;
   };
 }
 

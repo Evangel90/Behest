@@ -1,7 +1,8 @@
 // Notifier configuration, all from the environment (see .env.example).
 export interface Config {
   contractId: string;
-  nearRpcUrl: string;
+  /** NEAR RPCs for views and key lookups: the main one first, then fallbacks. */
+  nearRpcUrls: string[];
   intervalMs: number;
   dbPath: string;
   /** Legacy JSON state file, imported once into the database if present. */
@@ -29,6 +30,8 @@ export interface Config {
   trustProxy: boolean;
 
   smtp?: { url?: string; host?: string; port: number; secure: boolean; user?: string; pass?: string; from: string; ignoreTls: boolean };
+  /** Email over Brevo's HTTPS API, for hosts that block SMTP ports. Used instead of SMTP when set. */
+  brevo?: { key: string; apiBase: string; from: string };
   telegram?: { token: string; username: string; apiBase: string; pollTimeoutS: number };
 
   /** Webhooks: allow http:// and private addresses (local development only). */
@@ -38,6 +41,9 @@ export interface Config {
   /** Per-channel sends per second. */
   rate: { email: number; telegram: number; webhook: number };
 }
+
+/** Public testnet RPCs tried after NEAR_RPC_URL when NEAR_RPC_FALLBACK_URLS isn't set. */
+const TESTNET_FALLBACKS = "https://test.rpc.fastnear.com,https://rpc.testnet.fastnear.com,https://near-testnet.drpc.org";
 
 const list = (s: string | undefined) => (s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 const bool = (s: string | undefined) => s === "1" || s === "true" || s === "yes";
@@ -49,12 +55,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const smtpFrom = env.SMTP_FROM ?? "";
   const smtpConfigured = Boolean(env.SMTP_URL || env.SMTP_HOST);
   if (smtpConfigured && !smtpFrom) throw new Error("SMTP is configured but SMTP_FROM is missing");
+  const brevoKey = env.BREVO_API_KEY ?? "";
+  const brevoFrom = env.EMAIL_FROM || smtpFrom;
+  if (brevoKey && !brevoFrom) throw new Error("BREVO_API_KEY is set but EMAIL_FROM (or SMTP_FROM) is missing");
+  const rpcUrls = [env.NEAR_RPC_URL || "https://rpc.testnet.fastnear.com", ...list(env.NEAR_RPC_FALLBACK_URLS ?? (contractId.endsWith(".testnet") ? TESTNET_FALLBACKS : ""))];
   const tgToken = env.TELEGRAM_BOT_TOKEN ?? "";
   const tgUser = (env.TELEGRAM_BOT_USERNAME ?? "").replace(/^@/, "");
   if (tgToken && !tgUser) throw new Error("TELEGRAM_BOT_TOKEN is set but TELEGRAM_BOT_USERNAME is missing");
   return {
     contractId,
-    nearRpcUrl: env.NEAR_RPC_URL || "https://rpc.testnet.fastnear.com",
+    nearRpcUrls: rpcUrls.filter((u, i) => rpcUrls.indexOf(u) === i),
     intervalMs: Number(env.NOTIFY_INTERVAL_MS ?? 30_000),
     dbPath: env.NOTIFY_DB ?? ".notifier.db",
     legacyStatePath: env.NOTIFY_STATE_FILE ?? ".notifier-state.json",
@@ -81,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           ignoreTls: bool(env.SMTP_IGNORE_TLS),
         }
       : undefined,
+    brevo: brevoKey ? { key: brevoKey, apiBase: (env.BREVO_API_BASE ?? "https://api.brevo.com/v3").replace(/\/$/, ""), from: brevoFrom } : undefined,
     telegram: tgToken ? { token: tgToken, username: tgUser, apiBase: (env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""), pollTimeoutS: Number(env.TELEGRAM_POLL_TIMEOUT_S ?? 25) } : undefined,
     webhookAllowInsecure: bool(env.NOTIFY_WEBHOOK_ALLOW_INSECURE),
     maxAttempts: Number(env.NOTIFY_MAX_ATTEMPTS ?? 8),

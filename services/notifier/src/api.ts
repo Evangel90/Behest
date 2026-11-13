@@ -25,7 +25,7 @@
 //   POST   /v1/unsubscribe?token=…        RFC 8058 one-click, or the page's form
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AuthError, verifyEnvelope, type SignedAction } from "./auth.js";
-import type { EmailSender } from "./channels/email.js";
+import type { Mailer } from "./channels/email.js";
 import { esc } from "./channels/templates.js";
 import type { TelegramBot } from "./channels/telegram.js";
 import { PermanentError, RejectedError } from "./channels/types.js";
@@ -59,7 +59,7 @@ export interface ApiDeps {
   engine: Engine;
   cfg: Pick<Config, "contractId" | "publicUrl" | "appUrl" | "allowedOrigins" | "signRecipient" | "signMaxAgeMs" | "trustProxy" | "webhookAllowInsecure">;
   keys: KeyLookup;
-  email?: EmailSender;
+  email?: Mailer;
   telegram?: TelegramBot;
   isMember?: (owner: string, account: string) => Promise<boolean>;
   /** D26: a DAO's council members (get_policy), or null when the account isn't a DAO. */
