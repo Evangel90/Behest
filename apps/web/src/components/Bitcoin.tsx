@@ -4,7 +4,8 @@
 // and rebase if the vault moved; heirs see their payout like any other.
 import { Explain } from "./more";
 import { ArrowUpFromLine, Pencil, Plus, RefreshCw, Users } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { localPeople } from "@/lib/people";
 import { BTC_EXPLORER } from "@/lib/config";
 import { MAX_BTC_INPUTS, btcUtxos, getBtcDestinations, getBtcRelease, getBtcVault, getConfig, view as viewCall } from "@/lib/contract";
 import { btcSplit, formatBtc, isBtc, looksLikeBtcAddress, shortName } from "@/lib/plan";
@@ -159,7 +160,9 @@ function BtcDestinations({ view, btc, busy, onSave }: { view: PlanView; btc: Btc
   useEffect(() => void viewCall<ReleaseRules | null>("get_release_rules", { owner: view.plan.owner }).then(setRules).catch(() => {}), [view.plan.owner]);
   // Heirs first, then anyone the release rules can pass a share to.
   const people = [...new Set([...view.plan.policy.heirs.map((h) => h.account_id), ...(rules?.alternates ?? []).map((a) => a.recipient.account_id), ...(rules?.fallback ? [rules.fallback.account_id] : [])])];
-  const current = (a: string) => btc.dests.find((d) => d.account_id === a)?.address ?? "";
+  // Someone named by email already has a Bitcoin address kept for that email: offer it rather than an empty field.
+  const kept = useMemo(() => Object.fromEntries(localPeople(view.plan.owner).filter((p) => p.by_email && p.btc).map((p) => [p.account, p.btc!])), [view.plan.owner]);
+  const current = (a: string) => btc.dests.find((d) => d.account_id === a)?.address ?? kept[a] ?? "";
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [tried, setTried] = useState(false);
   const value = (a: string) => (draft[a] ?? current(a)).trim();
@@ -169,7 +172,7 @@ function BtcDestinations({ view, btc, busy, onSave }: { view: PlanView; btc: Btc
     <>
       {people.map((a) => (
         <div key={a} className="flex flex-col gap-1.5">
-          <Field label={shortName(a)} hint={a} error={(tried || value(a).length > 8) && bad(a) ? "That isn't a testnet SegWit address (tb1q… or tb1p…)." : null}>
+          <Field label={shortName(a)} hint={kept[a] && value(a) === kept[a] ? "The Bitcoin address kept for their email. They can send it on once it arrives." : a} error={(tried || value(a).length > 8) && bad(a) ? "That isn't a testnet SegWit address (tb1q… or tb1p…)." : null}>
             {(p) => <input {...p} className={`${inputClass} font-mono text-sm`} placeholder="tb1q…" spellCheck={false} value={draft[a] ?? current(a)} onChange={(e) => setDraft({ ...draft, [a]: e.target.value })} />}
           </Field>
           {/* D27: a Bitcoin payout can land in the person's NEAR Intents account through the Intents bridge (mainnet). */}

@@ -47,6 +47,9 @@ const CHAIN: Record<Asset["kind"], { ticker: "NEAR" | "ETH" | "BTC"; name: strin
   btc: { ticker: "BTC", name: "Bitcoin (testnet)", where: "a Bitcoin address", placeholder: "tb1q…" },
 };
 
+/** Below this an ETH balance is change from a transfer's fee estimate, not money. */
+const ETH_DUST = 1_000_000_000_000n; // 0.000001 ETH
+
 const show = (a: Asset, v = a.balance) => (a.kind === "near" ? formatNear(v) : a.kind === "eth" ? formatEth(v) : a.kind === "btc" ? formatBtc(v) : formatToken(v, a));
 
 /** Balances of the three wallets that come with an email sign-in. Null while loading. */
@@ -95,7 +98,8 @@ export function EmailAccountCard({ className }: { className?: string }) {
   const { wallet, eth, assets, failed, reload } = useEmailAssets();
   const [sending, setSending] = useState<Asset | null>(null);
   if (!wallet || !eth) return null;
-  const held = (assets ?? []).filter((a) => a.balance > 0n);
+  // Leftovers too small to pay their own network fee aren't worth a row.
+  const held = (assets ?? []).filter((a) => a.balance > (a.kind === "near" ? NEAR_FEE_RESERVE : a.kind === "eth" ? ETH_DUST : 0n));
   const addressOf = (k: Asset["kind"]) => (k === "near" || k === "nep141" ? wallet.near : k === "btc" ? wallet.btc : eth);
   return (
     <Card className={cx("flex flex-col gap-4", className)}>
@@ -203,7 +207,7 @@ function SendDialog({ asset: a, onClose, onSent }: { asset: Asset; onClose: () =
   else if (a.kind === "eth") {
     const f = fee?.eth;
     max = f && a.balance > f.max ? a.balance - f.max : f ? 0n : a.balance;
-    feeLine = f ? `Network fee: at most ${formatEth(f.max)} ETH, taken from this balance.` : "Working out the network fee…";
+    feeLine = f ? `Network fee: ${f.max < ETH_DUST ? "under 0.000001" : `at most ${formatEth(f.max)}`} ETH, taken from this balance.` : "Working out the network fee…";
   } else if (a.kind === "erc20") feeLine = "Network fee: a little ETH, paid from your ETH balance.";
   else if (a.kind === "btc" && fee?.btcRate) {
     try {
