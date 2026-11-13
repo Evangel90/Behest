@@ -19,6 +19,10 @@
 //   PUT    /v1/records                    signed "records.set" by a sealed plan's owner: back up its heirs' recovery records (D33)
 //   DELETE /v1/records                    signed "records.clear"
 //   GET    /v1/records?owner=…            bearer: the owner gets all; a heir gets its own once the plan is overdue
+//   GET    /v1/people                     bearer: the people this owner named with an email address
+//   POST   /v1/people                     bearer: name someone by email (creates their wallets) or attach an email to an account
+//   DELETE /v1/people/:account?role=…     bearer
+//   POST   /v1/email-wallets              public: make sure an email address has wallets before it signs in (returns nothing about them)
 //   GET    /v1/verify?token=…             page with a confirm button (mail scanners don't confirm by fetching)
 //   POST   /v1/verify                     confirm an email
 //   GET    /v1/unsubscribe?token=…        page with an unsubscribe button
@@ -31,12 +35,13 @@ import type { TelegramBot } from "./channels/telegram.js";
 import { PermanentError, RejectedError } from "./channels/types.js";
 import { checkWebhookUrl, UrlError } from "./channels/webhook.js";
 import type { Config } from "./config.js";
-import { sha256, token, type Channel, type Contact, type Store } from "./db.js";
+import { sha256, token, type Channel, type Contact, type Store, PERSON_ROLES, scopeOf, type Person, type PersonRole } from "./db.js";
 import { ALWAYS_ON, KIND_INFO, KINDS, type Kind } from "./diff.js";
 import type { CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 import type { KeyLookup } from "./nep413.js";
 import { cleanRecord, open, rowId, seal, type HeirRecord, type RecordsChain } from "./records.js";
+import { PrivyError, type PrivyClient } from "./privy.js";
 
 export const LIMITS = {
   email: 3,
@@ -52,6 +57,11 @@ export const LIMITS = {
   /** Requests per IP per minute, and signed actions per account per minute. */
   ipPerMinute: 120,
   accountPerMinute: 30,
+  /** People one owner may name with an email address, and how many they may add in a day. */
+  people: 40,
+  peoplePerDay: 60,
+  /** Unsigned "make sure this address has wallets" calls per IP per minute. */
+  emailWalletsPerMinute: 6,
 };
 
 export interface ApiDeps {
@@ -68,6 +78,8 @@ export interface ApiDeps {
   now?: () => number;
   /** D33 record backup: off unless a key is configured. */
   records?: { key: Buffer; chain: RecordsChain };
+  /** Wallets for people named by email: off unless Privy is configured. */
+  privy?: Pick<PrivyClient, "ensure">;
 }
 
 class HttpError extends Error {
@@ -106,6 +118,14 @@ export function normalizeEmail(s: unknown): string {
   return e.toLowerCase();
 }
 
+/** What an owner asks to be called in messages: letters, digits and a little punctuation, so it can't carry a link or pose as a sender. */
+function displayName(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const n = String(v).trim().replace(/\s+/g, " ");
+  if (n.length > 40 || !/^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .'’-]*$/u.test(n)) throw new HttpError(400, "BAD_NAME", "use a plain name of up to 40 letters");
+  return n;
+}
+
 const ACCOUNT = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 
 function publicContact(c: Contact, store: Store) {
@@ -123,6 +143,8 @@ function publicContact(c: Contact, store: Store) {
     created_ms: c.created_ms,
     verified_ms: c.verified_ms,
     disabled_reason: c.disabled_reason,
+    // Owners who supplied this address (it only hears about their plans), or null for one the account set up.
+    added_by: scopeOf(c),
     telegram: c.channel === "telegram" ? meta : undefined,
     last_delivery: last ? { status: last.status, at_ms: last.sent_ms ?? last.created_ms, error: last.last_error } : null,
   };
@@ -139,6 +161,7 @@ export function createApi(d: ApiDeps): Server {
   const log = d.log ?? (() => {});
   const now = d.now ?? Date.now;
   const ipLimit = new RateLimiter(LIMITS.ipPerMinute);
+  const walletLimit = new RateLimiter(LIMITS.emailWalletsPerMinute);
   const accountLimit = new RateLimiter(LIMITS.accountPerMinute);
   const authDeps = { store, keys: d.keys, recipient: cfg.signRecipient, maxAgeMs: cfg.signMaxAgeMs, now };
 
@@ -218,6 +241,33 @@ export function createApi(d: ApiDeps): Server {
     }
   }
 
+  /** A person as the owner who named them sees it. */
+  const publicPerson = (p: Person) => {
+    const c = store.contactBy(p.account, "email", p.email);
+    return {
+      account: p.account,
+      role: p.role,
+      email: p.email,
+      label: p.label,
+      by_email: p.by_email === 1,
+      announce: p.announce === 1,
+      near: p.near,
+      btc: p.btc,
+      told_ms: p.named_ms,
+      // "unsubscribed": they asked for no more mail; nothing is sent whatever the owner does.
+      email_status: !c ? "removed" : c.status === "active" ? "active" : c.disabled_reason === "unsubscribed" ? "unsubscribed" : c.status,
+    };
+  };
+  const ensureWallets = async (email: string) => {
+    if (!d.privy) throw new HttpError(503, "EMAIL_WALLETS_UNAVAILABLE", "naming people by email isn't set up on this notifier");
+    try {
+      return await d.privy.ensure(email);
+    } catch (e) {
+      log("email wallets failed", { error: String(e), status: e instanceof PrivyError ? e.status : undefined });
+      throw new HttpError(502, "EMAIL_WALLETS_FAILED", "couldn't set up an account for that address; try again shortly");
+    }
+  };
+
   const channels = () => ({ email: Boolean(d.email), telegram: d.telegram ? { bot: d.telegram.linkUrl("").replace(/\?start=$/, "") } : false, webhook: true });
 
   async function route(req: IncomingMessage, res: ServerResponse) {
@@ -241,7 +291,63 @@ export function createApi(d: ApiDeps): Server {
         limits: { email: LIMITS.email, telegram: LIMITS.telegram, webhook: LIMITS.webhook, watches: LIMITS.watches },
         webhook_https_only: !cfg.webhookAllowInsecure,
         records: Boolean(d.records),
+        email_wallets: Boolean(d.privy),
+        people_roles: PERSON_ROLES,
       });
+    }
+
+    // ---- people named with an email address
+    if (m === "POST" && path === "/v1/email-wallets") {
+      // Before an address signs in for the first time: its wallets must exist. Says nothing about them.
+      if (!walletLimit.take(clientIp(req), now())) throw new HttpError(429, "RATE_LIMITED", "too many requests; wait a minute");
+      const body = (await readJson(req)) as { email?: unknown };
+      await ensureWallets(normalizeEmail(body.email));
+      return json(req, res, 200, { ok: true });
+    }
+    if (m === "GET" && path === "/v1/people") {
+      const owner = bearer(req);
+      return json(req, res, 200, { name: store.ownerName(owner), people: store.people(owner).map(publicPerson) });
+    }
+    if (m === "PUT" && path === "/v1/people/name") {
+      const owner = bearer(req);
+      const body = (await readJson(req)) as { name?: unknown };
+      store.setOwnerName(owner, displayName(body.name));
+      return json(req, res, 200, { name: store.ownerName(owner) });
+    }
+    if (m === "POST" && path === "/v1/people") {
+      const owner = bearer(req);
+      const body = (await readJson(req)) as { email?: unknown; role?: unknown; account?: unknown; announce?: unknown; label?: unknown; name?: unknown };
+      const email = normalizeEmail(body.email);
+      const role = body.role as PersonRole;
+      if (!PERSON_ROLES.includes(role)) throw new HttpError(400, "BAD_ROLE", `role must be one of ${PERSON_ROLES.join(", ")}`);
+      const day = now() - 86_400_000;
+      if (store.peopleAddedSince(owner, day) >= LIMITS.peoplePerDay) throw new HttpError(429, "PEOPLE_LIMIT", "that's a lot of people for one day; try again tomorrow");
+      let account: string;
+      let near: string | null = null;
+      let btc: string | null = null;
+      const byEmail = body.account == null || body.account === "";
+      if (byEmail) {
+        const w = await ensureWallets(email);
+        account = w.eth;
+        near = w.near;
+        btc = w.btc;
+      } else {
+        account = String(body.account).trim().toLowerCase();
+        if (!ACCOUNT.test(account) && !/^0x[0-9a-f]{40}$/.test(account)) throw new HttpError(400, "BAD_ACCOUNT", "that doesn't look like an account");
+      }
+      if (!store.person(owner, account, role) && store.countPeople(owner) >= LIMITS.people) throw new HttpError(400, "LIMIT", `at most ${LIMITS.people} people with an email per plan`);
+      if (body.name !== undefined) store.setOwnerName(owner, displayName(body.name));
+      const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 60) : null;
+      const p = store.putPerson({ owner, account, role, email, label, by_email: byEmail ? 1 : 0, announce: body.announce === true || role !== "heir" ? 1 : 0, near, btc }, now());
+      log("person named", { owner, role, by_email: byEmail });
+      return json(req, res, 201, { person: publicPerson(p), name: store.ownerName(owner) });
+    }
+    const personPath = path.match(/^\/v1\/people\/([^/]+)$/);
+    if (m === "DELETE" && personPath && personPath[1] !== "name") {
+      const owner = bearer(req);
+      const role = url.searchParams.get("role") ?? "";
+      if (!store.removePerson(owner, decodeURIComponent(personPath[1]!).toLowerCase(), role)) throw new HttpError(404, "NOT_FOUND", "no such person");
+      return json(req, res, 200, { ok: true });
     }
 
     // ---- sessions
@@ -276,10 +382,21 @@ export function createApi(d: ApiDeps): Server {
       const a = await signed(req, "contacts.add");
       const channel = a.channel as Channel;
       if (channel === "email") {
-        if (!d.email) throw new HttpError(503, "EMAIL_UNAVAILABLE", "email isn't configured on this notifier");
         const address = normalizeEmail(a.address);
         const existing = store.contactBy(a.account, "email", address);
-        if (existing?.status === "active") throw new HttpError(409, "EXISTS", "that address is already confirmed");
+        // The account is the wallet created for this very address: signing as it proves the inbox, so no confirmation email.
+        if (existing && scopeOf(existing) && store.isOwnEmail(a.account, address)) {
+          store.activate(existing.id, now());
+          log("email confirmed", { account: a.account });
+          return json(req, res, 200, { contact: publicContact(store.contact(existing.id)!, store), message: `${address} now gets every notice for this account.` });
+        }
+        if (!d.email) throw new HttpError(503, "EMAIL_UNAVAILABLE", "email isn't configured on this notifier");
+        if (existing?.status === "active" && !scopeOf(existing)) throw new HttpError(409, "EXISTS", "that address is already confirmed");
+        if (existing?.status === "active") {
+          // An owner supplied this address; now the account itself asks for it. It keeps hearing about that owner's plan meanwhile.
+          await sendVerification(existing);
+          return json(req, res, 201, { contact: publicContact(store.contact(existing.id)!, store), message: `We sent a confirmation link to ${address}.` });
+        }
         if (!existing && store.countContacts(a.account, "email") >= LIMITS.email) throw new HttpError(400, "LIMIT", `at most ${LIMITS.email} email addresses per account`);
         const c = existing ?? store.addContact({ account: a.account, channel: "email", address, status: "pending", label: typeof a.label === "string" ? a.label.slice(0, 60) : null });
         if (existing) store.updateContact(c.id, { status: "pending", disabled_reason: null });
@@ -468,7 +585,9 @@ export function createApi(d: ApiDeps): Server {
       if (m === "POST") {
         await readBody(req, 4096).catch(() => ""); // RFC 8058 body "List-Unsubscribe=One-Click", or the form
         if (c) {
-          store.removeContact(c.id);
+          // An address an owner supplied is kept, switched off: naming the person again must not start the mail again.
+          if (scopeOf(c)) store.disable(c.id, "unsubscribed");
+          else store.removeContact(c.id);
           log("unsubscribed", { account: c.account, channel: c.channel });
         }
         return html(res, 200, "Unsubscribed", "<p>This address won't get Behest notices any more. You can add it again from Behest at any time.</p>");

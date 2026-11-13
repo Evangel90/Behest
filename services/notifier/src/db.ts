@@ -30,6 +30,46 @@ export interface Contact {
   meta: string | null;
 }
 
+/** Roles an owner can attach an email to. */
+export const PERSON_ROLES = ["heir", "guardian", "standby", "delay", "recipient"] as const;
+export type PersonRole = (typeof PERSON_ROLES)[number];
+
+/**
+ * Someone an owner named with an email address (never on-chain). `by_email`
+ * means the account is the wallet created for that address, so the person
+ * signs in with the address itself; otherwise the email is only where the
+ * owner wants that account's notices about this plan to go.
+ */
+export interface Person {
+  owner: string;
+  account: string;
+  role: PersonRole;
+  email: string;
+  /** What the owner calls them (shown back to the owner only). */
+  label: string | null;
+  by_email: number;
+  /** Tell them when the plan first names them (guardians always are). */
+  announce: number;
+  near: string | null;
+  btc: string | null;
+  named_ms: number | null;
+  created_ms: number;
+}
+
+/**
+ * Owners whose plans an owner-added email contact may hear about, or null for a
+ * contact its own account set up (which hears about every plan it is part of).
+ */
+export function scopeOf(c: Pick<Contact, "channel" | "meta">): string[] | null {
+  if (c.channel !== "email" || !c.meta) return null;
+  try {
+    const o = (JSON.parse(c.meta) as { owners?: unknown }).owners;
+    return Array.isArray(o) ? o.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface Delivery {
   notice_key: string;
   account: string;
@@ -98,6 +138,22 @@ CREATE TABLE IF NOT EXISTS tg_links (token_hash TEXT PRIMARY KEY, account TEXT N
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, account TEXT NOT NULL, expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS records (owner TEXT NOT NULL, account TEXT NOT NULL, sealed TEXT NOT NULL, created_ms INTEGER NOT NULL, PRIMARY KEY (owner, account));
 CREATE TABLE IF NOT EXISTS email_log (address TEXT NOT NULL, account TEXT NOT NULL, at_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS people (
+  owner TEXT NOT NULL,
+  account TEXT NOT NULL,
+  role TEXT NOT NULL,
+  email TEXT NOT NULL,
+  label TEXT,
+  by_email INTEGER NOT NULL,
+  announce INTEGER NOT NULL,
+  near TEXT,
+  btc TEXT,
+  named_ms INTEGER,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (owner, account, role)
+);
+CREATE INDEX IF NOT EXISTS people_account ON people (account);
+CREATE TABLE IF NOT EXISTS owner_names (owner TEXT PRIMARY KEY, name TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS email_log_address ON email_log (address, at_ms);
 `;
 
@@ -114,8 +170,12 @@ export class Store {
     this.db.close();
   }
 
+  private txDepth = 0;
+  /** One transaction; a call made inside another joins it (the outermost commits or rolls back). */
   tx<T>(fn: () => T): T {
+    if (this.txDepth > 0) return fn();
     this.db.exec("BEGIN IMMEDIATE");
+    this.txDepth++;
     try {
       const r = fn();
       this.db.exec("COMMIT");
@@ -123,6 +183,8 @@ export class Store {
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
+    } finally {
+      this.txDepth--;
     }
   }
 
@@ -259,6 +321,9 @@ export class Store {
   }
   activate(id: number, now = Date.now()) {
     this.updateContact(id, { status: "active", verify_hash: null, verify_expires_ms: null, verified_ms: now, disabled_reason: null });
+    // Confirmed by the person: no longer limited to the plans of the owners who supplied it.
+    const c = this.contact(id);
+    if (c && scopeOf(c)) this.updateContact(id, { meta: null });
   }
   disable(id: number, reason: string) {
     this.tx(() => {
@@ -278,7 +343,98 @@ export class Store {
   }
   /** Accounts with at least one active contact (their own plans are watched). */
   subscribedAccounts(): string[] {
-    return this.all<{ account: string }>("SELECT DISTINCT account FROM contacts WHERE status = 'active'").map((r) => r.account);
+    return [...new Set(this.all<Contact>("SELECT * FROM contacts WHERE status = 'active'").filter((c) => !scopeOf(c)).map((c) => c.account))];
+  }
+
+  // ---- people an owner named with an email address
+  people(owner: string): Person[] {
+    return this.all<Person>("SELECT * FROM people WHERE owner = ? ORDER BY created_ms, account, role", owner);
+  }
+  person(owner: string, account: string, role: string): Person | undefined {
+    return this.get<Person>("SELECT * FROM people WHERE owner = ? AND account = ? AND role = ?", owner, account, role);
+  }
+  /** Owners with at least one person waiting to be told they were named. */
+  ownersWithUnnamed(): string[] {
+    return this.all<{ owner: string }>("SELECT DISTINCT owner FROM people WHERE named_ms IS NULL").map((r) => r.owner);
+  }
+  countPeople(owner: string): number {
+    return Number(this.get<{ n: number }>("SELECT COUNT(*) AS n FROM people WHERE owner = ?", owner)?.n ?? 0);
+  }
+  peopleAddedSince(owner: string, since_ms: number): number {
+    return Number(this.get<{ n: number }>("SELECT COUNT(*) AS n FROM people WHERE owner = ? AND created_ms >= ?", owner, since_ms)?.n ?? 0);
+  }
+  markNamed(owner: string, account: string, role: string, now = Date.now()) {
+    this.run("UPDATE people SET named_ms = ? WHERE owner = ? AND account = ? AND role = ?", now, owner, account, role);
+  }
+  /**
+   * Saves a named person and makes sure their address can hear about this
+   * owner's plan: an active email contact limited to the owners who supplied it.
+   * A contact the account set up itself is left alone (it already hears everything),
+   * and so is one the person unsubscribed.
+   */
+  putPerson(p: Pick<Person, "owner" | "account" | "role" | "email" | "label" | "by_email" | "announce" | "near" | "btc">, now = Date.now()): Person {
+    return this.tx(() => {
+      const prev = this.person(p.owner, p.account, p.role);
+      // A different address for the same seat: the old one stops hearing about this plan.
+      if (prev && prev.email !== p.email) this.dropScope(p.owner, p.account, prev.email, p.role);
+      this.run(
+        `INSERT INTO people (owner, account, role, email, label, by_email, announce, near, btc, named_ms, created_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+         ON CONFLICT (owner, account, role) DO UPDATE SET email = excluded.email, label = excluded.label, by_email = excluded.by_email, announce = excluded.announce, near = excluded.near, btc = excluded.btc,
+           named_ms = CASE WHEN people.email = excluded.email THEN people.named_ms ELSE NULL END`,
+        p.owner,
+        p.account,
+        p.role,
+        p.email,
+        p.label,
+        p.by_email,
+        p.announce,
+        p.near,
+        p.btc,
+        now,
+      );
+      const c = this.contactBy(p.account, "email", p.email);
+      if (!c) this.addContact({ account: p.account, channel: "email", address: p.email, status: "active", meta: JSON.stringify({ owners: [p.owner] }) }, now);
+      else {
+        const scope = scopeOf(c);
+        if (scope && !scope.includes(p.owner)) this.updateContact(c.id, { meta: JSON.stringify({ owners: [...scope, p.owner] }) });
+      }
+      return this.person(p.owner, p.account, p.role)!;
+    });
+  }
+  /** Is `account` the wallet that was created for `email` (so only that inbox can sign as it)? */
+  isOwnEmail(account: string, email: string): boolean {
+    return !!this.get("SELECT 1 FROM people WHERE account = ? AND email = ? AND by_email = 1 LIMIT 1", account, email);
+  }
+  /** The name an owner asked to be called in messages to the people they named. */
+  ownerName(owner: string): string | null {
+    return this.get<{ name: string }>("SELECT name FROM owner_names WHERE owner = ?", owner)?.name ?? null;
+  }
+  ownerNames(): Record<string, string> {
+    return Object.fromEntries(this.all<{ owner: string; name: string }>("SELECT owner, name FROM owner_names").map((r) => [r.owner, r.name]));
+  }
+  setOwnerName(owner: string, name: string | null) {
+    if (name) this.run("INSERT INTO owner_names (owner, name) VALUES (?, ?) ON CONFLICT (owner) DO UPDATE SET name = excluded.name", owner, name);
+    else this.run("DELETE FROM owner_names WHERE owner = ?", owner);
+  }
+  removePerson(owner: string, account: string, role: string): boolean {
+    return this.tx(() => {
+      const p = this.person(owner, account, role);
+      if (!p) return false;
+      this.run("DELETE FROM people WHERE owner = ? AND account = ? AND role = ?", owner, account, role);
+      this.dropScope(owner, account, p.email);
+      return true;
+    });
+  }
+  /** Takes `owner` off an owner-added contact unless another of the owner's rows still uses that address; an empty scope removes the contact. */
+  private dropScope(owner: string, account: string, email: string, exceptRole?: string) {
+    const still = this.all<Person>("SELECT * FROM people WHERE owner = ? AND account = ? AND email = ?", owner, account, email).some((r) => r.role !== exceptRole);
+    if (still) return;
+    const c = this.contactBy(account, "email", email);
+    const scope = c && scopeOf(c);
+    if (!c || !scope) return;
+    const left = scope.filter((o) => o !== owner);
+    if (left.length) this.updateContact(c.id, { meta: JSON.stringify({ owners: left }) });
+    else this.removeContact(c.id);
   }
 
   // ---- preferences: every kind is on unless switched off

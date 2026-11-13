@@ -33,6 +33,8 @@ export interface Config {
   /** Email over Brevo's HTTPS API, for hosts that block SMTP ports. Used instead of SMTP when set. */
   brevo?: { key: string; apiBase: string; from: string };
   telegram?: { token: string; username: string; apiBase: string; pollTimeoutS: number };
+  /** Wallets for people named by email (PRIVY_APP_ID + PRIVY_APP_SECRET). The secret only ever asks for addresses. */
+  privy?: { appId: string; secret: string; apiBase: string; btcHrp: "bc" | "tb" };
 
   /** Webhooks: allow http:// and private addresses (local development only). */
   webhookAllowInsecure: boolean;
@@ -92,6 +94,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
       : undefined,
     brevo: brevoKey ? { key: brevoKey, apiBase: (env.BREVO_API_BASE ?? "https://api.brevo.com/v3").replace(/\/$/, ""), from: brevoFrom } : undefined,
+    privy:
+      env.PRIVY_APP_ID && env.PRIVY_APP_SECRET
+        ? { appId: env.PRIVY_APP_ID, secret: env.PRIVY_APP_SECRET, apiBase: (env.PRIVY_API_BASE ?? "https://api.privy.io/v1").replace(/\/$/, ""), btcHrp: contractId.endsWith(".near") ? "bc" : "tb" }
+        : undefined,
     telegram: tgToken ? { token: tgToken, username: tgUser, apiBase: (env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""), pollTimeoutS: Number(env.TELEGRAM_POLL_TIMEOUT_S ?? 25) } : undefined,
     webhookAllowInsecure: bool(env.NOTIFY_WEBHOOK_ALLOW_INSECURE),
     maxAttempts: Number(env.NOTIFY_MAX_ATTEMPTS ?? 8),

@@ -148,6 +148,7 @@ export const KINDS = [
   "guardians",
   "availability",
   "destination",
+  "named",
   "security",
 ] as const;
 export type Kind = (typeof KINDS)[number];
@@ -175,6 +176,7 @@ export const KIND_INFO: Record<Kind, { label: string; who: string }> = {
   guardians: { label: "Guardian seat changes and lost quorum", who: "owners, guardians, standbys, heirs" },
   availability: { label: "Confirm you're still available", who: "guardians, standbys" },
   destination: { label: "Requests to change where someone receives", who: "owners, the heir who asked" },
+  named: { label: "Someone named you in their plan", who: "guardians, heirs the owner chose to tell" },
   security: { label: "Changes to your notification channels", who: "you (always on)" },
 };
 
@@ -224,6 +226,8 @@ export interface Notice {
 export interface Ctx {
   /** Behest web app, for "open the plan" links. */
   appUrl?: string;
+  /** What owners asked to be called (people they named by email don't know them as an address). */
+  names?: Record<string, string>;
   contractId?: string;
   /** Token metadata by ERC-20 address or NEP-141 account. */
   tokens?: Record<string, { symbol: string; decimals: number }>;
@@ -237,7 +241,7 @@ export const EXPLORERS = {
 
 /** "kemi-1a2b.testnet" → "Kemi"; the friendly first part of an account. */
 export const PERSONA_NAMES: Record<string, string> = { owner: "Kemi", g1: "Dayo", g2: "Funmi", g3: "Chidi" };
-const name = (a: string) => {
+export const name = (a: string) => {
   if (/^0x[0-9a-f]{40}$/i.test(a) || /^[0-9a-f]{64}$/.test(a)) return `${a.slice(0, 6)}…${a.slice(-4)}`;
   const f = a.split(".")[0] ?? a;
   const r = f.includes("-") ? f.slice(f.lastIndexOf("-") + 1) : f;
@@ -322,7 +326,7 @@ export function notices(prev: Snapshot | null, cur: Snapshot, ctx: Ctx = {}): No
   const out: Notice[] = [];
   const v = cur.view;
   const o = v.plan.owner;
-  const who = name(o);
+  const who = ctx.names?.[o] ?? name(o);
   const p = v.plan.proposal;
   const planLink: Link[] = ctx.appUrl ? [{ label: "Open the plan in Behest", url: `${ctx.appUrl.replace(/\/$/, "")}/plan/${o}` }] : [];
   // The heir recovery packet: claim steps with and without Behest's website.
@@ -756,4 +760,43 @@ export function recipients(s: Snapshot, n: Pick<Notice, "to" | "accounts" | "exc
 /** Every account with a role in the plan (used to decide whose watch requests to honour). */
 export function members(s: Snapshot): Set<string> {
   return new Set(recipients(s, { to: ["owner", "guardians", "heirs", "delay_signers", "standbys"], accounts: s.view.plan.proposal?.transfers.map((t) => t.heir) ?? [] }));
+}
+
+/**
+ * Told once to a person an owner named with an email address, when the plan
+ * on-chain first names their account: guardians always, heirs only if the
+ * owner chose to tell them now.
+ */
+export function namedNotice(owner: string, account: string, role: string, byEmail: boolean, ctx: Ctx): Notice {
+  const who = ctx.names?.[owner] ?? name(owner);
+  const signIn = byEmail ? " Sign in to Behest with this email address to see it; you don't need a wallet." : "";
+  const words: Record<string, { subject: string; text: string }> = {
+    guardian: {
+      subject: `${who} named you a guardian`,
+      text: `${who} named you a guardian of their inheritance plan on Behest. If they ever stop checking in, you'll be asked to confirm that before anything is released. Nothing is needed from you right now.${signIn}`,
+    },
+    standby: {
+      subject: `${who} named you a standby guardian`,
+      text: `${who} named you a standby guardian of their inheritance plan on Behest: you'd be asked to step in if one of their guardians can't. Nothing is needed from you right now.${signIn}`,
+    },
+    delay: {
+      subject: `${who} named you on their plan`,
+      text: `${who} named you as someone who can ask for more time before their inheritance plan on Behest is released. Nothing is needed from you right now.${signIn}`,
+    },
+    heir: {
+      subject: `${who} named you in their plan`,
+      text: `${who} named you to receive part of what they hold, through their inheritance plan on Behest. There is nothing to do now. If the plan is ever released, we'll write to you here and you can receive your share.${signIn}`,
+    },
+  };
+  const w = words[role] ?? { subject: `${who} named you in their plan`, text: `${who} named you in their inheritance plan on Behest. Nothing is needed from you right now.${signIn}` };
+  return {
+    key: `${owner}:named:${account}:${role}`,
+    owner,
+    kind: "named",
+    to: [],
+    accounts: [account],
+    subject: w.subject,
+    text: w.text,
+    links: ctx.appUrl ? [{ label: "Open the plan in Behest", url: `${ctx.appUrl.replace(/\/$/, "")}/plan/${owner}` }] : [],
+  };
 }

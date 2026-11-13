@@ -4,7 +4,7 @@
 // plans subscribers asked to watch, and plans seen before until their
 // release is resolved.
 import type { Store } from "./db.js";
-import { members, notices, recipients, type Ctx, type ExtensionState, type GuardianStatus, type DestinationRow, type Options, type PendingChange, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
+import { members, namedNotice, notices, recipients, type Ctx, type ExtensionState, type GuardianStatus, type DestinationRow, type Options, type PendingChange, type PlanView, type Proposal, type Snapshot, type Transfer } from "./diff.js";
 import { withCouncils, type CouncilOf } from "./council.js";
 import type { Engine } from "./engine.js";
 
@@ -54,7 +54,8 @@ export class Watcher {
   async owners(): Promise<{ all: string[]; keep: Set<string> }> {
     const open = await this.openReleases();
     // A DAO with council notices on has no contacts of its own; its plan is watched for the council.
-    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner), ...this.store.councils()]);
+    // Owners who named someone by email are read until that person has been told (the plan may be saved a little later).
+    const keep = new Set<string>([...open, ...this.opts.owners, ...this.store.subscribedAccounts(), ...this.store.watchedOwners().map((w) => w.owner), ...this.store.councils(), ...this.store.ownersWithUnnamed()]);
     return { all: [...new Set([...keep, ...this.store.knownOwners()])], keep };
   }
 
@@ -105,14 +106,41 @@ export class Watcher {
       const to = this.opts.councilOf ? await withCouncils(recipients(cur, n), (a) => !!this.store.council(a), this.opts.councilOf) : recipients(cur, n);
       if (this.engine.fanOut(n, to)) fanned++;
     }
+    fanned += this.tellNamed(owner, cur);
     const open = !!cur.view.plan.proposal || (cur.withdrawal && !["Confirmed", "Failed"].includes(cur.withdrawal.state));
     if (keep || open) this.store.putSnapshot(owner, cur);
     else this.store.dropSnapshot(owner);
     return fanned;
   }
 
+  /**
+   * People the owner named with an email address hear about it once the plan
+   * on-chain names their account in that role, never before: an address can't be
+   * written to without a real plan behind it.
+   */
+  private tellNamed(owner: string, cur: Snapshot): number {
+    const v = cur.view.plan.policy;
+    const inRole: Record<string, (a: string) => boolean> = {
+      heir: (a) => v.heirs.some((h) => h.account_id === a),
+      guardian: (a) => v.guardians.includes(a),
+      standby: (a) => (cur.guardians?.standbys ?? []).some((s) => s.account_id === a),
+      delay: (a) => (cur.options?.delay_signers ?? []).includes(a),
+    };
+    let n = 0;
+    for (const p of this.store.people(owner)) {
+      if (p.named_ms != null) continue;
+      if (!(inRole[p.role]?.(p.account) ?? members(cur).has(p.account))) continue;
+      this.store.markNamed(owner, p.account, p.role);
+      // Heirs are told only if the owner asked; everyone with a job to do is always told.
+      if (p.role === "heir" && !p.announce) continue;
+      if (this.engine.fanOut(namedNotice(owner, p.account, p.role, p.by_email === 1, this.ctx), [p.account])) n++;
+    }
+    return n;
+  }
+
   async tick(): Promise<{ owners: number; notices: number; errors: number }> {
     await this.refreshTokens();
+    this.ctx.names = this.store.ownerNames();
     const { all, keep } = await this.owners();
     let fanned = 0;
     let errors = 0;

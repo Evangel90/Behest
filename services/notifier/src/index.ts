@@ -11,6 +11,7 @@ import { BrevoSender, EmailSender } from "./channels/email.js";
 import { TelegramBot } from "./channels/telegram.js";
 import { WebhookSender } from "./channels/webhook.js";
 import { loadConfig } from "./config.js";
+import { PrivyClient } from "./privy.js";
 import { Store } from "./db.js";
 import { Engine } from "./engine.js";
 import { rpcKeyLookup } from "./nep413.js";
@@ -50,7 +51,8 @@ const records = recordsKey
       },
     }
   : undefined;
-const api = createApi({ store, engine, cfg, keys: rpcKeyLookup(cfg.nearRpcUrls), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log, records });
+const privy = cfg.privy ? new PrivyClient(cfg.privy) : undefined;
+const api = createApi({ store, engine, cfg, privy, keys: rpcKeyLookup(cfg.nearRpcUrls), email, telegram, isMember: (o, a) => watcher.isMember(o, a), councilOf, log, records });
 api.listen(cfg.port, cfg.host, () => log("notifier api listening", { port: cfg.port, publicUrl: cfg.publicUrl }));
 
 log("notifier started", {
@@ -59,6 +61,7 @@ log("notifier started", {
   intervalMs: cfg.intervalMs,
   db: cfg.dbPath,
   channels: { email: cfg.brevo ? "brevo" : cfg.smtp ? "smtp" : false, telegram: telegram ? cfg.telegram!.username : false, webhook: true, operatorFeed: Boolean(cfg.operatorWebhookUrl) },
+  emailWallets: Boolean(privy),
 });
 
 let stopping = false;

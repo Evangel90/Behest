@@ -12,7 +12,7 @@
 // de-duplicate on X-Behest-Delivery.
 import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
-import type { Channel, Contact, Delivery, Store, StoredNotice } from "./db.js";
+import { scopeOf, type Channel, type Contact, type Delivery, type Store, type StoredNotice } from "./db.js";
 import { ALWAYS_ON, type Notice } from "./diff.js";
 import { PermanentError, RejectedError, TransientError, type Outgoing, type Sender } from "./channels/types.js";
 import type { WebhookSender } from "./channels/webhook.js";
@@ -71,6 +71,9 @@ export class Engine {
       for (const account of recipients) {
         if (!ALWAYS_ON.includes(n.kind) && !this.store.wants(account, n.kind)) continue;
         for (const c of this.store.activeContacts(account)) {
+          // An address an owner supplied only hears about that owner's plan.
+          const scope = scopeOf(c);
+          if (scope && !scope.includes(n.owner)) continue;
           if (this.store.enqueue({ notice_key: n.key, account, target: String(c.id), channel: c.channel }, now)) queued++;
         }
       }
@@ -87,7 +90,8 @@ export class Engine {
     this.store.tx(() => {
       this.store.addNotice({ key, owner: account, kind: "security", to: [], accounts: [account], subject, text, links: this.cfg.appUrl ? [{ label: "Review your notification settings", url: `${this.cfg.appUrl.replace(/\/$/, "")}/notifications` }] : [] }, [account], now);
       for (const c of this.store.activeContacts(account)) {
-        if (c.id !== exceptContact) this.store.enqueue({ notice_key: key, account, target: String(c.id), channel: c.channel }, now);
+        // Owner-supplied addresses aren't the account's own channels; they hear nothing about its settings.
+        if (c.id !== exceptContact && !scopeOf(c)) this.store.enqueue({ notice_key: key, account, target: String(c.id), channel: c.channel }, now);
       }
     });
     return key;
