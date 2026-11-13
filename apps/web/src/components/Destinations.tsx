@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isMissingMethod, view } from "@/lib/contract";
 import { shortName, when } from "@/lib/plan";
 import { useSession } from "@/lib/session";
-import { CHAIN_LABEL, proofHow, sigHex } from "@/lib/destinations";
+import { CHAIN_LABEL, bip137, bitcoinMessageHash, proofHow, sigHex } from "@/lib/destinations";
 import type { DestChain, DestinationView, PlanView } from "@/lib/types";
 import { CopyButton, Disclosure, Field, Segmented } from "./interactive";
 import { useTx } from "./tx";
@@ -62,6 +62,8 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
   const emailNear = session?.email?.near;
   // Signed in as this very Ethereum address (a wallet, or an email's account): one click, no second wallet.
   const own = how === "eth" && !!session?.personalSign && session.accountId === d.destination.toLowerCase();
+  // The Bitcoin address kept for the signed-in email: its key signs the message here, no Bitcoin wallet needed.
+  const ownBtc = how === "btc" && session?.email?.btc === d.destination;
   const [msg, setMsg] = useState<string | null>(null);
   const [sig, setSig] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -113,6 +115,18 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
       setErr(e instanceof Error ? e.message : String(e));
     }
   }
+  async function withEmailBtc() {
+    setErr(null);
+    try {
+      const w = session!.email!;
+      const digest = bitcoinMessageHash(msg!);
+      const signature = bip137(await w.signBtc(digest), digest, w.btcPublicKey);
+      if (!signature) return setErr("The sign-in service's signature doesn't match this address. Nothing was sent.");
+      await act(label, "prove_destination", args(signature), { done });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
   async function pasted() {
     const s = how === "eth" ? (/^0x[0-9a-fA-F]{130}$/.test(sig.trim()) ? sig.trim() : null) : sigHex(sig);
     if (!s) return setErr(how === "eth" ? "That isn't a 65-byte 0x… signature." : "That isn't a Bitcoin signed-message signature (base64 or hex).");
@@ -122,8 +136,8 @@ function ProveOne({ owner, d, me, onDone, compact }: { owner: string; d: Destina
 
   return (
     <div className={cx("flex flex-col gap-3", !compact && "border-t border-line pt-3")}>
-      {own && msg && (
-        <Button size="sm" variant="primary" icon={BadgeCheck} className="self-start" loading={busy === label} disabled={!!busy} onClick={() => void withSession()}>
+      {(own || ownBtc) && msg && (
+        <Button size="sm" variant="primary" icon={BadgeCheck} className="self-start" loading={busy === label} disabled={!!busy} onClick={() => void (own ? withSession() : withEmailBtc())}>
           Prove this address is mine
         </Button>
       )}
