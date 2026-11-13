@@ -912,14 +912,14 @@ function TimingStep({ d, set, demo, errors, editing }: { d: Draft; set: SetFn; d
       </Card>
       {!editing && (
         <Card className="flex flex-col gap-3">
-          <SectionTitle icon={Hourglass} title="Edit notice" sub="Make changes to heirs, addresses, shares and guardians wait before they take effect, and tell guardians and heirs. Protects against a stolen key." />
+          <SectionTitle icon={Hourglass} title="Edit notice" sub="A delay before changes to your plan take effect. If someone steals your key and tries to change who inherits, the change waits this long and your guardians and heirs are told, so there is time to stop it. It covers changes to heirs, addresses, shares and guardians, including your own. Changing timers and withdrawing your funds stay instant." />
           <Segmented
             label="Edit notice"
             value={String(d.notice)}
             onChange={(v) => set("notice", Number(v))}
             options={noticeChoices(demo, d.notice).map((ms) => ({ value: String(ms), label: ms ? duration(ms) : "Off" }))}
           />
-          <p className="text-sm text-muted">{d.notice ? `Your own edits will also wait ${duration(d.notice)}. Timers and withdrawals stay instant.` : "Edits apply as soon as you save them."}</p>
+          <p className="text-sm text-muted">{d.notice ? `Changes wait ${duration(d.notice)} before they apply.` : "Changes apply as soon as you save them."}</p>
         </Card>
       )}
       {demo && <p className="text-sm text-muted">This is a demo-timer deployment: minutes are allowed so you can watch a release end to end.</p>}
