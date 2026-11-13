@@ -1,7 +1,7 @@
 # One lean container for relayer + executor + notifier (Railway).
 FROM node:26-slim AS build
 WORKDIR /app
-RUN corepack enable
+RUN npm i -g pnpm@9.15.9
 COPY . .
 RUN pnpm install --frozen-lockfile --filter "@behest/relayer" --filter "@behest/executor" --filter "@behest/notifier" \
  && for s in relayer executor notifier; do (cd services/$s && ./node_modules/.bin/tsc -p tsconfig.build.json) || exit 1; done
