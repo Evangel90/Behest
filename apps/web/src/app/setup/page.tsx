@@ -922,7 +922,6 @@ function TimingStep({ d, set, demo, errors, editing }: { d: Draft; set: SetFn; d
           <p className="text-sm text-muted">{d.notice ? `Changes wait ${duration(d.notice)} before they apply.` : "Changes apply as soon as you save them."}</p>
         </Card>
       )}
-      {demo && <p className="text-sm text-muted">This is a demo-timer deployment: minutes are allowed so you can watch a release end to end.</p>}
     </>
   );
 }
