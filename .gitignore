@@ -23,3 +23,6 @@ video/
 
 # Claude Code local working files
 .claude/
+
+# Voice samples for the demo film (personal recordings; never publish)
+my-voice-behest/
