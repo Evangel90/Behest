@@ -4,7 +4,7 @@
 
 You write the plan once: who inherits, how much, on which chain, and who confirms you're gone. If you stop checking in, your guardians can start a release; you can cancel it until the very last moment; then every heir receives exactly their share, on every chain, with nobody in between holding the keys.
 
-**Live app:** [behest.vercel.app](https://behest.vercel.app) (NEAR testnet, Sepolia, Bitcoin testnet4) · **Demo video:** [youtu.be/AvtJJRM5i8o](https://youtu.be/AvtJJRM5i8o) · **Contract:** [`behest-ekkr6.testnet`](https://testnet.nearblocks.io/address/behest-ekkr6.testnet)
+**Live app:** [behest.vercel.app](https://behest.vercel.app) (NEAR testnet, Sepolia, Bitcoin testnet4) · **Demo video:** [on X](https://x.com/OladipoEvangel/status/2121586783075066149) · **Contract:** [`behest-ekkr6.testnet`](https://testnet.nearblocks.io/address/behest-ekkr6.testnet)
 
 ![Behest landing page](docs/assets/landing.png)
 
