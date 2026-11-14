@@ -1,5 +1,5 @@
 //! Minimal EIP-1559 transaction encoding for ETH and ERC-20 transfers.
-//! See docs/stage0/03-signing-boundary.md. Kept dependency-free so every
+//! See docs/spec/03-signing-boundary.md. Kept dependency-free so every
 //! byte the MPC network signs is visible in this file.
 
 use near_sdk::env;

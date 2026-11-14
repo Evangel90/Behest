@@ -1,6 +1,6 @@
 //! Behest contract: MVP plan lifecycle.
 //!
-//! Spec: docs/stage0. Each public method notes its transition id from
+//! Spec: docs/spec. Each public method notes its transition id from
 //! 01-state-machine.md (P1..P10, T1..T6).
 
 mod errors;
@@ -81,7 +81,7 @@ const LIGHT_CLIENT_GAS: Gas = Gas::from_tgas(10);
 const PROOF_CALLBACK_GAS: Gas = Gas::from_tgas(20);
 const MAX_PROOF_NODES: usize = 16;
 
-/// MPC `sign` arguments (docs/stage0/03-signing-boundary.md).
+/// MPC `sign` arguments (docs/spec/03-signing-boundary.md).
 #[near(serializers = [json])]
 pub struct SignRequestArgs {
     pub payload_v2: SignPayload,

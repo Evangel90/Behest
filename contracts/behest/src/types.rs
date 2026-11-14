@@ -1,7 +1,7 @@
 use near_sdk::json_types::{U128, U64};
 use near_sdk::{near, AccountId};
 
-/// Owner-supplied plan. See docs/stage0/04-policy-schema.md.
+/// Owner-supplied plan. See docs/spec/04-policy-schema.md.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanInput {

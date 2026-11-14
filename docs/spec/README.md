@@ -1,4 +1,4 @@
-# Stage 0: decisions, architecture and threat model
+# Specification: decisions, architecture and threat model
 
 This folder is the source of truth that the contract, executor and web app must all encode identically. If code and these documents disagree, fix one of them in the same change.
 

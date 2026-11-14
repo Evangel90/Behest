@@ -1,7 +1,7 @@
 // Executor decision logic. Pure orchestration over NearPort/EthPort so it can
 // be tested with fakes. The executor never decides recipients or amounts: it
 // only broadcasts what the contract built and reports what it observes.
-// Spec: docs/stage0/01-state-machine.md (T3–T6), 03-signing-boundary.md.
+// Spec: docs/spec/01-state-machine.md (T3–T6), 03-signing-boundary.md.
 
 import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
 import { checkBtcTx } from "./bitcoin.js";

@@ -1,5 +1,5 @@
 //! Minimal Bitcoin (testnet) transaction encoding for vault payouts.
-//! See docs/stage0/03-signing-boundary.md. Dependency-free so every byte the
+//! See docs/spec/03-signing-boundary.md. Dependency-free so every byte the
 //! MPC network signs is visible here, like `eth.rs`.
 //!
 //! The vault is a P2WPKH output of the plan's MPC key. Payouts are version-2,
