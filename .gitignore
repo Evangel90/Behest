@@ -1,28 +1,27 @@
-# Local-only docs (not tracked for now)
-PROJECT_ROADMAP.md
-vision.md
-
-.DS_Store
-CLAUDE.md
-target/
+# Dependencies and build output
 node_modules/
-.env
-.env.*
-.executor-state.json*
-!.env.example
-.testnet-wallets.json
+target/
+dist/
 .next/
 *.tsbuildinfo
-.notifier-state.json*
-.notifier.db*
-dist/
+
+# Secrets and local config (only the examples are tracked)
+.env
+.env.*
+!.env.example
+.testnet-wallets.json
 .vercel
 
-# The demo-video project (kept locally, not part of the repo)
-video/
+# Local service state
+.executor-state.json*
+.notifier-state.json*
+.notifier.db*
 
-# Claude Code local working files
+# Personal working files, not part of the project
+.DS_Store
 .claude/
-
-# Voice samples for the demo film (personal recordings; never publish)
+CLAUDE.md
+PROJECT_ROADMAP.md
+vision.md
+video/
 my-voice-behest/
