@@ -10,13 +10,15 @@ You write the plan once: who inherits, how much, on which chain, and who confirm
 
 > Testnet only. Unaudited. Never use real funds.
 
-## Try it in five minutes
+## Try it without a wallet (about 7 minutes)
 
-1. Open **[behest.vercel.app/try](https://behest.vercel.app/try)** and press **Create my test personas**. You get six real testnet accounts with a funded plan: the owner (Kemi), three guardians and two heirs (Amara and Tobi). Their keys are generated in your browser and never leave it. No wallet needed.
-2. The demo contract's timers run in minutes, so just let the owner go overdue (or play Kemi and check in to see the clock reset).
-3. Switch to a guardian: propose the release, then approve it as a second guardian.
-4. Switch to an heir after the waiting period: claim, and watch the share arrive.
-5. Anyone can read any plan in plain words at `/plan/<owner>?view=inspect`, or the whole contract at [/inspect](https://behest.vercel.app/inspect).
+1. Open **[behest.vercel.app/try](https://behest.vercel.app/try)** and press **Create my test personas**. In about 30 seconds you get six real testnet accounts and a funded plan: Kemi the owner, three guardians (Dayo, Funmi, Chidi) and two heirs (Amara 60%, Tobi 40%). Their keys are generated in your browser and stay there, so keep the tab.
+2. The demo contract's timers run in minutes: after 2 minutes without a check-in Kemi is unreachable. The page always highlights who acts next.
+3. **Act as Dayo** and propose the release. **Act as Funmi**, tick "I've checked the numbers" and approve (2 of 3).
+4. A 2-minute waiting period follows, during which Kemi could still cancel by checking in.
+5. **Act as Amara**, then **Tobi**, and press **Receive my share**. Each receives exactly their share (0.12 and 0.08 NEAR) and the plan shows **Complete**, with a receipt link for every transfer. Behest's relayer pays all the gas.
+
+The sandbox pays out NEAR. Its optional Ethereum leg needs Sepolia ETH sent to Kemi's vault, and Bitcoin isn't part of the sandbox: the Ethereum and Bitcoin releases are shown by the live runs below, with transaction links. Anyone can read any plan in plain words at `/plan/<owner>?view=inspect`, or the whole contract at [/inspect](https://behest.vercel.app/inspect).
 
 Or create a real plan at [/setup](https://behest.vercel.app/setup): sign in with an **email address**, a NEAR wallet, or MetaMask. Behest pays the NEAR gas.
 
@@ -49,7 +51,7 @@ flowchart LR
 - **No gas for the people who matter.** A relayer sponsors NEAR gas (NEP-366 meta-transactions) for check-ins, guardian votes and claims, and email and Ethereum-wallet users act through signed `personal_sign` messages the contract verifies itself; plan storage is sponsored too.
 - **Edit notice.** Changes to heirs, addresses and guardians can wait out a notice period while everyone on the plan is told, so a stolen key can't quietly rewrite your plan.
 - **Private heirs.** Heirs can be sealed as SHA-256 commitments on-chain and revealed only once the owner is overdue.
-- **DAOs in every role.** A SputnikDAO can own a plan, guard one or inherit, through ordinary proposals.
+- **DAOs in every role (Sputnik DAO).** A Sputnik DAO v2 can own a plan, act as a guardian, inherit, or sign to extend a waiting period, so a community treasury gets a succession plan its council votes through. A council member signs in with a NEAR wallet and chooses **Act as a DAO**: the app reads the DAO's policy (roles, proposal bond, votes needed) and turns every action into an `add_proposal` with a plain-words description, then lists the DAO's open Behest proposals with Approve and Reject. A DAO pays its tier from its own USDC, can name check-in delegates who check in with one signature, and can route every notice to its whole council. Proposals are written to read well in Trezu, and on mainnet each one links there.
 - **NEAR Intents.** Heirs can receive into their Intents account and swap to almost any asset.
 - **Destination proofs.** Heirs can prove they control each registered address (NEAR call, EIP-191, BIP-137), and ask the owner to approve a new one.
 - **Plain words everywhere.** Every plan has a module-by-module summary of what each rule means, with warnings for risky combinations, and a printable recovery packet per heir.
@@ -64,7 +66,7 @@ flowchart LR
 | **Ethereum-implicit accounts** | MetaMask and email users act as `0x…` NEAR accounts via signed messages (`evm_call`) |
 | **NEP-141 tokens** | wNEAR and USDC escrow, registration handled by the contract |
 | **NEAR Intents** | Heirs receive into their Intents account; on mainnet, swaps and plan fees in almost any asset through 1Click |
-| **SputnikDAO v2** | DAOs as owners, guardians and heirs |
+| **Sputnik DAO v2** (and Trezu on mainnet) | DAOs as owners, guardians, heirs and delay signers, acting through council proposals; open proposals link to Trezu on mainnet |
 | **Ethereum light client on NEAR** | Proves a Sepolia transfer reverted before it is re-issued |
 | **NEP-413** | Signed notification preferences, no transaction needed |
 
@@ -76,7 +78,8 @@ Every flow has a live end-to-end scenario against the deployed contract, with re
 - A Bitcoin testnet4 release paying a Taproot and a SegWit heir with chained, MPC-signed transactions.
 - A reverted Sepolia transfer proven against the Ethereum light client and re-issued.
 - A whole plan run by throwaway MetaMask-style keys that never held NEAR.
-- DAOs as owner, guardian and heir; private heirs revealed and redistributed; guardian standbys swapped in.
+- DAOs in every role, using real Sputnik DAO v2 contracts from `sputnikv2.testnet`: an owner DAO paid its tier and created its plan by council vote, a guardian DAO approved the release by vote, and the payout reached an heir DAO with nobody there signing.
+- Private heirs revealed and redistributed; guardian standbys swapped in.
 - People named by email: a guardian released and an heir claimed using only their inbox, then sent NEAR, Sepolia ETH and testnet BTC onward.
 
 **Tests:** 555 automated tests pass: contract 259 (Rust), executor 63, relayer 42, notifier 101, web 90.
@@ -119,6 +122,7 @@ Deploying your own contract and running the live scenarios is covered in [docs/e
 - Testnet only, unaudited, and the contract is still upgradeable by its admin.
 - Behest can't know that someone died; it only knows check-ins stopped. Pair it with legal estate planning.
 - People named by email depend on their inbox and on Privy for their keys. Heirs with their own wallet depend on neither.
+- Trezu lists mainnet DAOs only, so on testnet DAO proposals are voted in Behest or any Sputnik DAO app; the Trezu links are not yet exercised.
 - On testnet, NEAR Intents is a mock verifier; the real `intents.near`, bridge and 1Click are mainnet-only and untested.
 ## License
 
