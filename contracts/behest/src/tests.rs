@@ -1625,6 +1625,8 @@ fn fallback_cannot_also_be_an_alternate() {
     expect_bad_rules(|r| r.fallback.as_mut().unwrap().account_id = acc("kemi.testnet"));
 }
 
+// Production minimums; demo builds allow minutes.
+#[cfg(not(feature = "demo-timers"))]
 #[test]
 #[should_panic(expected = "E_DURATION_OUT_OF_BOUNDS")]
 fn claim_window_is_bounded() {
@@ -3814,6 +3816,8 @@ fn owner_cancels_a_pending_change_and_restating_the_current_value_drops_it() {
     assert!(e.as_("x.testnet", 0).get_release_rules(acc("owner.testnet")).is_none());
 }
 
+// Production minimums; demo builds allow minutes.
+#[cfg(not(feature = "demo-timers"))]
 #[test]
 fn lowering_the_notice_waits_raising_it_does_not() {
     let mut e = noticed(7 * DAY);
@@ -3872,6 +3876,8 @@ fn gstatus(e: &mut Env) -> guardians::GuardianStatus {
     e.as_("x.testnet", 0).get_guardian_status(acc("owner.testnet"))
 }
 
+// Production minimums; demo builds allow minutes.
+#[cfg(not(feature = "demo-timers"))]
 #[test]
 fn standbys_must_be_outsiders() {
     let mut e = Env::new();
